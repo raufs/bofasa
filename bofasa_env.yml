@@ -1,0 +1,12 @@
+name: bofasa
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - "python=3.10"
+  - setuptools
+  - pip
+  - orthofinder=2.5.4
+  - diamond=
+  - 

@@ -1,0 +1,15 @@
+[project]
+name = "bofasa"
+authors = [{name="Rauf Salamzade", email="salamzader@gmail.com"}]
+version = "1.0.0"
+description = "Programs for bacterial multi-species orthology inference and analysis."
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+script-files=["bin/bofasa"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
