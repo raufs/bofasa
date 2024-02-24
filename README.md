@@ -1,2 +1,2 @@
 # bofasa
-bacterial orthology inference and syntenic analysis (specifically designed for multiple-species)
+bacterial orthology finding and syntenic analysis (specifically designed for multiple-species)
