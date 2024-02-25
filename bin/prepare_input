@@ -173,13 +173,11 @@ def prepare_input():
 		logObject.error('Format of genomes provided is not consistently FASTA or Genbank, please check input.')
 		raise RuntimeError('Format of genomes provided is not consistently FASTA or Genbank, please check input.')
 
-	formatted_inputs_directory = outdir + 'Formatted_Input_Files'
+	formatted_inputs_directory = outdir + 'Formatted_Input_Files/'
 	formatted_inputs_directory_local = 'Formatted_Input_Files/'
 	formatted_proteomes_directory = outdir + 'Formatted_Proteomes/'
 	util.setupReadyDirectory([formatted_inputs_directory, formatted_proteomes_directory])
 	if additional_format_prediction == 'fasta':
-		additional_prodigal_outdir = outdir + 'Prodigal_Gene_Calling_Additional/'
-		util.setupReadyDirectory([additional_prodigal_outdir])
 		util.processGenomesUsingProdigal(additional_sample_genomes, formatted_inputs_directory, logObject,
 										cpus=cpus, locus_tag_length=locus_tag_length, gene_calling_method=gene_calling_method,
 										meta_mode=meta_mode)
