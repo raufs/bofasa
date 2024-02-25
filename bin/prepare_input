@@ -193,7 +193,7 @@ def prepare_input():
 		sample_coords_file = formatted_inputs_directory_local + sample + '.coords.bed'
 		genome_proteome_listing_handle.write(sample + '\t' + sample_proteome_file + '\t' + sample_coords_file + '\n')
 		try:
-			os.symlink(sample_proteome_file, formatted_proteomes_directory)
+			os.symlink(formatted_inputs_directory + sample + '.faa', formatted_proteomes_directory)
 		except:
 			sys.stderr.write('Isseus symlinking proteome file for sample %s into the OrthoFinder input directory.\n' % sample)
 	genome_proteome_listing_handle.close()
