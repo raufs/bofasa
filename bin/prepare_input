@@ -93,7 +93,7 @@ def prepare_input():
 	"""
 	myargs = create_parser()
 
-	input_genomes_dir = os.path.abspath(myargs.input_genomes_dir) + '/'
+	input_genomes_dir = os.path.abspath(myargs.input_genomes) + '/'
 	outdir = os.path.abspath(myargs.output_dir) + '/'
 	locus_tag_length = myargs.locus_tag_length
 	rename_locus_tags = myargs.rename_locus_tags
