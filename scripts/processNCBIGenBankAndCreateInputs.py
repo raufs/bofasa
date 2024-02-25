@@ -41,7 +41,7 @@ import argparse
 from Bio import SeqIO
 from Bio.Seq import Seq
 import gzip
-from zol import util
+from bofasa import util
 
 def create_parser():
 	""" Parse arguments """
