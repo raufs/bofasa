@@ -49,8 +49,6 @@ def create_parser():
 	""" Parse arguments """
 	parser = argparse.ArgumentParser(description="""
 	Program: bofasa
-	Author: Rauf Salamzade
-	Affiliation: Kalan Lab, UW-Madison & McMaster University
 
 	bacterial ortholog finding and syntenic analysis (bofasa)
 	
