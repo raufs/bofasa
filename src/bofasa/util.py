@@ -147,7 +147,7 @@ def setupReadyDirectory(directories):
 		sys.stderr.write(traceback.format_exc())
 		sys.exit(1)
 
-def processGenomesUsingProdigal(sample_genomes, results_directory, logObject, cpus=1, locus_tag_length=3, use_prodigal=False, meta_mode=False, avoid_locus_tags=set([])):
+def processGenomesUsingProdigal(sample_genomes, results_directory, logObject, cpus=1, locus_tag_length=3, gene_calling_method="pyrodigal", meta_mode=False, avoid_locus_tags=set([])):
 	"""
 	Description:
 	This function oversees processing of input genomes to create proteome and GenBank files using p(y)rodigal.
@@ -175,7 +175,7 @@ def processGenomesUsingProdigal(sample_genomes, results_directory, logObject, cp
 
 			prodigal_cmd = ['runProdigalAndMakeInputsForBofasa.py', '-i', sample_assembly, '-s', sample,
 							'-l', sample_locus_tag, '-o', results_directory]
-			if use_prodigal:
+			if gene_calling_method == 'prodigal':
 				prodigal_cmd += ['-p']
 			if meta_mode:
 				prodigal_cmd += ['-m']
