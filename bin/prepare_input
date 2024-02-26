@@ -188,6 +188,7 @@ def prepare_input():
 
 	genome_proteome_listing_handle = open(genome_proteome_listing_file, 'w')
 	for f in os.listdir(formatted_inputs_directory):
+		if not f.endswith('.faa'): continue
 		sample = f.split('.faa')[0]
 		sample_proteome_file = formatted_inputs_directory_local + sample + '.faa'
 		sample_coords_file = formatted_inputs_directory_local + sample + '.coords.bed'
