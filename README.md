@@ -1,5 +1,5 @@
 # bofasa
-Bacterial Orthology Finding And Syntenic Analysis (bofasa)
+**B**acterial **O**rthology **F**inding And **S**yntenic **A**nalysis (**bofasa**)
 
 _Developed by Rauf Salamzade, Aamuktha Kottapalli_
 
