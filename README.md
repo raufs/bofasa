@@ -1,5 +1,5 @@
 # bofasa
-**B**acterial **O**rthology **F**inding And **S**yntenic **A**nalysis (**bofasa**)
+**B**acterial **O**rthology **F**inding **A**nd **S**yntenic **A**nalysis (**bofasa**)
 
 _Developed by Rauf Salamzade, Aamuktha Kottapalli_
 
