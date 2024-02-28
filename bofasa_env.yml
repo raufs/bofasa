@@ -6,8 +6,12 @@ channels:
 dependencies:
   - "python=3.10"
   - setuptools
+  - biopython
   - pip
   - orthofinder=2.5.5
-  - diamond=2.1.15
+  - diamond=2.0.15
   - prodigal
   - pyrodigal
+  - scipy
+  - muscle=5.1
+  - hmmer

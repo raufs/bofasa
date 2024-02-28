@@ -1,0 +1,15 @@
+LICENSE
+README.md
+pyproject.toml
+bin/bofasa
+bin/prepare_input
+scripts/listAllGenomesInDirectory.py
+scripts/processNCBIGenBankAndCreateInputs.py
+scripts/runProdigalAndMakeInputsForBofasa.py
+src/bofasa/__init__.py
+src/bofasa/util.py
+src/bofasa/zol_util.py
+src/bofasa.egg-info/PKG-INFO
+src/bofasa.egg-info/SOURCES.txt
+src/bofasa.egg-info/dependency_links.txt
+src/bofasa.egg-info/top_level.txt

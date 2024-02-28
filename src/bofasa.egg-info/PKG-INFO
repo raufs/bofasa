@@ -1,0 +1,6 @@
+Metadata-Version: 2.1
+Name: bofasa
+Version: 1.0.0
+Summary: Programs for bacterial multi-species orthology inference and analysis.
+Author-email: Rauf Salamzade <salamzader@gmail.com>
+License-File: LICENSE

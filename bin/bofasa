@@ -68,14 +68,18 @@ def create_parser():
 								  
 	bofasa aims to prioritize accuracy over speed and is thus intended for investigations with
 	fewer than <100 genomes. 
+								  
+	#TODO: Help with 
 	""", formatter_class=argparse.RawTextHelpFormatter)
 
 	parser.add_argument('-i', '--prepare_input_dir', help='Directory produced by prepare_input.', required=False, default=None)
 	parser.add_argument('-o', '--output_dir', help='Output directory path.', required=True)
+	parser.add_argument('-mi', '--orthofinder_mcl_inflation', type=float, help="MCL inflation parameter for determining coarse ortholog groups via OrthoFinder [Default is 1.2; to perform the most coarse clustering].", required=False, default=1.2)
+	parser.add_argument('-sr', '--surrounding_bp', type=int, help="The number of basepairs to look up and downstream for syntenic analysis [Default is 10000].", required=False, default=10000)
+	parser.add_argument('-a', '--annotate', action='store_true', help="Create consensus sequences of ortholog groups and annotate.", required=False, default=False)
+	parser.add_argument('-qa', '--quality_alignments', action='store_true', help="Prioritize quality over speed for constructing ortholog group protein alignments. Uses MUSCLE align mode instead of super5 mode.", required=False, default=False)
+	parser.add_argument('-fr', '--fine_resolution_orthology', action='store_true', help="Perform fine resolution orthology inference based on phylogenetic analysis.", required=False, default=False)
 	parser.add_argument('-c', '--cpus', type=int, help="Total number of cpus/threads to use for running OrthoFinder2/prodigal.\n[Default is 1].", required=False, default=1)
-	#parser.add_argument('-fr', '--fine_resolution_orthology', help="Perform fine resolution orthology inference [Default is False].", required=False, default=False)
-	parser.add_argument('-a', '--annotate', help="Create consensus sequences of ortholog groups and annotate.")
-	parser.add_argument('-sr', '--surrounding_bp', help="The number of basepairs to look up and downstream for syntenic analysis [Default is 10000].", required=False, default=10000)
 	parser.add_argument('-mm', '--max_memory', type=int, help='Uses resource module to set soft memory limit. Provide in Giga-bytes.\nGenerally memory shouldn\'t be a major concern unless working\nwith hundreds of large metagenomes. [currently\nexperimental; default is None].', default=None, required=False)
 	parser.add_argument('-v', '--version', action='store_true', help="Get version and exit.", required=False, default=False)
 
@@ -101,13 +105,16 @@ def bofasa():
 
 	prepare_input_dir = os.path.abspath(myargs.prepare_input_dir) + '/'
 	outdir = os.path.abspath(myargs.output_dir) + '/'
+	mcl_inflation = myargs.orthofinder_mcl_inflation
 	surrounding_bp = myargs.surrounding_bp
 	cpus = myargs.cpus
 	max_memory = myargs.max_memory
+	annotate = myargs.annotate
+	fine_resolution = myargs.fine_resolution_orthology
+	quality_alignments = myargs.quality_alignments
 
 	if os.path.isdir(outdir):
-		sys.stderr.write("Output directory exists! Exiting\n ")
-		sys.exit(1)
+		sys.stderr.write("Output directory exists! Overwriting in 5 seconds, but only where needed.\n ")
 	else:
 		os.system('mkdir %s' % outdir)
 
@@ -123,6 +130,10 @@ def bofasa():
 	START WORKFLOW
 	"""
 
+	checkdir = outdir + 'Checkpoint_Files/'
+	if not os.path.isdir(checkdir):
+		util.setupReadyDirectory([checkdir])
+	
 	sys.stdout.write('Input command:\n%s\n' % ' '.join(sys.argv))
 
 	# create logging object
@@ -130,9 +141,11 @@ def bofasa():
 	logObject = util.createLoggerObject(log_file)
 	logObject.info("Saving parameters for future records.")
 	parameters_file = outdir + 'Parameter_Inputs.txt'
-	parameter_values = [prepare_input_dir, outdir, surrounding_bp, cpus, max_memory]
-	parameter_names = ["prepare_input Directory", "Output Directory", "Surrounding BP", 
-					   "Number of CPUs", "Maximum Memory in GB"]
+	parameter_values = [prepare_input_dir, outdir, surrounding_bp, mcl_inflation, annotate, quality_alignments, fine_resolution, cpus, max_memory]
+	parameter_names = ["prepare_input directory", "Output directory", "Surrounding BP",  "MCL inflation",
+					   "Perform annotations of consensus ortholog sequences", "High-quality alignment method",
+					   "Run phylogeny-based fine-resolution orthology inference",
+					   "Number of CPUs", "Maximum memory in GB"]
 	util.logParametersToFile(parameters_file, parameter_names, parameter_values)
 	logObject.info("Done saving parameters!")
 
@@ -149,19 +162,90 @@ def bofasa():
 			sys.stdout.write("Error setting memory limit\n")
 
 	# Step 1: Run OrthoFinder
-	sys.stdout.write('--------------------\nStep 1\n--------------------\nRunning OrthoFinder.\n')
+	step1_checkpoint_file = checkdir + 'Step1.txt'
+	msg = '--------------------\nStep 1\n--------------------\nRunning OrthoFinder.'
+	sys.stdout.write(msg + '\n')
+	logObject.info(msg)
 	orthofinder_input_dir = prepare_input_dir + 'Formatted_Proteomes/'
 	orthofinder_results_dir = outdir + 'OrthoFinder_Results/'
-	orthofinder_cmd = ['orthofinder', '-f', orthofinder_input_dir, '-o', orthofinder_results_dir, '-t', str(cpus), '-og']
+	
+	if not os.path.isfile(step1_checkpoint_file):
+		orthofinder_cmd = ['orthofinder', '-f', orthofinder_input_dir, '-o', orthofinder_results_dir, '-t', str(cpus), '-og', '-I', str(mcl_inflation)]
+		try:
+			subprocess.call(' '.join(orthofinder_cmd), shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+							executable='/bin/bash')
+			logObject.info('Successfully ran: %s' % ' '.join(orthofinder_cmd))
+		except Exception as e:
+			logObject.error('Had an issue running: %s' % ' '.join(orthofinder_cmd))
+			sys.stderr.write('Had an issue running: %s' % ' '.join(orthofinder_cmd))
+			logObject.error(e)
+			sys.exit(1)
+		os.system('echo "DONE" > %s' % step1_checkpoint_file)
+
+	orthofinder_tsv_file = orthofinder_results_dir + [sd for sd in os.listdir(orthofinder_results_dir)][0] + '/Orthogroups/Orthogroups.tsv'
+	orthofinder_tsv_singletons_file = orthofinder_results_dir + [sd for sd in os.listdir(orthofinder_results_dir)][0] + '/Orthogroups/Orthogroups_UnassignedGenes.tsv'
 	try:
-		subprocess.call(' '.join(orthofinder_cmd), shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-						executable='/bin/bash')
-		logObject.info('Successfully ran: %s' % ' '.join(orthofinder_cmd))
-	except Exception as e:
-		logObject.error('Had an issue running: %s' % ' '.join(orthofinder_cmd))
-		sys.stderr.write('Had an issue running: %s' % ' '.join(orthofinder_cmd))
-		logObject.error(e)
-		sys.exit(1)
+		assert(os.path.isfile(orthofinder_tsv_file) or os.path.isfile(orthofinder_tsv_singletons_file))
+	except:
+		logObject.error('Could not validate OrthoFinder results exist. Perhaps investigate the OrthoFinder log files for further logging information.')
+		sys.stderr.write('Could not validate Orthofinder results exist. Perhaps investigate the OrthoFinder log files for further logging information.\n')
+
+	# Step 2: Determine surrounding contexts for each ortholog group
+	step2_checkpoint_file = checkdir + 'Step2.txt'
+	msg = '--------------------\nStep 2\n--------------------\nDetermining neighborhoods for each ortholog group.'
+	sys.stdout.write(msg + '\n')
+	logObject.info(msg)
+	surround_info_dir = outdir + 'Surrounding_Context_Information/'
+	og_context_info_file = outdir + 'Coarse_OrthoGroup_Contexts.tsv'
+	if not os.path.isfile(step2_checkpoint_file):
+		util.setupReadyDirectory([surround_info_dir])
+		util.determineOrthologGroupContexts(prepare_input_dir, og_context_info_file, surround_info_dir, orthofinder_tsv_file, orthofinder_tsv_singletons_file, logObject, surrounding_bp=surrounding_bp, cpus=cpus)
+		os.system('echo "DONE" > %s' % step2_checkpoint_file)
+
+	if annotate or fine_resolution:
+		# Step 3: Construct ortholog group alignments
+		step3_checkpoint_file = checkdir + 'Step3.txt'
+		msg = '--------------------\nStep 3\n--------------------\nConstructing ortholog group alignments.'
+		sys.stdout.write(msg + '\n')
+		logObject.info(msg)
+		og_algn_dir = outdir + 'Ortholog_Group_Alignments/'
+		og_seqs_dir = orthofinder_results_dir + [x for x in os.listdir(orthofinder_results_dir)][0] + '/Orthogroup_Sequences/'
+		try:
+			assert(os.path.isdir(og_seqs_dir))
+		except:
+			logObject.error('Could not validate OrthoFinder results exist. Perhaps investigate the OrthoFinder log files for further logging information.')
+			sys.stderr.write('Could not validate Orthofinder results exist. Perhaps investigate the OrthoFinder log files for further logging information.\n')
+
+		if not os.path.isfile(step3_checkpoint_file):
+			util.setupReadyDirectory([og_algn_dir])
+			util.createProteinAlignments(og_seqs_dir, og_algn_dir, logObject, use_super5=not(quality_alignments), cpus=cpus)
+			os.system('echo "DONE" > %s' % step3_checkpoint_file)
+	
+		if fine_resolution:
+			pass
+			# Step 4: Trim alignments and construct gene phylogenies
+			
+			# Step 5: Process gene phylogenies and context information to determine fine-resoultion ortholog groups
+		
+			# Step 6: Reprocess stats and create directory of ortholog group seqeunces for multi-sequences ortholog groups
+		
+		if annotate:
+			# Step 7: Determine consensus sequences for ortholog groups
+			step7_checkpoint_file = checkdir + 'Step7.txt'
+			msg = '--------------------\nStep 7\n--------------------\nConstructing ortholog group consensus sequences.'
+			sys.stdout.write(msg + '\n')
+			logObject.info(msg)
+			og_hmms_dir = outdir + 'Ortholog_Group_HMMs/'
+			og_cons_dir = outdir + 'Ortholog_Group_Consensus_Sequences/'
+			concatenated_consensus_seqs_file = outdir + 'Orthogroup_Consensus_Sequences.faa'
+			if not os.path.isfile(step7_checkpoint_file):
+				util.setupReadyDirectory([og_hmms_dir, og_cons_dir])
+				util.createProfileHMMsAndConsensusSeqs(og_algn_dir, og_hmms_dir, og_cons_dir, logObject, cpus=cpus)
+				util.concatenateConsensusAlignment(og_cons_dir, orthofinder_tsv_singletons_file, prepare_input_dir, concatenated_consensus_seqs_file, logObject)
+				os.system('echo "DONE" > %s' % step7_checkpoint_file)
+
+			# Step 8: Perform annotations based on consensus sequences
+
 
 	# Close logging object and exit
 	util.closeLoggerObject(logObject)

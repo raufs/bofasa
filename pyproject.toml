@@ -9,7 +9,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-script-files=["bin/bofasa"]
+script-files=["bin/bofasa", "bin/prepare_input", "scripts/listAllGenomesInDirectory.py", "scripts/processNCBIGenBankAndCreateInputs.py", "scripts/runProdigalAndMakeInputsForBofasa.py"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
