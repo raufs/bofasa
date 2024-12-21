@@ -2,16 +2,19 @@ name: bofasa
 channels:
   - conda-forge
   - bioconda
-  - defaults
 dependencies:
-  - "python=3.10"
+  - python>=3.10
   - setuptools
   - biopython
   - pip
   - orthofinder=2.5.5
-  - diamond=2.0.15
+  - diamond>=2.1.7
   - prodigal
   - pyrodigal
   - scipy
   - muscle=5.1
-  - hmmer
+  - pyhmmer
+  - genomad
+  - curl
+  - rich-argparse
+  - tqdm

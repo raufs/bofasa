@@ -7,7 +7,7 @@
 
 # BSD 3-Clause License
 #
-# Copyright (c) 2024, Kalan-Lab
+# Copyright (c) 2024, Rauf Salamzade
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -44,42 +44,29 @@ from bofasa import util
 import subprocess
 import multiprocessing
 import shutil
+from rich_argparse import RawTextRichHelpFormatter
 
 def create_parser():
 	""" Parse arguments """
 	parser = argparse.ArgumentParser(description="""
 	Program: bofasa
+	Authors: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan 
+	Affiliation: University of Wisconsin - Madsion, McMaster University								  
 								  
 	bacterial ortholog finding and syntenic analysis (bofasa)
 	
-    bofasa aims to prioritize accuracy over speed and is thus intended for investigations with
-	fewer than <100 genomes. bofasa is specifically designed for multi-species analyses, if 
-	working with a single species, we recommend checking out some other alternatives, e.g.
-	Panaroo - which offers a boost in accuracy and speed through use of syntenic conservation.
-								  						  							  
-	bofasa determines coarse ortholog groups using OrthoFinder (Emms and Kelly 2016; 
-    Emms and Kelly 2019). Importantly, domain resolution proteome input files can be prepared 
-	by prepare_input as an option and the inflation parameter for MCL in OrthoFinder is decreased
-	to produce larger (but fewer) clusters of ortholog groups. If requested, bofasa then constructs 
-	gene trees for all ortholog groups and attempts to parse unrooted trees using all nodes and leafs 
-	as rooting sources to optimally resolve more fine-grain ortholog groups. Finally, bofasa performs 
-	syntenic analysis to compute a score quantifying the level of conservation for each ortholog 
-	group and annotates genes and domains using PGAP/KOfam HMMs and Pfam HMMs, respectively.
-								  
-	bofasa aims to prioritize accuracy over speed and is thus intended for investigations with
-	fewer than <100 genomes. 
-								  
-	#TODO: Help with 
-	""", formatter_class=argparse.RawTextHelpFormatter)
+    bofasa aims to prioritize accuracy over speed and is thus intended 
+	for investigations with fewer than <200 genomes. bofasa is 
+	specifically designed for multi-species analyses.		  
+	""", formatter_class=argparse.RawTextRichHelpFormatter)
 
-	parser.add_argument('-i', '--prepare_input_dir', help='Directory produced by prepare_input.', required=False, default=None)
-	parser.add_argument('-o', '--output_dir', help='Output directory path.', required=True)
-	parser.add_argument('-mi', '--orthofinder_mcl_inflation', type=float, help="MCL inflation parameter for determining coarse ortholog groups via OrthoFinder [Default is 1.2; to perform the most coarse clustering].", required=False, default=1.2)
-	parser.add_argument('-sr', '--surrounding_bp', type=int, help="The number of basepairs to look up and downstream for syntenic analysis [Default is 10000].", required=False, default=10000)
-	parser.add_argument('-a', '--annotate', action='store_true', help="Create consensus sequences of ortholog groups and annotate.", required=False, default=False)
-	parser.add_argument('-qa', '--quality_alignments', action='store_true', help="Prioritize quality over speed for constructing ortholog group protein alignments. Uses MUSCLE align mode instead of super5 mode.", required=False, default=False)
-	parser.add_argument('-fr', '--fine_resolution_orthology', action='store_true', help="Perform fine resolution orthology inference based on phylogenetic analysis.", required=False, default=False)
-	parser.add_argument('-c', '--cpus', type=int, help="Total number of cpus/threads to use for running OrthoFinder2/prodigal.\n[Default is 1].", required=False, default=1)
+	parser.add_argument('-i', '--bofasa-prep-dir', help='Inputs directory produced by bofasa-prep.', required=True)
+	parser.add_argument('-o', '--output_dir', help='Output directory.', required=True)
+	parser.add_argument('-mi', '--mcl-inflation', type=float, help="MCL inflation parameter for determining coarse ortholog groups via OrthoFinder [Default is 1.2; to perform the most coarse clustering].", required=False, default=1.5)
+	parser.add_argument('-sr', '--surrounding-bp', type=int, help="The number of basepairs to look up and downstream for syntenic analysis [Default is 10000].", required=False, default=10000)
+	parser.add_argument('-ph', '--profile-hmms', action='store_true', help="Create profile HMMs of ortholog groups for annotation of new genomes.", required=False, default=False)
+	parser.add_argument('-qa', '--quality-alignments', action='store_true', help="Prioritize quality over speed for constructing ortholog group protein alignments. Uses MUSCLE align mode instead of super5 mode.", required=False, default=False)
+	parser.add_argument('-c', '--threads', type=int, help="Total number of cores/threads to use [Default is 4].", required=False, default=4)
 	parser.add_argument('-mm', '--max_memory', type=int, help='Uses resource module to set soft memory limit. Provide in Giga-bytes.\nGenerally memory shouldn\'t be a major concern unless working\nwith hundreds of large metagenomes. [currently\nexperimental; default is None].', default=None, required=False)
 	parser.add_argument('-v', '--version', action='store_true', help="Get version and exit.", required=False, default=False)
 

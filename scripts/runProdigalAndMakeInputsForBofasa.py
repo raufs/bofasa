@@ -62,7 +62,7 @@ def create_parser():
 	parser.add_argument('-o', '--output_directory', help='Path to output directory. Should already be created!', required=True)
 	parser.add_argument('-s', '--sample_name', help='Sample name', default='Sample', required=False)
 	parser.add_argument('-l', '--locus_tag', help='Locus tag', default='AAA', required=False)
-	parser.add_argument('-gcm', '--gene_calling_method', help='Method to use for gene calling. Options are: pyrodigal, prodigal,\nor prodigal-gv. [Default is pyrodigal].', required=False, default='pyrodigal')
+	parser.add_argument('-gcm', '--gene_calling_method', help='Method to use for gene calling. Options are: pyrodigal or prodigal [Default is pyrodigal].', required=False, default='pyrodigal')
 	parser.add_argument('-m', '--meta_mode', action='store_true', help='Use meta mode instead of single for pyrodigal/prodigal. Automatically turned on if prodigal-gv is requested.', default=False, required=False)
 
 	args = parser.parse_args()
@@ -120,10 +120,8 @@ def prodigalAndReformat():
 		prodigal_cmd = ['pyrodigal', '-i', input_genomic_fasta_file, '-a', og_prod_pred_prot_file]
 	elif gene_calling_method == 'prodigal':
 		prodigal_cmd = ['prodigal', '-i', input_genomic_fasta_file, '-a', og_prod_pred_prot_file]
-	elif gene_calling_method == 'prodigal-gv':
-		prodigal_cmd = ['prodigal-gv', '-p', 'meta', '-i', input_genomic_fasta_file, '-a', og_prod_pred_prot_file]
 	else:
-		sys.stderr.write('The gene-calling method selected is not a valid option. Has to be either: prodigal, pyrodigal, or prodigal-gv.\n')
+		sys.stderr.write('The gene-calling method selected is not a valid option. Has to be either: prodigal or pyrodigal.\n')
 		sys.exit(1)
 
 	if meta_mode and not gene_calling_method == 'prodigal-gv':
@@ -176,7 +174,7 @@ def prodigalAndReformat():
 			if (scaff_len-end) < 1000 or start < 1000:
 				prot_score = '0'
 			pc_prod_pred_prot_handle.write('>' + new_prot_id + ' ' + scaffold + ' ' + str(start) + ' ' + str(end) + ' ' + dir_str + '\n' + str(rec.seq) + '\n')
-			pc_coord_bed_handle.write('\t'.join([str(x) for x in [scaffold, start, end, new_prot_id, prot_score, direction]]) + '\n')
+			pc_coord_bed_handle.write('\t'.join([str(x) for x in [scaffold, start, end, new_prot_id, prot_score, dir_str]]) + '\n')
 	pc_prod_pred_prot_handle.close()
 	pc_coord_bed_handle.close()
 

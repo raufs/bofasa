@@ -9,6 +9,7 @@ from operator import itemgetter
 from collections import defaultdict
 import traceback
 import numpy as np
+import tqdm
 import gzip
 import copy
 import itertools
@@ -19,9 +20,28 @@ import pkg_resources  # part of setuptools
 import shutil
 import statistics
 from scipy import stats
+import decimal 
+import pyhmmer
 
 version = pkg_resources.require("bofasa")[0].version
 
+def runCmd(cmd, logObject, check_files=[], check_directories=[], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL):
+	if logObject != None:
+		logObject.info('Running %s' % ' '.join(cmd))
+	try:
+		subprocess.call(' '.join(cmd), shell=True, stdout=stdout, stderr=stderr,
+						executable='/bin/bash')
+		for cf in check_files:
+			assert (os.path.isfile(cf))
+		for cd in check_directories:
+			assert (os.path.isdir(cd))
+		if logObject != None:
+			logObject.info('Successfully ran: %s' % ' '.join(cmd))
+	except:
+		if logObject != None:
+			logObject.error('Had an issue running: %s' % ' '.join(cmd))
+			logObject.error(traceback.format_exc())
+		raise RuntimeError('Had an issue running: %s' % ' '.join(cmd))
 
 def multiProcess(input):
 	"""
@@ -150,60 +170,78 @@ def setupReadyDirectory(directories):
 		sys.stderr.write(traceback.format_exc())
 		sys.exit(1)
 
-def processGenomesUsingProdigal(sample_genomes, results_directory, logObject, cpus=1, locus_tag_length=3, gene_calling_method="pyrodigal", meta_mode=False, avoid_locus_tags=set([])):
+
+def createLocusTagOptions(locus_tag_length):
+	try:
+		alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+		possible_locustags = sorted(list(set([''.join(list(x)) for x in list(itertools.product(alphabet, repeat=3))])))
+		return(possible_locustags)
+	except:
+		sys.stderr.write(traceback.format_exc())
+		sys.exit(1)
+
+def processGenomesUsingProdigal(sample_genomes, prodigal_outdir, prodigal_proteomes, prodigal_genbanks, logObject,
+								threads=1, locus_tag_length=3, gene_calling_method="pyrodigal", meta_mode=False):
 	"""
 	Description:
 	This function oversees processing of input genomes to create proteome and GenBank files using p(y)rodigal.
 	********************************************************************************************************************
 	Parameters:
 	- sample_genomes: A dictionary mapping sample identifiers to the path of their genomes in FASTA format.
-	- prodigal_outdir: Workspace where gene-calling results will be written to.
+	- prodigal_outdir: Workspace where prodigal (intermediate) results should be written to directly.
+	- prodigal_proteomes: Directory where final proteome files (in FASTA format) for target genomes will be saved.
+	- prodigal_genbanks_directory: Directory where final GenBank files for target genomes will be saved.
 	- logObject: A logging object.
-	- cpus: The number of CPUs to use.
+	- threads: The number of threads to use.
 	- locus_tag_length: The length of the locus tags to generate.
-	- use_prodigal: Whether to use prodigal instead of pyrodigal.
+	- gene_calling_method: Whether to use pyrodigal (default), prodigal, or prodigal-gv.
+	- meta_mode: Whether to run pyrodigal/prodigal in metagenomics mode.
 	- avoid_locus_tags: Whether to avoid using certain locus tags.
 	********************************************************************************************************************
 	"""
 	try:
-		alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-		possible_locustags = sorted(list(
-			set([''.join(list(x)) for x in list(itertools.product(alphabet, repeat=locus_tag_length))]).difference(
-				avoid_locus_tags)))
+		possible_locustags = createLocusTagOptions(locus_tag_length)
 
 		prodigal_cmds = []
-		for i, sample in enumerate(sample_genomes):
+		for i, sample in enumerate(sorted(sample_genomes)):
 			sample_assembly = sample_genomes[sample]
 			sample_locus_tag = ''.join(list(possible_locustags[i]))
 
-			prodigal_cmd = ['runProdigalAndMakeInputsForBofasa.py', '-i', sample_assembly, '-s', sample,
-							'-l', sample_locus_tag, '-o', results_directory]
-			if gene_calling_method == 'prodigal':
-				prodigal_cmd += ['-p']
+			prodigal_cmd = ['runProdigalAndMakeProperGenbank.py', '-i', sample_assembly, '-s', sample, '-gcm', gene_calling_method,
+							'-l', sample_locus_tag, '-o', prodigal_outdir]
 			if meta_mode:
 				prodigal_cmd += ['-m']
 			prodigal_cmds.append(prodigal_cmd + [logObject])
 
-		p = multiprocessing.Pool(cpus)
-		p.map(multiProcess, prodigal_cmds)
+		msg = "Running %s for %d genomes" % (gene_calling_method, len(prodigal_cmds)) 
+		logObject.info(msg)
+		sys.stdout.write(msg + '\n')
+
+		p = multiprocessing.Pool(threads)
+		for _ in tqdm.tqdm(p.imap_unordered(multiProcess, prodigal_cmds), total=len(prodigal_cmds)):
+			pass
 		p.close()
 
 		for sample in sample_genomes:
 			try:
-				assert (os.path.isfile(results_directory + sample + '.faa') and os.path.isfile(results_directory + sample + '.coords.bed'))
+				assert (os.path.isfile(prodigal_outdir + sample + '.faa') and os.path.isfile(
+					prodigal_outdir + sample + '.gbk'))
+				os.system('mv %s %s' % (prodigal_outdir + sample + '.gbk', prodigal_genbanks))
+				os.system('mv %s %s' % (prodigal_outdir + sample + '.faa', prodigal_proteomes))
 			except:
-				sys.stderr.write("Unable to validate successful .bed & .faa creation for sample %s\n" % sample)
+				sys.stderr.write("Unable to validate successful genbank/predicted-proteome creation for sample %s\n" % sample)
 				sys.stderr.write(traceback.format_exc())
 				sys.exit(1)
 	except Exception as e:
 		logObject.error(
-			"Problem with creating commands for running prodigal via script runProdigalAndMakeInputsForBofasa.py. Exiting now ...")
+			"Problem with creating commands for running prodigal via script runProdigalAndMakeProperGenbank.py. Exiting now ...")
 		logObject.error(traceback.format_exc())
 		sys.stderr.write(traceback.format_exc())
 		sys.exit(1)
-
-def processGenomesAsGenbanks(sample_genomes, results_directory, logObject, cpus=1, locus_tag_length=3, avoid_locus_tags=set([]),
-							 rename_locus_tags=False):
+		
+def processGenomesAsGenbanks(sample_genomes, proteomes_directory, genbanks_directory, gene_name_mapping_outdir,
+							 logObject, threads=1, locus_tag_length=3, avoid_locus_tags=set([]),
+							 rename_locus_tags=False, rename_problem_gbks=False):
 	"""
 	Description:
 	This function oversees processing of input genomes as GenBanks with CDS features already available.
@@ -215,7 +253,7 @@ def processGenomesAsGenbanks(sample_genomes, results_directory, logObject, cpus=
 	- genbanks_directory: Directory where final GenBank files for target genomes will be saved.
 	- gene_name_mapping_outdir: Directory where mapping files for original locus tags to new locus tags will be saved.
 	- logObject: A logging object.
-	- cpus: The number of CPUs to use.
+	- threads: The number of threads to use.
 	- locus_tag_length: The length of the locus tags to generate.
 	- avoid_locus_tags: Whether to avoid using certain locus tags.
 	- rename_locus_tags: Whether to rename locus tags.
@@ -232,139 +270,56 @@ def processGenomesAsGenbanks(sample_genomes, results_directory, logObject, cpus=
 		possible_locustags = sorted(list(
 			set([''.join(list(x)) for x in list(itertools.product(alphabet, repeat=locus_tag_length))]).difference(
 				avoid_locus_tags)))
-		lacking_cds_gbks = set([])
 
-		for i, sample in enumerate(sample_genomes):
+		for i, sample in enumerate(sorted(sample_genomes)):
 			sample_locus_tag = possible_locustags[i]
 			sample_genbank = sample_genomes[sample]
-			process_cmd = ['processNCBIGenBankAndCreateInputs.py', '-i', sample_genbank, '-s', sample,
-						   '-o', results_directory]
-			if rename_locus_tags:
+			process_cmd = ['processNCBIGenBank.py', '-i', sample_genbank, '-s', sample, 
+						   '-g', genbanks_directory, '-p', proteomes_directory, '-n', 
+						   gene_name_mapping_outdir]
+			if rename_problem_gbks:
+				process_cmd += ['-r', '-l', sample_locus_tag]
+			elif rename_locus_tags:
 				process_cmd += ['-l', sample_locus_tag]
 			process_cmds.append(process_cmd + [logObject])
+				
+		msg = "Attempting to process/re-format %d genomes provided as GenBank files" % len(process_cmds) 
+		logObject.info(msg)
+		sys.stdout.write(msg + '\n')
 
-		p = multiprocessing.Pool(cpus)
-		p.map(multiProcess, process_cmds)
+		p = multiprocessing.Pool(threads)
+		for _ in tqdm.tqdm(p.imap_unordered(multiProcess, process_cmds), total=len(process_cmds)):
+			pass
 		p.close()
 
+		successfully_processed = 0
 		for sample in sample_genomes:
-			if sample in lacking_cds_gbks:
-				continue
+			faa_file = proteomes_directory + sample + '.faa'
+			gbk_file = genbanks_directory + sample + '.gbk'
+			map_file = gene_name_mapping_outdir + sample + '.txt'
 			try:
-				assert (os.path.isfile(results_directory + sample + '.faa') and
-						os.path.isfile(results_directory + sample + '.coords.bed') and
-						os.path.isfile(results_directory + sample + '.txt'))
-			except:
-				sys.stderr.write("Unable to validate successful genbank/predicted-proteome creation for sample %s" % sample)
-				sys.stderr.write(traceback.format_exc())
-				sys.exit(1)
+				assert (os.path.isfile(faa_file) and os.path.isfile(gbk_file) and os.path.isfile(map_file))
+				assert (os.path.getsize(faa_file) > 0 and os.path.getsize(gbk_file) > 0 and os.path.getsize(map_file) > 0)
+				sample_genomes_updated[sample] = genbanks_directory + sample + '.gbk'
+				successfully_processed += 1
+			except AssertionError:
+				if os.path.isfile(faa_file):
+					os.system('rm -f ' + faa_file)
+				if os.path.isfile(gbk_file):
+					os.system('rm -f ' + gbk_file)
+				if os.path.isfile(map_file):
+					os.system('rm -f ' + map_file)
+				sys.stderr.write("Unable to validate successful genbank reformatting/predicted-proteome creation for sample %s\n" % sample)
+				pass
+
+		sys.stdout.write('Successfully processed %s genomes!\n' % successfully_processed)
+	
 	except Exception as e:
 		logObject.error("Problem with processing existing Genbanks to (re)create genbanks/proteomes. Exiting now ...")
 		logObject.error(traceback.format_exc())
 		sys.stderr.write(traceback.format_exc())
 		sys.exit(1)
 	return sample_genomes_updated
-
-
-def determineGenomeFormat(inputs):
-	"""
-	Description:
-	This function determines whether a target sample genome is provided in GenBank or FASTA format.
-	********************************************************************************************************************
-	Parameters:
-	- input a list which can be expanded to the following:
-		- sample: The sample identifier / name.
-		- genome_File: The path to the genome file.
-		- format_assess_dir: The directory where the genome type information for the sample will be written.
-		- logObject: A logging object.
-	********************************************************************************************************************
-	"""
-
-	sample, genome_file, format_assess_dir, logObject = inputs
-	try:
-		gtype = 'unknown'
-		if is_fasta(genome_file):
-			gtype = 'fasta'
-		if is_genbank(genome_file, check_for_cds=True):
-			if gtype == 'fasta':
-				gtype = 'unknown'
-			else:
-				gtype = 'genbank'
-		sample_res_handle = open(format_assess_dir + sample + '.txt', 'w')
-		sample_res_handle.write(sample + '\t' + str(gtype) + '\n')
-		sample_res_handle.close()
-	except:
-		sys.stderr.write(traceback.format_exc())
-		sys.exit(1)
-
-def parseSampleGenomes(genome_listing_file, format_assess_dir, format_predictions_file, logObject, cpus=1):
-	"""
-	Description:
-	This function parses the input sample target genomes and determines whether they are all provided in the same format
-	and whether everything aligns with expectations.
-	********************************************************************************************************************
-	Parameters:
-	- genome_listing_file: A tab separated file with two columns: (1) sample name, (2) path to genome file.
-	- format_assess_dir: The directory/workspace where genome format information will be saved.
-	- format_predictions_file: The file where to concatenate genome format information.
-	- logObject: A logging object.
-	- cpus: The number of CPUs to use.
-	********************************************************************************************************************
-	Returns:
-	- sample_genomes: A dictionary which maps sample names to genome file paths (note, unknown format files will be
-	                  dropped).
-	- format_prediction: The format prediction for genome files.
-	********************************************************************************************************************
-	"""
-	try:
-		sample_genomes = {}
-		assess_inputs = []
-		with open(genome_listing_file) as oglf:
-			for line in oglf:
-				line = line.strip()
-				ls = line.split('\t')
-				sample, genome_file = ls
-				assess_inputs.append([sample, genome_file, format_assess_dir, logObject])
-				try:
-					assert (os.path.isfile(genome_file))
-				except:
-					logObject.warning(
-						"Problem with finding genome file %s for sample %s, skipping" % (genome_file, sample))
-					continue
-				if sample in sample_genomes:
-					logObject.warning('Skipping genome %s for sample %s because a genome file was already provided for this sample' % (genome_file, sample))
-					continue
-				sample_genomes[sample] = genome_file
-
-		p = multiprocessing.Pool(cpus)
-		p.map(determineGenomeFormat, assess_inputs)
-		p.close()
-
-		os.system('find %s -maxdepth 1 -type f | xargs cat >> %s' % (format_assess_dir, format_predictions_file))
-
-		format_prediction = 'mixed'
-		gtypes = set([])
-		with open(format_predictions_file) as ofpf:
-			for line in ofpf:
-				line = line.strip()
-				sample, gtype = line.split('\t')
-				if gtype == 'unknown':
-					sys.stderr.write('unsure about format for genome %s for sample %s, skipping inclusion...\n' % (sample_genomes[sample], sample))
-					logObject.warning('unsure about format for genome %s for sample %s, skipping inclusion...' % (sample_genomes[sample], sample))
-					del sample_genomes[sample]
-				else:
-					gtypes.add(gtype)
-
-		if len(gtypes) == 1:
-			format_prediction = list(gtypes)[0]
-
-		return ([sample_genomes, format_prediction])
-
-	except Exception as e:
-		logObject.error("Problem with creating commands for running Prodigal. Exiting now ...")
-		logObject.error(traceback.format_exc())
-		sys.stderr.write(traceback.format_exc())
-		sys.exit(1)
 
 def extractGeneContexts(inputs):
 	sample, coords_file, output_file, gene_to_og, og_genes, surrounding_bp, logObject = inputs
@@ -474,7 +429,7 @@ def extractGeneContexts(inputs):
 		sys.stderr.write(traceback.format_exc())
 		sys.exit(1)
 
-def determineOrthologGroupContexts(prepare_input_dir, og_context_info_file, surround_info_dir, of_tsv, of_singletons_tsv, logObject, surrounding_bp=10000, cpus=1):
+def determineOrthologGroupContexts(prepare_input_dir, og_context_info_file, surround_info_dir, of_tsv, of_singletons_tsv, logObject, surrounding_bp=10000, threads=1):
 	"""
 	Description:
 	This function loads coordinate information of CDSs for each input genome into a dictionary and also 
@@ -482,7 +437,7 @@ def determineOrthologGroupContexts(prepare_input_dir, og_context_info_file, surr
 	Parameters:
 	- prepare_input_dir: The results directory from a prior run of prepare_input for preparing genomes for bofasa.
 	- logObject: A logging object.
-	- cpus: The number of CPUs to use.
+	- threads: The number of threads to use.
 	********************************************************************************************************************
 	"""
 	try:
@@ -544,7 +499,7 @@ def determineOrthologGroupContexts(prepare_input_dir, og_context_info_file, surr
 				output_file = surround_info_dir + sample + '.tsv'
 				genome_params.append([sample, coords_file, output_file, gene_to_og, og_genes, surrounding_bp, logObject])
 
-		p = multiprocessing.Pool(cpus)
+		p = multiprocessing.Pool(threads)
 		p.map(extractGeneContexts, genome_params)
 		p.close()
 
@@ -722,7 +677,7 @@ def is_genbank(gbk, check_for_cds=False):
 	except:
 		return False
 
-def createProteinAlignments(prot_dir, prot_algn_dir, logObject, use_super5=True, cpus=1):
+def createProteinAlignments(prot_dir, prot_algn_dir, logObject, use_super5=True, threads=1):
 	"""
 	Description:
 	This function creates protein alignments from a directory of protein sequences.
@@ -734,16 +689,16 @@ def createProteinAlignments(prot_dir, prot_algn_dir, logObject, use_super5=True,
 	- prot_algn_dir: A directory to write protein alignments.
 	- logObject: A logging object.
 	- use_super5: Whether to use the SUPER5 algorithm for MUSCLE alignment.
-	- cpus: The number of CPUs to use for alignment.
+	- threads: The number of threads to use for alignment.
 	"""
 	try:
 		for pf in os.listdir(prot_dir):
 			prefix = '.fa'.join(pf.split('.fa')[:-1])
 			prot_file = prot_dir + pf
 			prot_algn_file = prot_algn_dir + prefix + '.msa.faa'
-			align_cmd = ['muscle', '-align', prot_file, '-output', prot_algn_file, '-amino', '-threads', str(cpus)]
+			align_cmd = ['muscle', '-align', prot_file, '-output', prot_algn_file, '-amino', '-threads', str(threads)]
 			if use_super5:
-				align_cmd = ['muscle', '-super5', prot_file, '-output', prot_algn_file, '-amino', '-threads', str(cpus)]
+				align_cmd = ['muscle', '-super5', prot_file, '-output', prot_algn_file, '-amino', '-threads', str(threads)]
 			try:
 				subprocess.call(' '.join(align_cmd), shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
 								executable='/bin/bash')
@@ -761,7 +716,7 @@ def createProteinAlignments(prot_dir, prot_algn_dir, logObject, use_super5=True,
 		sys.stderr.write(traceback.format_exc())
 		sys.exit(1)
 
-def createProfileHMMsAndConsensusSeqs(prot_algn_dir, phmm_dir, cons_dir, logObject, cpus=1):
+def createProfileHMMsAndConsensusSeqs(prot_algn_dir, phmm_dir, cons_dir, logObject, threads=1):
 	"""
 	Description:
 	This function creates profile HMMs and emits consensus sequences based on protein MSAs using HMMER.
@@ -773,7 +728,7 @@ def createProfileHMMsAndConsensusSeqs(prot_algn_dir, phmm_dir, cons_dir, logObje
 	- phmm_dir: The directory where profile HMMs in HMMER3 HMM format will be saved.
 	- cons_dir: The directory where consensus sequences in FASTA format will be saved.
 	- logObject: A logging object.
-	- cpus: The number of CPUs to use.
+	- threads: The number of threads to use.
 	*******************************************************************************************************************
 	"""
 	try:
@@ -786,7 +741,7 @@ def createProfileHMMsAndConsensusSeqs(prot_algn_dir, phmm_dir, cons_dir, logObje
 			prot_cons_file = cons_dir + prefix + '.cons.faa'
 			hmmbuild_cmds.append(['hmmbuild', '--amino', '--cpu', '2', '-n', prefix, prot_hmm_file, prot_algn_file, logObject])
 			hmmemit_cmds.append(['hmmemit', '-c', '-o', prot_cons_file, prot_hmm_file, logObject])
-		p = multiprocessing.Pool(cpus)
+		p = multiprocessing.Pool(threads)
 		p.map(multiProcess, hmmbuild_cmds)
 		p.map(multiProcess, hmmemit_cmds)
 		p.close()
@@ -841,7 +796,7 @@ def concatenateConsensusAlignment(og_cons_dir, orthofinder_tsv_singletons_file, 
 		sys.exit(1)
 
 
-def trimAlignments(prot_algn_dir, codo_algn_dir, prot_algn_trim_dir, codo_algn_trim_dir, logObject, cpus=1):
+def trimAlignments(prot_algn_dir, codo_algn_dir, prot_algn_trim_dir, codo_algn_trim_dir, logObject, threads=1):
 	"""
 	Description:
 	This function trims protein and codon alignments using TrimAl.
@@ -852,7 +807,7 @@ def trimAlignments(prot_algn_dir, codo_algn_dir, prot_algn_trim_dir, codo_algn_t
 	- prot_algn_trim_dir: The directory where the trimmed protein alignments will be saved.
 	- codo_algn_trim_dir: The directory where the trimmed codon alignments will be saved.
 	- logObject: A logging object.
-	- cpus: The number of CPUs to use for trimming the alignments.
+	- threads: The number of threads to use for trimming the alignments.
 	*******************************************************************************************************************
 	"""
 	try:
@@ -865,7 +820,7 @@ def trimAlignments(prot_algn_dir, codo_algn_dir, prot_algn_trim_dir, codo_algn_t
 			codo_algn_trim_file = codo_algn_trim_dir + prefix + '.msa.fna'
 			trim_cmds.append(['trimal', '-in', prot_algn_file, '-out', prot_algn_trim_file, '-keepseqs', '-gt', '0.9', logObject])
 			trim_cmds.append(['trimal', '-in', codo_algn_file, '-out', codo_algn_trim_file, '-keepseqs', '-gt', '0.9', logObject])
-		p = multiprocessing.Pool(cpus)
+		p = multiprocessing.Pool(threads)
 		p.map(util.multiProcess, trim_cmds)
 		p.close()
 	except Exception as e:
@@ -875,7 +830,7 @@ def trimAlignments(prot_algn_dir, codo_algn_dir, prot_algn_trim_dir, codo_algn_t
 		sys.stderr.write(traceback.format_exc())
 		sys.exit(1)
 
-def createGeneTrees(codo_algn_trim_dir, tree_dir, logObject, cpus=1):
+def createGeneTrees(codo_algn_trim_dir, tree_dir, logObject, threads=1):
 	"""
 	Description:
 	This function creates gene trees from trimmed codon alignments using FastTree2 for ortholog groups.
@@ -884,7 +839,7 @@ def createGeneTrees(codo_algn_trim_dir, tree_dir, logObject, cpus=1):
 	- codo_algn_trim_dir: The directory containing trimmed codon alignments.
 	- tree_dir: The directory where trees in Newick format will be saved.
 	- logObject: A logging object.
-	- cpus: The number of CPUs to use.
+	- threads: The number of threads to use.
 	*******************************************************************************************************************
 	"""
 	try:
@@ -895,12 +850,394 @@ def createGeneTrees(codo_algn_trim_dir, tree_dir, logObject, cpus=1):
 			codo_algn_trim_file = codo_algn_trim_dir + catf
 			tree_file = tree_dir + prefix + '.tre'
 			fasttree_cmds.append(['fasttree', '-nt', codo_algn_trim_file, '>', tree_file, logObject])
-		p = multiprocessing.Pool(cpus)
+		p = multiprocessing.Pool(threads)
 		p.map(util.multiProcess, fasttree_cmds)
 		p.close()
 	except Exception as e:
 		sys.stderr.write('Issues with creating gene-trees.\n')
 		logObject.error('Issues with creating gene-trees.')
 		sys.stderr.write(str(e) + '\n')
+		sys.stderr.write(traceback.format_exc())
+		sys.exit(1)
+
+def determinePhagesAndPlasmids(sample_wgs, sample_beds, genomad_dir, phage_protein_listing_file, plasmid_protein_listing_file, logObject, threads=1, genome_splits=8):
+	"""
+	Description:
+	This function runs annotation of sample genomes for phages and plasmis using geNomad to determine proteins 
+	belonging to such elements. 
+	*******************************************************************************************************************
+	Parameters:
+	- sample_wgs: Dictionary mapping sample names (keys) to genome file paths (values).
+	- sample_beds: Dictionary mapping sample names (keys) to gene-coordinate describing bed file paths (values).
+	- genomad_dir: Directory where to store geNomad results.
+	- phage_protein_listing_file: Final resulting file with information of which proteins are predicted to exist on 
+								  (pro)phages.
+	- plasmid_protein_listing_file: Final resulting file with information of which proteins are predicted to exist on 
+								  plasmids.
+	- logObject: A logging object.
+	- threads: The number of threads to use.
+	- genome_splits: The number of splits for geNomad to limit memory usage.
+	*******************************************************************************************************************
+	"""
+	bofasa_db_dir = str(os.getenv("BOFASA_DB_PATH")).strip()
+	db_locations = None
+	try:
+		bofasa_db_dir = os.path.abspath(bofasa_db_dir) + '/'
+		db_locations = bofasa_db_dir + 'database_location_paths.txt'
+		assert(os.path.isfile(db_locations))
+	except:
+		pass
+	if db_locations == None or not os.path.isfile(db_locations):
+		msg = 'Databases do not appear to be setup or setup properly! Please run setup_annotation_dbs.py prior to run bofasa_prep, exiting ...'
+		sys.stderr.write('Error: ' + msg + '\n')
+		logObject.error(msg)
+		sys.stderr.write(traceback.format_exc())		
+
+	try:
+		genomad_db_dir = None
+		with open(db_locations) as odb:
+			for line in odb:
+				line = line.strip()
+				ls = line.split('\t')
+				if ls[0] == 'genomad':
+					genomad_db_dir = ls[2]
+		assert(os.path.isdir(genomad_db_dir))
+
+		phpf_handle = open(phage_protein_listing_file, 'w')
+		plpf_handle = open(plasmid_protein_listing_file, 'w')
+
+		for sample in sample_wgs:
+			input_genome = sample_wgs[sample]
+			genomad_results = genomad_dir + sample + '/'
+			genomad_cmd = ['genomad', 'end-to-end', '--cleanup', '--threads', str(threads), '--splits', 
+				 	       str(genome_splits), input_genome, genomad_results, genomad_db_dir]
+			prophage_coords_tsv = None
+			plasmid_coords_tsv = None
+			try:
+				runCmd(genomad_cmd, None, check_directories=[genomad_results])
+
+				for subdir, dirs, files in os.walk(genomad_results):
+					for file in files:
+						filepath = subdir + os.sep + file
+						if filepath.endswith("_plasmid_summary.tsv"):
+							plasmid_coords_tsv = filepath
+						elif filepath.endswith("_virus_summary.tsv"):
+							prophage_coords_tsv = filepath
+				assert(prophage_coords_tsv != None and os.path.isfile(prophage_coords_tsv))
+				assert(plasmid_coords_tsv != None and os.path.isfile(plasmid_coords_tsv))
+			except:
+				msg = 'Issue with running the command: %s.' % ' '.join(genomad_cmd)
+				sys.stderr.write(msg + '\n')
+				logObject.error(msg)
+				sys.stderr.write(traceback.format_exc() + '\n')
+				sys.exit(1)			
+
+			full_plasmid_scaffs = set([])
+			full_phage_scaffs = set([])
+			phage_coords = defaultdict(set)
+			with open(prophage_coords_tsv) as opaf:
+				for i, line in enumerate(opaf):
+					if i == 0: continue
+					line = line.strip()
+					ls = line.split('\t')
+					if ls[3] == 'NA':
+						scaffold = ls[0]
+						full_phage_scaffs.add(scaffold)
+					else:
+						scaffold = '|'.join(ls[0].split('|')[:-1])
+						start = int(ls[3].split('-')[0])
+						end = int(ls[3].split('-')[1])
+						for pos in range(start, end+1):
+							phage_coords[scaffold].add(pos)
+
+			with open(plasmid_coords_tsv) as opaf:
+				for i, line in enumerate(opaf):
+					if i == 0: continue
+					line = line.strip()
+					ls = line.split('\t')
+					scaffold = ls[0]
+					full_plasmid_scaffs.add(scaffold)
+
+			bed_file = sample_beds[sample]
+			with open(bed_file) as obf:
+				for line in obf:
+					line = line.strip()
+					scaffold, start, end, final_lt, prot_score, direction = line.split('\t')
+					prot_coords = set(range(start, end+1))
+
+					if (scaffold in full_phage_scaffs) or (scaffold in phage_coords and len(prot_coords.intersection(phage_coords[scaffold])) > 0):
+						phpf_handle.write(sample + '\t' + final_lt + '\n')
+					if scaffold in full_plasmid_scaffs:
+						plpf_handle.write(sample + '\t' + final_lt + '\n')
+		phpf_handle.close()
+		plpf_handle.close()
+	except:
+		msg = 'Issue with determining phages/plasmids in assemblies using geNomad!'
+		sys.stderr.write(msg + '\n')
+		logObject.error(msg)
+		sys.stderr.write(traceback.format_exc() + '\n')
+		logObject.error(traceback.format_exc())
+		sys.exit(1)		
+
+
+def annotateIsFinder(sample_proteomes, annot_dir, isfinder_protein_listing_file, logObject, threads=1, max_annotation_evalue=1e-3):
+	"""
+	Description:
+	This function runs annotation of sample proteomes using ISFinder IS elements via DIAMOND blastp.
+	*******************************************************************************************************************
+	Parameters:
+	- sample_proteomes: Dictionary mapping sample names (keys) to proteome file paths (values).
+	- annot_dir: Directory where to store DIAMOND BLASTp results.
+	- isfinder_protein_listing_file: Final resulting file with information of which proteins exhibit homology to IS 
+	                                 elements.
+	- logObject: A logging object.
+	- threads: The number of threads to use.
+	- max_annotation_evalue: The maximum e-value to consider proteins as homologous to transposons.
+	*******************************************************************************************************************
+	"""
+	bofasa_db_dir = str(os.getenv("BOFASA_DB_PATH")).strip()
+	db_locations = None
+	try:
+		bofasa_db_dir = os.path.abspath(bofasa_db_dir) + '/'
+		db_locations = bofasa_db_dir + 'database_location_paths.txt'
+		assert(os.path.isfile(db_locations))
+	except:
+		pass
+	if db_locations == None or not os.path.isfile(db_locations):
+		msg = 'Databases do not appear to be setup or setup properly! Please run setup_annotation_dbs.py prior to run bofasa_prep, exiting ...'
+		sys.stderr.write('Error: ' + msg + '\n')
+		logObject.error(msg)
+		sys.stderr.write(traceback.format_exc())		
+
+	try:
+		isfinder_dmnd_path = None
+		with open(db_locations) as odb:
+			for line in odb:
+				line = line.strip()
+				ls = line.split('\t')
+				if ls[0] == 'isfinder':
+					isfinder_dmnd_path = ls[2]
+		assert(os.path.isfile(isfinder_dmnd_path))
+		
+		dmnd_search_cmds = []
+		for sample in sample_proteomes:
+			faa_file = sample_proteomes[sample]
+			annotation_result_file = annot_dir + sample + '.isfinder_diamond_blastp.txt'
+			search_cmd = ['diamond', 'blastp', '--ignore-warnings', '-p', str(1), '-d', isfinder_dmnd_path,
+						  '-q', faa_file, '-o', annotation_result_file, logObject]
+			dmnd_search_cmds.append(search_cmd)
+
+		msg = "Running %d DIAMOND blastp jobs for IS element annotation" % len(dmnd_search_cmds)
+		logObject.info(msg)
+		sys.stdout.write(msg + '\n')
+
+		p = multiprocessing.Pool(threads)
+		for _ in tqdm.tqdm(p.imap_unordered(multiProcess, dmnd_search_cmds), total=len(dmnd_search_cmds)):
+			pass
+		p.close()
+
+		outf = open(isfinder_protein_listing_file, 'w')
+		for rf in os.listdir(annot_dir):
+			sample = rf.split('.isfinder_diamond_blastp.txt')[0]
+			
+			best_hits_by_bitscore = defaultdict(lambda: [[], [], 0.0])
+			# parse DIAMOND BLASTp based results
+			with open(annot_dir + rf) as oarf:
+				for line in oarf:
+					line = line.strip()
+					ls = line.split('\t')
+					query = ls[0]
+					hit = ls[1]
+					bitscore = float(ls[11])
+					evalue = decimal.Decimal(ls[10])
+					if evalue > max_annotation_evalue: continue
+					if bitscore > best_hits_by_bitscore[query][2]:
+						best_hits_by_bitscore[query] = [[hit], [evalue], bitscore]
+					elif bitscore == best_hits_by_bitscore[query][2]:
+						best_hits_by_bitscore[query][0].append(hit)
+						best_hits_by_bitscore[query][1].append(evalue)
+
+			for p in best_hits_by_bitscore:
+				outf.write(sample + '\t' + p + '\t' + ', '.join(best_hits_by_bitscore[p][0]) + str(statistics.mean(best_hits_by_bitscore[p][1])))
+		outf.close()
+
+	except Exception as e:
+		msg = 'Issue with annotating IS elements!'
+		sys.stderr.write(msg + '\n')
+		logObject.error(msg)
+		sys.stderr.write(traceback.format_exc())
+		logObject.error(traceback.format_exc())
+		sys.exit(1)
+
+def split_by_idx(S, list_of_indices):
+        """
+        Function taken from https://stackoverflow.com/questions/10851445/splitting-a-string-by-list-of-indices
+        """
+        left, right = 0, list_of_indices[0]
+        yield S[left:right]
+        left = right
+        for right in list_of_indices[1:]:
+                yield S[left:right]
+                left = right
+        yield S[left:]
+
+def createChoppedProteomes(inputs):
+	"""
+	Description:
+	Create a chopped CDS GenBank file from a regular GenBank file - core function for batchCreateChoppedGenbanks().
+	********************************************************************************************************************
+	Parameters:
+	- inputs:
+		- prot_file: The original proteome file.
+		- ccds_prot_file: The chopped up proteome FASTA file to create.
+		- pfam_db_file: The Pfam HMM DB file.
+		- pfam_z: The Pfam record count - for accurate E-value estimation.
+		- minimal_length: The minimum length in amino acids for a domain matching or intra-domain region to be kept and
+	                      tagged as a chopped CDS feature [Default is 20].
+		- logObject: A logging object.
+	- threads: The number of threads to use [Default is 1].
+	********************************************************************************************************************
+	"""
+	prot_file, ccds_prot_file, pfam_db_file, pfam_z, minimal_length, logObject = inputs
+	try:
+		sample = '.'.join(prot_file.split('.')[:-1])
+
+		# align Pfam domains and remove overlap similar to BiG-SCAPE
+		alphabet = pyhmmer.easel.Alphabet.amino()
+		sequences = []
+		with pyhmmer.easel.SequenceFile(prot_file, digital=True, alphabet=alphabet) as seq_file:
+			sequences = list(seq_file)
+
+		target_dom_hits = defaultdict(list)
+		with pyhmmer.plan7.HMMFile(pfam_db_file) as hmm_file:
+			for hits in pyhmmer.hmmsearch(hmm_file, sequences, bit_cutoffs="trusted", Z=int(pfam_z), cpus=1):
+				for hit in hits:
+					for domain in hit.domains.included:
+						target_dom_hits[hit.name.decode()].append([hits.query_name.decode(), domain.alignment.target_from, domain.alignment.target_to, domain.score, domain.i_evalue])
+
+		# chop up FASTA based on mostly non-overlapping domains, 10% leaway is given
+		breakpoints = defaultdict(list)
+		dom_start_names = defaultdict(lambda: 'NA')
+		for tg in target_dom_hits:
+			tg_dom_name_iter = defaultdict(int)
+			accounted_coords = set([])
+			for dom_align_info in sorted(target_dom_hits[tg], key=itemgetter(3), reverse=True):
+				dom_name, start, end, score, i_evalue = dom_align_info
+				overlap_coords = accounted_coords.intersection(set(range(start, end+1)))
+				if len(overlap_coords)/float(end-start+1) >= 0.1: continue
+				accounted_coords = accounted_coords.union(set(range(start, end+1)))
+				breakpoints[tg].append(start)
+				breakpoints[tg].append(end+1)
+				dom_start_names[tg + '|' + str(start)] = tg + '|' + dom_name + '|' + str(tg_dom_name_iter[dom_name]+1) 
+				tg_dom_name_iter[dom_name] += 1
+
+		cpf_handle = open(ccds_prot_file, 'w')
+		with open(prot_file) as ocf:
+			for rec in SeqIO.parse(ocf, 'fasta'):
+				tg = rec.id
+				tg_seq = str(rec.seq)
+				prev_end_coord = 1
+				tg_interdomain_index = 1
+				if not tg in breakpoints and len(tg_seq) >= minimal_length:
+					dn = sample + '|' + tg + '|full_protein|1'
+					cpf_handle.write('>' + dn + '\n' + str(tg_seq) + '\n')
+				else:
+					for tg_seq_chunk in split_by_idx(tg_seq, ([0] + sorted(breakpoints[tg]))):
+						if tg_seq_chunk.strip() == '': continue
+						end_coord = prev_end_coord + len(tg_seq_chunk) - 1
+						if len(tg_seq_chunk) >= minimal_length:
+							dn = sample + '|' + dom_start_names[tg + '|' + str(prev_end_coord-1)]
+							if dn == 'NA':
+								dn = sample + '|' + tg + '|inter-domain_region|' + str(tg_interdomain_index)
+								tg_interdomain_index += 1
+							cpf_handle.write('>' + dn + '\n' + str(tg_seq) + '\n')
+						prev_end_coord = end_coord + 1
+		cpf_handle.close()
+	except:
+		msg = 'An issue occurred with creating chopped up version of proteome file %s.' % prot_file
+		logObject.error(msg)
+		sys.stderr.write(traceback.format_exc())
+		logObject.error(traceback.format_exc())
+		sys.stderr.write(msg + '\n')
+		sys.exit(1)
+
+def annotateAndSplitProteinsUsingPfam(sample_proteomes, split_proteins_dir, domain_coord_info_file, logObject, minimal_length=20, threads=1)
+	"""	
+	Description:
+	Create chopped CDS GenBank files from regular GenBank input with CDS features.
+	********************************************************************************************************************
+	Parameters:
+	- sample_proteomes: Dictionary mapping sample names (keys) to proteome file paths (values).
+	- split_proteins_dir: Directory where to write resulting cCDS proteomes.
+	- domain_coord_info_file: Resulting domain/inter-domain information file.
+	- logObject: A logging object.
+	- minimal_length: The minimum length in amino acids for a domain matching or intra-domain region to be kept and
+	                  tagged as a chopped CDS feature
+	- threads: The number of threads to use [Default is 1].
+	********************************************************************************************************************
+	Returns:
+	- sample_ccds_proteomes: A dictionary mapping sample names (keys) to chopped proteome file paths (values).
+	********************************************************************************************************************
+	"""
+
+	bofasa_db_dir = str(os.getenv("BOFASA_DB_PATH")).strip()
+	db_locations = None
+	try:
+		bofasa_db_dir = os.path.abspath(bofasa_db_dir) + '/'
+		db_locations = bofasa_db_dir + 'database_location_paths.txt'
+		assert(os.path.isfile(db_locations))
+	except:
+		pass
+	if db_locations == None or not os.path.isfile(db_locations):
+		msg = 'Databases do not appear to be setup or setup properly! Please run setup_annotation_dbs.py prior to run bofasa_prep, exiting ...'
+		sys.stderr.write('Error: ' + msg + '\n')
+		logObject.error(msg)
+		sys.stderr.write(traceback.format_exc())		
+
+	try:
+		pfam_hmm_path = None
+		pfam_z = None
+		with open(db_locations) as odb:
+			for line in odb:
+				line = line.strip()
+				ls = line.split('\t')
+				if ls[0] == 'pfam':
+					pfam_hmm_path = ls[2]
+					pfam_z = int(ls[3])
+		assert(os.path.isfile(pfam_hmm_path) and pfam_z != None)
+
+		prot_mod_inputs = []
+		for sample in sample_proteomes:
+			ccds_prot_file = split_proteins_dir + sample + '.ccds.faa'
+			prot_file = sample_proteomes[sample]
+			prot_mod_inputs.append([prot_file, ccds_prot_file, pfam_hmm_path, pfam_z, minimal_length, logObject])
+
+		msg = "Creating domain-chopped up version of GenBank files for %d gene clusters" % len(prot_mod_inputs) 
+		logObject.info(msg)
+		sys.stdout.write(msg + '\n')
+
+		p = multiprocessing.Pool(threads)
+		for _ in tqdm.tqdm(p.imap_unordered(createChoppedProteomes, prot_mod_inputs), total=len(prot_mod_inputs)):
+			pass
+		p.close()
+
+		dci_handle = open(domain_coord_info_file, 'w')
+		sample_ccds_proteomes = {}
+		for f in os.listdir(split_proteins_dir):
+			sample = f.split('.ccds.faa')[0]
+			ccds_prot_file = split_proteins_dir + f
+			sample_ccds_proteomes[sample] = ccds_prot_file
+			with open(ccds_prot_file) as ogf:
+				for rec in SeqIO.parse(ogf, 'fasta'):
+					name = rec.id
+					sample, prot, dom, index = name.split('|')
+					dci_handle.write('\t'.join([sample, prot, dom, index, ccds_prot_file]) + '\n')
+		dci_handle.close()
+		return(sample_ccds_proteomes)
+	except:
+		msg = 'An issue occurred with creating chopped up proteomes.' 
+		logObject.error(msg)
+		logObject.error(traceback.format_exc())
+		sys.stderr.write(msg + '\n')
 		sys.stderr.write(traceback.format_exc())
 		sys.exit(1)
