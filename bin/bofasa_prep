@@ -396,7 +396,7 @@ def prepare_input():
 								prot_score = '0'							
 							bed_outfile_handle.write('\t'.join([str(x) for x in [scaffold, start, end, final_lt, prot_score, direction]]) + '\n')
 					bed_outfile_handle.close()
-					sample_beds[sample] = filepath
+					sample_beds[sample] = bed_file
 					gff_iter += 1
 
 		for subdir, dirs, files in os.walk(input_prokka_dir):
@@ -479,7 +479,7 @@ def prepare_input():
 								prot_score = '0'							
 							bed_outfile_handle.write('\t'.join([str(x) for x in [scaffold, start, end, final_lt, prot_score, direction]]) + '\n')
 					bed_outfile_handle.close()
-					sample_beds[sample] = filepath
+					sample_beds[sample] = bed_file
 					gff_iter += 1
 
 		for subdir, dirs, files in os.walk(input_bakta_dir):
