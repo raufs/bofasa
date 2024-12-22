@@ -49,6 +49,14 @@ from rich_argparse import RawTextRichHelpFormatter
 def create_parser():
 	""" Parse arguments """
 	parser = argparse.ArgumentParser(description="""
+
+	██████╗  ██████╗ ███████╗ █████╗ ███████╗ █████╗ 
+	██╔══██╗██╔═══██╗██╔════╝██╔══██╗██╔════╝██╔══██╗
+	██████╔╝██║   ██║█████╗  ███████║███████╗███████║
+	██╔══██╗██║   ██║██╔══╝  ██╔══██║╚════██║██╔══██║
+	██████╔╝╚██████╔╝██║     ██║  ██║███████║██║  ██║
+	╚═════╝  ╚═════╝ ╚═╝     ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
+
 	Program: bofasa
 	Authors: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan 
 	Affiliation: University of Wisconsin - Madsion, McMaster University								  
@@ -58,14 +66,14 @@ def create_parser():
     bofasa aims to prioritize accuracy over speed and is thus intended 
 	for investigations with fewer than <200 genomes. bofasa is 
 	specifically designed for multi-species analyses.		  
-	""", formatter_class=argparse.RawTextRichHelpFormatter)
+	""", formatter_class=RawTextRichHelpFormatter)
 
 	parser.add_argument('-i', '--bofasa-prep-dir', help='Inputs directory produced by bofasa-prep.', required=True)
-	parser.add_argument('-o', '--output_dir', help='Output directory.', required=True)
-	parser.add_argument('-mi', '--mcl-inflation', type=float, help="MCL inflation parameter for determining coarse ortholog groups via OrthoFinder [Default is 1.2; to perform the most coarse clustering].", required=False, default=1.5)
+	parser.add_argument('-o', '--output-dir', help='Output directory.', required=True)
 	parser.add_argument('-sr', '--surrounding-bp', type=int, help="The number of basepairs to look up and downstream for syntenic analysis [Default is 10000].", required=False, default=10000)
 	parser.add_argument('-ph', '--profile-hmms', action='store_true', help="Create profile HMMs of ortholog groups for annotation of new genomes.", required=False, default=False)
-	parser.add_argument('-qa', '--quality-alignments', action='store_true', help="Prioritize quality over speed for constructing ortholog group protein alignments. Uses MUSCLE align mode instead of super5 mode.", required=False, default=False)
+	parser.add_argument('-qa', '--quality-alignments', action='store_true', help="Prioritize quality over speed for constructing domain-resolution ortholog group protein alignments. Uses MUSCLE align mode instead of super5 mode.", required=False, default=False)
+	parser.add_argument('-mi', '--mcl-inflation', type=float, help="MCL inflation parameter for determining coarse ortholog groups via OrthoFinder [Default is 1.2; to perform the most coarse clustering].", required=False, default=1.5)
 	parser.add_argument('-c', '--threads', type=int, help="Total number of cores/threads to use [Default is 4].", required=False, default=4)
 	parser.add_argument('-mm', '--max_memory', type=int, help='Uses resource module to set soft memory limit. Provide in Giga-bytes.\nGenerally memory shouldn\'t be a major concern unless working\nwith hundreds of large metagenomes. [currently\nexperimental; default is None].', default=None, required=False)
 	parser.add_argument('-v', '--version', action='store_true', help="Get version and exit.", required=False, default=False)

@@ -3,7 +3,7 @@ channels:
   - conda-forge
   - bioconda
 dependencies:
-  - python>=3.10
+  - python>=3.9
   - setuptools
   - biopython
   - pip
@@ -14,7 +14,7 @@ dependencies:
   - scipy
   - muscle=5.1
   - pyhmmer
-  - genomad
+  - genomad>=1.8.1
   - curl
   - rich-argparse
   - tqdm

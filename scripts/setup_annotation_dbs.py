@@ -71,8 +71,6 @@ def setup_annot_dbs():
 		sys.stderr.write('Issues validing database download directory exists.\n')
 		sys.exit(1)
 
-	threads = myargs.threads
-
 	try:
 		assert(os.path.isdir(download_path))
 	except:
@@ -98,7 +96,7 @@ def setup_annot_dbs():
 	# Final annotation files
 	pfam_phmm_file = download_path + 'Pfam-A.hmm'
 	is_faa_file = download_path + 'isfinder.dmnd'
-	genomad_db_tar = download_path + 'genomad_db_v1.5.tar.gz'
+	genomad_db_tar = download_path + 'genomad_db_v1.7.tar.gz'
 	download_links = ['https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.hmm.gz',
 					  'https://raw.githubusercontent.com/thanhleviet/ISfinder-sequences/master/IS.faa',
 					  'https://zenodo.org/records/10594875/files/genomad_db_v1.7.tar.gz?download=1']

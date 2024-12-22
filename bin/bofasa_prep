@@ -51,11 +51,20 @@ from collections import defaultdict
 def create_parser():
 	""" Parse arguments """
 	parser = argparse.ArgumentParser(description="""
+
+	██████╗  ██████╗ ███████╗ █████╗ ███████╗ █████╗ 
+	██╔══██╗██╔═══██╗██╔════╝██╔══██╗██╔════╝██╔══██╗
+	██████╔╝██║   ██║█████╗  ███████║███████╗███████║
+	██╔══██╗██║   ██║██╔══╝  ██╔══██║╚════██║██╔══██║
+	██████╔╝╚██████╔╝██║     ██║  ██║███████║██║  ██║
+	╚═════╝  ╚═════╝ ╚═╝     ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
+                                                
 	Program: bofasa_prep
 	Authors: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan 
-	Affiliation: University of Wisconsin - Madsion, McMaster University
+	Affiliation: University of Wisconsin - Madsion, McMaster University							  
 
-	Prepares input genomes or proteomes for bofasa analysis.
+	Prepares input genomes or annotation directories for bofasa 
+	analysis.
 								  
 	It can take in contig/scaffold FASTA files (*.fasta, *.fa, *.fna), 
 	GenBank files (*.genbank, *.gbk, *.gbff), with CDS features and 
@@ -72,18 +81,19 @@ def create_parser():
 	If Bakta or Prokka annotations are provided, please make sure 
 	such annotations were run using the "--prefix" argument as this 
 	will be important for parsing out sample names.
-	""", formatter_class=argparse.RawTextRichHelpFormatter)
+	""", formatter_class=RawTextRichHelpFormatter)
 	parser.add_argument('-i', '--input-genomes', nargs='+', help='Path to directories or files with/corresponding to genomes (either in GenBank xor FASTA format).', required=False, default=[])
 	parser.add_argument('-ib', '--input-bakta', help='Path to a directory which contains Bakta annotation directories for input genomes.', required=False, default=None)
 	parser.add_argument('-ip', '--input-prokka', help='Path to a directory which contains Prokka annotation directories for input genomes.', required=False, default=None)
 	parser.add_argument('-o', '--output-dir', help='Resulting directory which will serve as the input for bofasa.', required=True)
 	parser.add_argument('-ml', '--min-length', type=int, help="Minimum length of domain/inter-domain unit to consider [Default is 20].", required=False, default=20)
 	parser.add_argument('-gcm', '--gene-calling-method', help='Method to use for gene calling. Options are: pyrodigal or prodigal [Default is pyrodigal].', required=False, default='pyrodigal')
-	parser.add_argument('-dm', '--draft-mode', help="For when genomes are highly fragmented. Will use p(y)rodigal meta-mode for gene-calling to also identify genes that are truncated and on scaffold edges.", required=False, default=False)
-	parser.add_argument('-r', '--rename-locus-tags', action='store_true', help='Whether to rename locus tags if provided for CDS features if GenBank files are provided.', required=False, default=False)
+	parser.add_argument('-dm', '--draft-mode', action='store_true', help="For when genomes are highly fragmented. Will use p(y)rodigal meta-mode for gene-calling to also identify genes that are truncated and on scaffold edges.", required=False, default=False)
+	parser.add_argument('-rg', '--run-genomad', action='store_true', help="Whether to run geNomad - takes time but results can be used to achieve higher quality orthogroup predictions.", required=False, default=False)
+	parser.add_argument('-r', '--rename-locus-tags', action='store_true', help="Whether to rename locus tags if provided for CDS features.", required=False, default=False)
 	parser.add_argument('-x', '--ignore-upperbound-limit', action='store_true', help="Ignore the upper bound limit for the number of genomes to process [Default is 200].", required=False, default=False)
 	parser.add_argument('-c', '--threads', type=int, help="Total number of cores/threads to use for running OrthoFinder2/prodigal.\n[Default is 1].", required=False, default=1)
-	parser.add_argument('-mm', '--max-memory', type=int, help='Uses resource module to set soft memory limit. Provide in Giga-bytes.\nGenerally memory shouldn\'t be a major concern unless working\nwith hundreds of large metagenomes. [currently\nexperimental; default is None].', default=None, required=False)
+	parser.add_argument('-mm', '--max-memory', type=int, help='Uses resource module to set soft memory limit. Provide in Giga-bytes [Default is None].', default=None, required=False)
 	parser.add_argument('-v', '--version', action='store_true', help="Get version and exit.", required=False, default=False)
 
 	args = parser.parse_args()
@@ -91,8 +101,8 @@ def create_parser():
 
 
 # GLOBAL VARIABLES
-valid_fasta_suffices = set(['.fasta', '.fna', '.fa'])
-valid_genbank_suffices = set(['.genbank', '.gbff', '.gbk'])
+valid_fasta_suffices = set(['fasta', 'fna', 'fa'])
+valid_genbank_suffices = set(['genbank', 'gbff', 'gbk'])
 
 def prepare_input():
 	"""
@@ -116,6 +126,7 @@ def prepare_input():
 	input_prokka_dir = myargs.input_prokka
 	outdir = os.path.abspath(myargs.output_dir) + '/'
 	
+	run_genomad = myargs.run_genomad
 	min_length = myargs.min_length
 	rename_locus_tags = myargs.rename_locus_tags
 	gene_calling_method = myargs.gene_calling_method
@@ -142,12 +153,13 @@ def prepare_input():
 					input_genome_files.append(os.path.abspath(inp))
 				elif os.path.isdir(inp):
 					inp_dir = os.path.abspath(inp) + '/'
-					for f in os.listdir(inp_dir) and (f.split('.')[-1] in valid_fasta_suffices or f.split('.')[-1] in valid_genbank_suffices):
-						input_genome_files.append(inp_dir + f)
+					for f in os.listdir(inp_dir):
+						if f.split('.')[-1] in valid_fasta_suffices or f.split('.')[-1] in valid_genbank_suffices:
+							input_genome_files.append(inp_dir + f)
 			try:
 				assert(len(input_genome_files) >= 4)
 			except:
-				sys.stderr.write('At least five files with valid suffices are needed for bofasa analysis, exiting ...\n')
+				sys.stderr.write('At least four files with valid suffices are needed for bofasa analysis, exiting ...\n')
 				sys.exit(1)
 			input_type.append('genomes')
 			valid_input_types += 1
@@ -197,12 +209,13 @@ def prepare_input():
 	logObject.info("Saving parameters for future records.")
 	parameters_file = outdir + 'Parameter_Inputs.txt'
 	parameter_values = [input_genome_files, input_prokka_dir, input_bakta_dir, outdir, 
-					    rename_locus_tags, meta_mode, ignore_upperbound_limit_flag,
+					    rename_locus_tags, meta_mode, run_genomad, ignore_upperbound_limit_flag,
 					    gene_calling_method, min_length, threads, max_memory]
 	parameter_names = ["Input Genomes Files", "Input Prokka Directory", "Input Bakta Directory", 
 					   "Output Directory", "Rename Locus Tags?", "Draft Mode?",
-					   "Ignore Upperbound Genome Limit?", "Gene Calling Method", 
-					   "Minimum Length of Domain/Inter-Domain Unit", "Number of Threads", 
+					   "Run geNomad?", "Ignore Upperbound Genome Limit?", 
+					   "Gene Calling Method", "Minimum Length of Domain/Inter-Domain Unit", 
+					   "Number of Threads", 
 					   "Maximum Memory in GB"]
 	util.logParametersToFile(parameters_file, parameter_names, parameter_values)
 	logObject.info("Done saving parameters!")
@@ -231,7 +244,7 @@ def prepare_input():
 	faa_dir = gp_dir + 'Proteomes/'
 	bed_dir = gp_dir + 'BEDs/'
 
-	util.setupReadyDirectory(gp_dir, faa_dir, bed_dir)
+	util.setupReadyDirectory([gp_dir, faa_dir, bed_dir])
 
 	input_type = input_type[0]
 	sample_wgs = {}
@@ -242,26 +255,25 @@ def prepare_input():
 		sample_genomes = {}
 		for inf in input_genome_files:
 			suffix = inf.split('.')[-1]
-			sample = '.'.join(inf.split('.')[:-1])
-			if suffix in formats:
-				if suffix in valid_fasta_suffices:
-					if util.is_fasta(inf):
-						sample_genomes[sample] = inf
-						sample_wgs[sample] = inf
-					else:
-						sys.stderr.write('Unable to verify %s as being in FASTA format.\n' % inf)
-					formats.add('fasta')
-				elif suffix in valid_genbank_suffices:
-					if util.is_genbank(inf):
-						sample_genomes[sample] = inf
-					else:
-						sys.stderr.write('Unable to verify %s as being in GenBank format.\n' % inf)
-					formats.add('genbank')
-	
+			sample = '.'.join(inf.split('.')[:-1]).split('/')[-1]
+			if suffix in valid_fasta_suffices:
+				if util.is_fasta(inf):
+					sample_genomes[sample] = inf
+					sample_wgs[sample] = inf
+				else:
+					sys.stderr.write('Unable to verify %s as being in FASTA format.\n' % inf)
+				formats.add('fasta')
+			elif suffix in valid_genbank_suffices:
+				if util.is_genbank(inf):
+					sample_genomes[sample] = inf
+				else:
+					sys.stderr.write('Unable to verify %s as being in GenBank format.\n' % inf)
+				formats.add('genbank')
+
 		try:
 			assert(len(formats) == 1)
 		except:
-			msg = 'Multiple types of genomic format detected and not supported.'
+			msg = 'Multiple types of genomic format detected and not supported. Exiting ...'
 			logObject.error(msg)
 			sys.stderr.write(msg + '\n')
 			sys.exit(1)
@@ -294,7 +306,6 @@ def prepare_input():
 					msg = 'Unable to validate proper processing for sample %s, skipping it' % sample
 					logObject.info(msg)
 					sys.stderr.write(msg + '\n')
-					del sample_genomes[sample]
 					del sample_wgs[sample]
 		else:
 			util.processGenomesAsGenbanks(sample_genomes, gp_dir, logObject,
@@ -316,12 +327,11 @@ def prepare_input():
 					msg = 'Unable to validate proper processing for sample %s, skipping it' % sample
 					logObject.info(msg)
 					sys.stderr.write(msg + '\n')
-					del sample_genomes[sample]
 					del sample_wgs[sample]
 
-		msg = 'Found and successfully processed %d genomes in %s format, continuing ...' % (len(sample_genomes[sample]), format)
+		msg = 'Found and successfully processed %d genomes in %s format, continuing ...' % (len(sample_genomes), format)
 		logObject.info(msg)
-		sys.stdout(msg + '\n')
+		sys.stdout.write(msg + '\n')
 
 	elif input_type == 'Prokka directories':
 		scaffold_lengths = defaultdict(dict)
@@ -329,10 +339,11 @@ def prepare_input():
 			for file in files:
 				filepath = subdir + '/' + file
 				if filepath.endswith('.fna'):
-					sample = '.fna'.join(file.split('.fna')[:-1])
+					sample = '.fna'.join(file.split('/')[-1].split('.fna')[:-1])
 					sample_wgs[sample] = filepath
 					with open(filepath) as ogf:
 						for rec in SeqIO.parse(ogf, 'fasta'):
+							scaffold = rec.id
 							scaffold_lengths[sample][scaffold] = len(str(rec.seq))
 
 		possible_locustags = util.createLocusTagOptions(3)
@@ -343,7 +354,7 @@ def prepare_input():
 				filepath = subdir + '/' + file
 				if filepath.endswith(".gff"):
 					lt_str = possible_locustags[gff_iter]
-					sample = '.gff'.join(file.split('.gff')[:-1])
+					sample = '.gff'.join(file.split('/')[-1].split('.gff')[:-1])
 					bed_file = bed_dir + sample + '.bed'
 					bed_outfile_handle = open(bed_file, 'w')
 					ci = 1
@@ -353,7 +364,7 @@ def prepare_input():
 							ls = line.split('\t')
 
 							if line.startswith('#'): continue 
-							if len(ls) < 8: continue
+							if len(ls) < 7: continue
 							if ls[2] != 'CDS': continue
 							
 							scaffold = ls[0]
@@ -377,7 +388,7 @@ def prepare_input():
 								else:
 									pid = str(ci+1)
 								new_lt = lt_str + '_' + pid
-								sample_old_to_new_lts[sample][old_lt] = [new_lt, scaffold, start, end, direction]
+								sample_old_to_new_lts[sample][old_lt] = [new_lt, scaffold,  str(start), str(end), direction]
 								final_lt = new_lt
 							ci += 1
 							prot_score = '1'
@@ -392,7 +403,7 @@ def prepare_input():
 			for file in files:
 				filepath = subdir + os.sep + file
 				if filepath.endswith(".faa"):
-					sample = '.faa'.join(file.split('.faa')[:-1])
+					sample = '.faa'.join(file.split('/')[-1].split('.faa')[:-1])
 					updated_faa = faa_dir + sample + '.faa'
 					updated_faa_handle = open(updated_faa, 'w')
 					sample_proteomes[sample] = updated_faa
@@ -401,8 +412,8 @@ def prepare_input():
 							old_lt = rec.id
 							final_lt = old_lt
 							if rename_locus_tags:
-								new_lt = sample_old_to_new_lts[sample][old_lt]
-							updated_faa_handle.write('>' + ' '.join([str(x) for x in sample_old_to_new_lts[sample][old_lt]]) + '\n' + str(rec.seq) + '\n')
+								final_lt = ' '.join(sample_old_to_new_lts[sample][old_lt])
+							updated_faa_handle.write('>' + final_lt + '\n' + str(rec.seq) + '\n')
 					updated_faa_handle.close()
 
 	elif input_type == 'Bakta directories':
@@ -411,10 +422,11 @@ def prepare_input():
 			for file in files:
 				filepath = subdir + '/' + file
 				if filepath.endswith('.fna'):
-					sample = '.fna'.join(file.split('.fna')[:-1])
+					sample = '.fna'.join(file.split('/')[-1].split('.fna')[:-1])
 					sample_wgs[sample] = filepath
 					with open(filepath) as ogf:
 						for rec in SeqIO.parse(ogf, 'fasta'):
+							scaffold = rec.id
 							scaffold_lengths[sample][scaffold] = len(str(rec.seq))
 
 		possible_locustags = util.createLocusTagOptions(3)
@@ -423,9 +435,9 @@ def prepare_input():
 		for subdir, dirs, files in os.walk(input_bakta_dir):
 			for file in files:
 				filepath = subdir + '/' + file
-				if filepath.endswith(".gff"):
+				if filepath.endswith(".gff3"):
 					lt_str = possible_locustags[gff_iter]
-					sample = '.gff'.join(file.split('.gff3')[:-1])
+					sample = '.gff3'.join(file.split('/')[-1].split('.gff3')[:-1])
 					bed_file = bed_dir + sample + '.bed'
 					bed_outfile_handle = open(bed_file, 'w')
 					ci = 1
@@ -435,7 +447,7 @@ def prepare_input():
 							ls = line.split('\t')
 
 							if line.startswith('#'): continue 
-							if len(ls) < 8: continue
+							if len(ls) < 7: continue
 							if ls[2] != 'CDS': continue
 							
 							scaffold = ls[0]
@@ -459,7 +471,7 @@ def prepare_input():
 								else:
 									pid = str(ci+1)
 								new_lt = lt_str + '_' + pid
-								sample_old_to_new_lts[sample][old_lt] = [new_lt, scaffold, start, end, direction]
+								sample_old_to_new_lts[sample][old_lt] = [new_lt, scaffold, str(start), str(end), direction]
 								final_lt = new_lt
 							ci += 1
 							prot_score = '1'
@@ -473,8 +485,8 @@ def prepare_input():
 		for subdir, dirs, files in os.walk(input_bakta_dir):
 			for file in files:
 				filepath = subdir + os.sep + file
-				if filepath.endswith(".faa"):
-					sample = '.faa'.join(file.split('.faa')[:-1])
+				if filepath.endswith(".faa") and not filepath.endswith(".hypotheticals.faa"):
+					sample = '.faa'.join(file.split('/')[-1].split('.faa')[:-1])
 					updated_faa = faa_dir + sample + '.faa'
 					updated_faa_handle = open(updated_faa, 'w')
 					sample_proteomes[sample] = updated_faa
@@ -483,25 +495,26 @@ def prepare_input():
 							old_lt = rec.id
 							final_lt = old_lt
 							if rename_locus_tags:
-								new_lt = sample_old_to_new_lts[sample][old_lt]
-							updated_faa_handle.write('>' + ' '.join([str(x) for x in sample_old_to_new_lts[sample][old_lt]]) + '\n' + str(rec.seq) + '\n')
+								final_lt = ' '.join(sample_old_to_new_lts[sample][old_lt])
+							updated_faa_handle.write('>' + final_lt + '\n' + str(rec.seq) + '\n')
 					updated_faa_handle.close()
 
-	# Step 2: Running geNomad
-	sample_genomad_results = {}
-	msg = '--------------------\nStep 2\n--------------------\nRunning geNomad for phage and plasmid identification.'
-	sys.stdout.write(msg + '\n')
-	logObject.info(msg)
 
-	genomad_dir = outdir + 'geNomad_Annotations/'
-	util.setupReadyDirectory([genomad_dir])
+	# Step 2a: Running geNomad
+	if run_genomad == True:	
+		msg = '--------------------\nStep 2a\n--------------------\nRunning geNomad for phage and plasmid identification.'
+		sys.stdout.write(msg + '\n')
+		logObject.info(msg)
 
-	phage_protein_listing_file = outdir + 'Sample_Phage_Proteins.txt'
-	plasmid_protein_listing_file = outdir + 'Sample_Plasmid_Proteins.txt' 
-	util.determinePhagesAndPlasmids(sample_wgs, genomad_dir, phage_protein_listing_file, plasmid_protein_listing_file, logObject, threads=threads)
+		genomad_dir = outdir + 'geNomad_Annotations/'
+		util.setupReadyDirectory([genomad_dir])
 
-	# Step 3: Annotate proteins with ISfinder databases
-	msg = '--------------------\nStep 3\n--------------------\nAnnotating IS elements using the ISFinder database.'
+		phage_protein_listing_file = outdir + 'Sample_Phage_Proteins.txt'
+		plasmid_protein_listing_file = outdir + 'Sample_Plasmid_Proteins.txt' 
+		util.determinePhagesAndPlasmids(sample_wgs, sample_beds, genomad_dir, phage_protein_listing_file, plasmid_protein_listing_file, logObject, threads=threads)
+
+	# Step 2b: Annotate proteins with ISfinder databases
+	msg = '--------------------\nStep 2b\n--------------------\nAnnotating IS elements using the ISFinder database.'
 	sys.stdout.write(msg + '\n')
 	logObject.info(msg)
 
@@ -511,18 +524,18 @@ def prepare_input():
 	isfinder_protein_listing_file = outdir + 'Sample_IS_Element_Proteins.txt'
 	util.annotateIsFinder(sample_proteomes, annot_dir, isfinder_protein_listing_file, logObject, threads=threads)
 
-	# Step 4: Annotate proteins with Pfam and split into domain/inter-domain "chunks" or units
-	msg = '--------------------\nStep 4\n--------------------\nAnnotating proteins with Pfam HMMs to split them into domain/inter-domain "chunks" or units.'
+	# Step 3: Annotate proteins with Pfam and split into domain/inter-domain "chunks" or units
+	msg = '--------------------\nStep 3\n--------------------\nAnnotating proteins with Pfam HMMs to split them into domain/inter-domain "chunks" or units.'
 	sys.stdout.write(msg + '\n')
 	logObject.info(msg)
 
 	split_proteins_dir = outdir + 'Domain_and_Interdomain_FASTAs/'
 	domain_coord_info_file = outdir + 'Sample_Domain_and_InterDomain_Information.txt'
 	util.setupReadyDirectory([split_proteins_dir])
-	sample_ccds_proteomes = util.annotateAndSplitProteinsUsingPfam(sample_proteomes, split_proteins_dir, domain_coord_info_file, logObject, minimmal_length=min_length, threads=threads)
+	sample_ccds_proteomes = util.annotateAndSplitProteinsUsingPfam(sample_proteomes, split_proteins_dir, domain_coord_info_file, logObject, minimal_length=min_length, threads=threads)
 
-	# Step 5: Finalize setting up for final bofasa analysis 
-	msg = '--------------------\nStep 5\n--------------------\nNearly there, putting together final files.'
+	# Step 4: Finalize setting up for final bofasa analysis 
+	msg = '--------------------\nStep 4\n--------------------\nNearly there, putting together final files.'
 	sys.stdout.write(msg + '\n')
 	logObject.info(msg)
 

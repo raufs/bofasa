@@ -180,7 +180,7 @@ def createLocusTagOptions(locus_tag_length):
 		sys.stderr.write(traceback.format_exc())
 		sys.exit(1)
 
-def processGenomesUsingProdigal(sample_genomes, prodigal_outdir, prodigal_proteomes, prodigal_genbanks, logObject,
+def processGenomesUsingProdigal(sample_genomes, prodigal_outdir, logObject,
 								threads=1, locus_tag_length=3, gene_calling_method="pyrodigal", meta_mode=False):
 	"""
 	Description:
@@ -207,7 +207,7 @@ def processGenomesUsingProdigal(sample_genomes, prodigal_outdir, prodigal_proteo
 			sample_assembly = sample_genomes[sample]
 			sample_locus_tag = ''.join(list(possible_locustags[i]))
 
-			prodigal_cmd = ['runProdigalAndMakeProperGenbank.py', '-i', sample_assembly, '-s', sample, '-gcm', gene_calling_method,
+			prodigal_cmd = ['runProdigalAndMakeInputsForBofasa.py', '-i', sample_assembly, '-s', sample, '-gcm', gene_calling_method,
 							'-l', sample_locus_tag, '-o', prodigal_outdir]
 			if meta_mode:
 				prodigal_cmd += ['-m']
@@ -222,16 +222,6 @@ def processGenomesUsingProdigal(sample_genomes, prodigal_outdir, prodigal_proteo
 			pass
 		p.close()
 
-		for sample in sample_genomes:
-			try:
-				assert (os.path.isfile(prodigal_outdir + sample + '.faa') and os.path.isfile(
-					prodigal_outdir + sample + '.gbk'))
-				os.system('mv %s %s' % (prodigal_outdir + sample + '.gbk', prodigal_genbanks))
-				os.system('mv %s %s' % (prodigal_outdir + sample + '.faa', prodigal_proteomes))
-			except:
-				sys.stderr.write("Unable to validate successful genbank/predicted-proteome creation for sample %s\n" % sample)
-				sys.stderr.write(traceback.format_exc())
-				sys.exit(1)
 	except Exception as e:
 		logObject.error(
 			"Problem with creating commands for running prodigal via script runProdigalAndMakeProperGenbank.py. Exiting now ...")
@@ -274,7 +264,7 @@ def processGenomesAsGenbanks(sample_genomes, proteomes_directory, genbanks_direc
 		for i, sample in enumerate(sorted(sample_genomes)):
 			sample_locus_tag = possible_locustags[i]
 			sample_genbank = sample_genomes[sample]
-			process_cmd = ['processNCBIGenBank.py', '-i', sample_genbank, '-s', sample, 
+			process_cmd = ['processNCBIGenBankAndCreateInputs.py', '-i', sample_genbank, '-s', sample, 
 						   '-g', genbanks_directory, '-p', proteomes_directory, '-n', 
 						   gene_name_mapping_outdir]
 			if rename_problem_gbks:
@@ -963,6 +953,8 @@ def determinePhagesAndPlasmids(sample_wgs, sample_beds, genomad_dir, phage_prote
 				for line in obf:
 					line = line.strip()
 					scaffold, start, end, final_lt, prot_score, direction = line.split('\t')
+					start = int(start)
+					end = int(end)
 					prot_coords = set(range(start, end+1))
 
 					if (scaffold in full_phage_scaffs) or (scaffold in phage_coords and len(prot_coords.intersection(phage_coords[scaffold])) > 0):
@@ -1058,7 +1050,7 @@ def annotateIsFinder(sample_proteomes, annot_dir, isfinder_protein_listing_file,
 						best_hits_by_bitscore[query][1].append(evalue)
 
 			for p in best_hits_by_bitscore:
-				outf.write(sample + '\t' + p + '\t' + ', '.join(best_hits_by_bitscore[p][0]) + str(statistics.mean(best_hits_by_bitscore[p][1])))
+				outf.write(sample + '\t' + p + '\t' + ', '.join(best_hits_by_bitscore[p][0]) + str(statistics.mean(best_hits_by_bitscore[p][1])) + '\n')
 		outf.close()
 
 	except Exception as e:
@@ -1095,12 +1087,12 @@ def createChoppedProteomes(inputs):
 		- minimal_length: The minimum length in amino acids for a domain matching or intra-domain region to be kept and
 	                      tagged as a chopped CDS feature [Default is 20].
 		- logObject: A logging object.
-	- threads: The number of threads to use [Default is 1].
+		- threads: The number of threads to use [Default is 1].
 	********************************************************************************************************************
 	"""
-	prot_file, ccds_prot_file, pfam_db_file, pfam_z, minimal_length, logObject = inputs
+	prot_file, ccds_prot_file, pfam_db_file, pfam_z, minimal_length, logObject, threads = inputs
 	try:
-		sample = '.'.join(prot_file.split('.')[:-1])
+		sample = '.'.join(prot_file.split('/')[-1].split('.')[:-1])
 
 		# align Pfam domains and remove overlap similar to BiG-SCAPE
 		alphabet = pyhmmer.easel.Alphabet.amino()
@@ -1110,7 +1102,7 @@ def createChoppedProteomes(inputs):
 
 		target_dom_hits = defaultdict(list)
 		with pyhmmer.plan7.HMMFile(pfam_db_file) as hmm_file:
-			for hits in pyhmmer.hmmsearch(hmm_file, sequences, bit_cutoffs="trusted", Z=int(pfam_z), cpus=1):
+			for hits in pyhmmer.hmmsearch(hmm_file, sequences, bit_cutoffs="trusted", Z=int(pfam_z), cpus=threads):
 				for hit in hits:
 					for domain in hit.domains.included:
 						target_dom_hits[hit.name.decode()].append([hits.query_name.decode(), domain.alignment.target_from, domain.alignment.target_to, domain.score, domain.i_evalue])
@@ -1147,10 +1139,10 @@ def createChoppedProteomes(inputs):
 						end_coord = prev_end_coord + len(tg_seq_chunk) - 1
 						if len(tg_seq_chunk) >= minimal_length:
 							dn = sample + '|' + dom_start_names[tg + '|' + str(prev_end_coord-1)]
-							if dn == 'NA':
+							if dom_start_names[tg + '|' + str(prev_end_coord-1)] == 'NA':
 								dn = sample + '|' + tg + '|inter-domain_region|' + str(tg_interdomain_index)
 								tg_interdomain_index += 1
-							cpf_handle.write('>' + dn + '\n' + str(tg_seq) + '\n')
+							cpf_handle.write('>' + dn + '\n' + str(tg_seq_chunk) + '\n')
 						prev_end_coord = end_coord + 1
 		cpf_handle.close()
 	except:
@@ -1161,7 +1153,7 @@ def createChoppedProteomes(inputs):
 		sys.stderr.write(msg + '\n')
 		sys.exit(1)
 
-def annotateAndSplitProteinsUsingPfam(sample_proteomes, split_proteins_dir, domain_coord_info_file, logObject, minimal_length=20, threads=1)
+def annotateAndSplitProteinsUsingPfam(sample_proteomes, split_proteins_dir, domain_coord_info_file, logObject, minimal_length=20, threads=1):
 	"""	
 	Description:
 	Create chopped CDS GenBank files from regular GenBank input with CDS features.
@@ -1210,13 +1202,13 @@ def annotateAndSplitProteinsUsingPfam(sample_proteomes, split_proteins_dir, doma
 		for sample in sample_proteomes:
 			ccds_prot_file = split_proteins_dir + sample + '.ccds.faa'
 			prot_file = sample_proteomes[sample]
-			prot_mod_inputs.append([prot_file, ccds_prot_file, pfam_hmm_path, pfam_z, minimal_length, logObject])
+			prot_mod_inputs.append([prot_file, ccds_prot_file, pfam_hmm_path, pfam_z, minimal_length, logObject, threads])
 
 		msg = "Creating domain-chopped up version of GenBank files for %d gene clusters" % len(prot_mod_inputs) 
 		logObject.info(msg)
 		sys.stdout.write(msg + '\n')
 
-		p = multiprocessing.Pool(threads)
+		p = multiprocessing.Pool(1)
 		for _ in tqdm.tqdm(p.imap_unordered(createChoppedProteomes, prot_mod_inputs), total=len(prot_mod_inputs)):
 			pass
 		p.close()

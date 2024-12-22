@@ -19,11 +19,7 @@ For single species analyses, we recommend [Panaroo](https://github.com/gtonkinhi
 > ***bofasa: high-quality orthology inference across multiple bacterial species.*** Rauf Salamzade, Aamuktha Kottapalli, Lindsay Kalan, 2025.
 
 
-Please also consider citing OrthoFinder2 which is used for determination of coarse domain ortholog groups:
-
-
-
-And if you use geNomad for plasmid / phage annotations, then please also cite:
+Please also consider citing both ***OrthoFinder2*** and ***geNomad*** which are used for determination of coarse domain ortholog groups and the annotation of phages/plasmids, respectively:
 
 
 
@@ -33,6 +29,7 @@ This project has been funded in whole or in part with Federal funds from the Nat
 
 ## License
 
+```
 BSD 3-Clause License
 
 Copyright (c) 2024, Rauf Salamzade
@@ -61,3 +58,4 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
