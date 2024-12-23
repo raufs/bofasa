@@ -25,6 +25,19 @@ import pyhmmer
 
 version = pkg_resources.require("bofasa")[0].version
 
+"""
+def determineResolvedDomainResolutionOGs(orthofinder_tsv_file, orthofinder_tsv_singletons_file, genomad_flag, phage_file, plasmid_file, isfinder_file, resdog_dir, logObject, threads=1):
+	try:
+		with open(orthofinder_tsv_file) as o
+	except:	
+		msg = ''
+		logObject.error(msg)
+		sys.stderr.write(msg)
+		logObject.error(traceback.format_exc())
+		sys.stderr.write(traceback.format_exc())
+		sys.exit(1)
+"""
+
 def runCmd(cmd, logObject, check_files=[], check_directories=[], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL):
 	if logObject != None:
 		logObject.info('Running %s' % ' '.join(cmd))
