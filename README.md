@@ -1,5 +1,8 @@
-# bofasa
+# bofasa :cloud::lion::cloud:
+
 **B**acterial **O**rthology **F**inding **A**nd **S**yntenic **A**nalysis (**bofasa**)
+
+![image](https://github.com/user-attachments/assets/424a2ad1-27b5-4834-8d81-8c44e6c7986a)
 
 bofasa is specifically designed for investigating orthology between multiple-species of bacteria. It prioritizes high-quality orthology inference at the expense of throughput, designed to run on between 4 and 200 genomes.
 
