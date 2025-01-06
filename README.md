@@ -1,4 +1,4 @@
-# bofasa :cloud::lion::cloud:
+# bofasa
 
 **B**acterial **O**rthology **F**inding **A**nd **S**yntenic **A**nalysis (**bofasa**)
 
