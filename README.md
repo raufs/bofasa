@@ -2,7 +2,9 @@
 
 **B**acterial **O**rthology **F**inding **A**nd **S**yntenic **A**nalysis (**bofasa**)
 
-![image](https://github.com/user-attachments/assets/424a2ad1-27b5-4834-8d81-8c44e6c7986a)
+<p align="center">
+<img src="https://github.com/user-attachments/assets/1b661ff4-98f9-4c30-a780-20fa52f85e37" width="400">
+</p>
 
 bofasa is specifically designed for investigating orthology between multiple-species of bacteria. It prioritizes high-quality orthology inference at the expense of throughput, designed to run on between 4 and 200 genomes.
 
