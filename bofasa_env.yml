@@ -9,6 +9,8 @@ dependencies:
   - pip
   - orthofinder=2.5.5
   - diamond>=2.1.7
+  - slclust
+  - ete3
   - prodigal
   - pyrodigal
   - scipy
@@ -18,3 +20,4 @@ dependencies:
   - curl
   - rich-argparse
   - tqdm
+  - plotly

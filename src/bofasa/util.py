@@ -22,21 +22,647 @@ import statistics
 from scipy import stats
 import decimal 
 import pyhmmer
+from ete3 import Tree
+import pandas as pd
+import plotly.express as px
+
+single_copy_dogs = set([])
+protein_dogs = defaultdict(lambda: defaultdict(int))
+dog_conservation = {}
 
 version = pkg_resources.require("bofasa")[0].version
 
-"""
-def determineResolvedDomainResolutionOGs(orthofinder_tsv_file, orthofinder_tsv_singletons_file, genomad_flag, phage_file, plasmid_file, isfinder_file, resdog_dir, logObject, threads=1):
+def generate_og_name(i):
 	try:
-		with open(orthofinder_tsv_file) as o
-	except:	
-		msg = ''
+		pid = None
+		if (i+1) < 10:
+			pid = 'OG00000'+str(i+1)
+		elif (i+1) < 100:
+			pid = 'OG0000'+str(i+1)
+		elif (i+1) < 1000:
+			pid = 'OG000'+str(i+1)
+		elif (i+1) < 10000:
+			pid = 'OG00'+str(i+1)
+		elif (i+1) < 100000:
+			pid = 'OG0'+str(i+1)
+		else:
+			pid = 'OG' + str(i+1)
+		assert(pid != None)
+		return(pid)
+	except:
+		msg = 'Issue generating OG identifier for number: %s' % str(i)
+		sys.stderr.write(msg + '\n')
+		sys.stderr.write(traceback.format_exc() + '\n')
+
+
+def runSetOfProteinComparisons(inputs):
+	try:
+		p1s, p2s, result_file, dj = inputs
+		
+		outf_handle = open(result_file, 'w')
+		for i, p1 in enumerate(p1s):
+			p2 = p2s[i]
+			p1dogs = protein_dogs[p1]
+			p2dogs = protein_dogs[p2]
+			intersect_dogs = (set(p1dogs.keys())).intersection(set(p2dogs.keys()))
+			union_dogs = (set(p1dogs.keys())).union(set(p2dogs.keys()))
+			sc_dogs = single_copy_dogs.intersection(intersect_dogs)
+
+			threshold = dj
+			if len(sc_dogs) >= 1:
+				for sd in sc_dogs:
+					sd_conservation = dog_conservation[sd]
+					updated_threshold = dj - (dj*sd_conservation)
+					if updated_threshold < threshold:
+						threshold = updated_threshold
+
+			union_count = 0
+			intersect_count = 0
+			for d in union_dogs:
+				union_count += p1dogs[d] + p2dogs[d] - min([p1dogs[d], p2dogs[d]])
+				intersect_count += min([p1dogs[d], p2dogs[d]])
+
+			jaccard_index = intersect_count/union_count
+			if jaccard_index >= threshold:
+				outf_handle.write(p1 + '\t' + p2 + '\n')
+		outf_handle.close()
+	except:
+		msg = 'Issue performing pairwise assessment between proteins based on DOGs to determine protein-resolution ortholog groups.'
+		sys.stderr.write(msg + '\n')
+		sys.stderr.write(traceback.format_exc() + '\n')	
+
+
+def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logObject, dj=0.5, threads=1):
+	try:	
+		pairwise_dir = protein_clustering_dir + 'Protein_Pairs_Based_on_DOGs/' 
+		setupReadyDirectory([pairwise_dir])
+		pairwise_file = protein_clustering_dir + 'Protein_Pairs_Based_on_DOGs.txt'
+		clusters_file = protein_clustering_dir + 'Protein_Clusters_Based_on_DOGs.txt'
+		outf_handle = open(ogs_file, 'w')
+
+		global single_copy_dogs
+		global protein_dogs
+		global dog_conservation
+		all_proteins = set([])
+		sample_count = None
+		samples = []
+		dog_proteins = defaultdict(set)
+		with open(dogs_file) as odf:
+			for i, line in enumerate(odf):
+				line = line.strip('\n')
+				ls = line.split('\t')
+				if i == 0: 
+					sample_count = len(ls[1:])
+					samples = ls[1:]
+					outf_handle.write(line + '\n')
+				else:
+					dog = ls[0]
+					sc_flag = True
+					sample_with = 0
+					for lts in ls[1:]:
+						if ',' in lts:
+							sc_flag = False
+						for lt in lts.split(','):
+							lt = lt.strip()
+							if lt == '': continue
+							prot_id = '|'.join(lt.split('|')[:-2])
+							all_proteins.add(prot_id)
+							protein_dogs[prot_id][dog] += 1
+							dog_proteins[dog].add(prot_id)
+					if sample_with == 1:
+						sc_flag = False
+					dog_conservation[dog] = sample_with/float(sample_count)
+					if sc_flag:
+						single_copy_dogs.add(dog)
+
+		batch_inputs = defaultdict(list)
+		visited_pp = set([])
+		pair_count = 0
+		for d in dog_proteins:
+			for i, p1 in enumerate(sorted(dog_proteins[d])):
+				for j, p2 in enumerate(sorted(dog_proteins[d])):
+					if i >= j: continue 
+					pp = tuple(sorted([p1, p2]))
+					if pp in visited_pp: continue
+					batch = pair_count % threads
+					batch_inputs[batch].append([p1, p2])
+					pair_count += 1
+					visited_pp.add(pp)
+					
+		pairwise_assessment_inputs = []
+		for batch in batch_inputs:
+			p1s = []
+			p2s = []
+			for pp in batch_inputs[batch]:
+				p1s.append(pp[0])
+				p2s.append(pp[1])
+			result_file = pairwise_dir + str(batch) + '.txt'
+			pairwise_assessment_inputs.append([p1s, p2s, result_file, dj])
+		
+		p = multiprocessing.Pool(threads)
+		for _ in tqdm.tqdm(p.imap_unordered(runSetOfProteinComparisons, pairwise_assessment_inputs), total=len(pairwise_assessment_inputs)):
+			pass
+		p.close()
+
+		os.system('find %s -maxdepth 1 -type f | xargs cat >> %s' % (pairwise_dir, pairwise_file))
+
+		clust_cmd = ['slclust', '<', pairwise_file, '>', clusters_file]
+
+		try:
+			subprocess.call(' '.join(clust_cmd), shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, executable='/bin/bash')
+			assert (os.path.isfile(clusters_file))
+			logObject.info('Successfully ran: %s' % ' '.join(clust_cmd))
+		except Exception as e:
+			logObject.error('Had an issue running slclust: %s' % ' '.join(clust_cmd))
+			sys.stderr.write('Had an issue running slclust: %s\n' % ' '.join(clust_cmd))
+			logObject.error(e)
+			sys.exit(1)
+		
+		protein_og_clusters = []
+		paired_proteins = set([])
+		with open(clusters_file) as ocf:
+			for line in ocf:
+				line = line.strip()
+				ls = line.split()
+				protein_og_clusters.append(ls)
+				for p in ls:
+					paired_proteins.add(p)
+
+		for prot in all_proteins:
+			if not prot in paired_proteins:
+				protein_og_clusters.append([prot])
+		
+		for i, c in enumerate(protein_og_clusters):
+			samp_lts = defaultdict(list)
+			for p in c:
+				s = p.split('|')[0]
+				samp_lts[s].append(p.split('|')[1])
+			og_id = generate_og_name(i)
+			printlist = [og_id]
+			for s in samples:
+				printlist.append(', '.join(samp_lts[s]))
+			outf_handle.write('\t'.join(printlist) + '\n')
+
+		outf_handle.close()
+	except:
+		msg = 'Issues splitting domain ortholog groups from OrthoFinder using phylogenetic processing.'
 		logObject.error(msg)
 		sys.stderr.write(msg)
 		logObject.error(traceback.format_exc())
 		sys.stderr.write(traceback.format_exc())
 		sys.exit(1)
-"""
+
+def determine_tree_score(intree, all_og_samples):
+	try:
+		sample_lts = defaultdict(set)
+		for n in intree.traverse('postorder'):
+			if n.is_leaf():
+				s = n.name.split('|')[0]
+				sample_lts[s].add(n.name)
+
+		curr_score = 0
+		for s in all_og_samples:
+			curr_score += abs(len(sample_lts[s]) - 1)
+
+		return(curr_score)
+	except:
+		msg = 'Issues splitting ortholog group tree using the recursive function.'
+		sys.stderr.write(msg + '\n')
+		sys.stderr.write(traceback.format_exc() + '\n')
+		sys.exit(1)
+
+
+def get_children(intree):
+	try:
+		children = set([])
+		for n in intree.traverse('postorder'):
+			if n.is_leaf():
+				children.add(n.name)
+		return(children)
+	except:
+		msg = 'Issue getting children leaves from input tree.'
+		sys.stderr.write(msg + '\n')
+		sys.stderr.write(traceback.format_exc() + '\n')
+		sys.exit(1)
+
+def recursive_splitting(intree, all_og_samples, exhaustive_assessment):
+	try:
+		intree = copy.deepcopy(intree)
+		full_score = determine_tree_score(intree, all_og_samples)
+		all_leaves = get_children(intree)
+
+		subtree_info = []
+		min_score = 1e100
+		for n in intree.traverse('preorder'):
+			if n.is_leaf(): continue
+			subtree_score = determine_tree_score(n, all_og_samples)
+			subtree_info.append([copy.deepcopy(n), subtree_score])
+			if subtree_score < min_score:
+				min_score = subtree_score
+
+		if min_score >= full_score: 
+			return([all_leaves])
+
+		best_partitionings = []
+		best_partition_score = 1e100
+		for i, sti in enumerate(sorted(subtree_info, key=itemgetter(1))):
+			if not exhaustive_assessment and i != 0: continue
+			if sti[1] == min_score:
+				st_leaves = get_children(sti[0])
+				st_samples = set([x.split('|')[0] for x in sorted(list(st_leaves))])
+				if len(st_samples) < 2: continue
+				complement_leaves = all_leaves.difference(st_leaves)
+				complement_samples = set([x.split('|')[0] for x in sorted(list(complement_leaves))])
+				if len(complement_samples) < 2: continue
+				complement_tree = copy.deepcopy(intree)
+				complement_tree.prune(list(complement_leaves))
+				psamples = sorted(recursive_splitting(complement_tree, all_og_samples, exhaustive_assessment))
+				psamples = [st_leaves] + psamples
+				pscore_sum = 0
+				for p in psamples:
+					ptree = copy.deepcopy(intree)
+					ptree.prune(list(p))
+					pscore = determine_tree_score(ptree, all_og_samples)
+					pscore_sum += pscore
+				best_partitionings.append([psamples, pscore_sum])
+				if pscore_sum <= best_partition_score:
+					best_partition_score = pscore_sum
+		
+		if len(best_partitionings) > 0:
+			#multiple_found = 0
+			result = None
+			for i, bp in enumerate(sorted(best_partitionings, key=itemgetter(1))):
+				if bp[1] == best_partition_score and i == 0:
+					#multiple_found += 1
+					result = bp[0]
+				#elif bp[1] == best_partition_score:
+				#	multiple_found += 1
+			#if multiple_found > 1:
+			#	msg = 'Warning: multiple partition paths found for phylogenetic resolution method!'
+			#	sys.stderr.write(msg + '\n')
+			assert(result != None)
+			return(result)				
+		else:
+			return([all_leaves])
+	except:
+		msg = 'Issues splitting ortholog group tree using the recursive function.'
+		sys.stderr.write(msg + '\n')
+		sys.stderr.write(traceback.format_exc() + '\n')
+		sys.exit(1)
+
+def assess_job_intensity(faa_file):
+	try:
+		heavy_job = False
+		seq_lens = []
+		with open(faa_file) as off:
+			for rec in SeqIO.parse(off, 'fasta'):
+				seq_lens.append(len(str(rec.seq)))
+		med_seq_len = statistics.median(seq_lens)
+		seq_count = len(seq_lens)
+		if seq_count >= 100 or med_seq_len >= 1500:
+			heavy_job = True
+		return(heavy_job)
+	except:
+		msg = ''
+		sys.stderr.write(msg + '\n')
+		sys.stderr.write(traceback.format_exc() + '\n')
+		sys.exit(1)
+
+def resolveOrthogroupsUsingPhylogeny(orthofinder_fasta_dir, orthofinder_tsv_file, orthofinder_tsv_singletons_file, resdog_dir, result_file, logObject, use_super5=True, exhaustive_rooting=False, exhaustive_assessment=False, threads=1):
+	try:
+		msa_dir = resdog_dir + 'Protein_MSAs/'
+		tre_dir = resdog_dir + 'Protein_Trees/'
+		setupReadyDirectory([msa_dir, tre_dir])
+
+		msa_tree_cmds = []
+		for f in os.listdir(orthofinder_fasta_dir):
+			in_faa = orthofinder_fasta_dir + f
+			msa_file = msa_dir + '.'.join(f.split('.')[:-1]) + '.msa.faa'
+			tre_file = tre_dir + '.'.join(f.split('.')[:-1]) + '.tre'
+			
+			heavy_job = assess_job_intensity(in_faa)
+
+			if heavy_job:
+				msa_cmd = ['muscle', '-super5', in_faa, '-output', msa_file, '-threads', str(threads)]
+				if not use_super5:
+					msa_cmd = ['muscle', '-align', in_faa, '-output', msa_file, '-threads', str(threads)]
+			
+				tre_cmd = ['fasttree', '-out', tre_file, msa_file]
+				msa_tree_cmd = msa_cmd + [';'] + tre_cmd
+				runCmd(msa_tree_cmd, logObject)
+			else:
+				msa_cmd = ['muscle', '-super5', in_faa, '-output', msa_file, '-threads', '1']
+				if not use_super5:
+					msa_cmd = ['muscle', '-align', in_faa, '-output', msa_file, '-threads', '1']
+			
+				tre_cmd = ['fasttree', '-out', tre_file, msa_file]
+				msa_tree_cmd = msa_cmd + [';'] + tre_cmd + [logObject]
+				msa_tree_cmds.append(msa_tree_cmd)
+
+		p = multiprocessing.Pool(threads)
+		for _ in tqdm.tqdm(p.imap_unordered(multiProcess, msa_tree_cmds), total=len(msa_tree_cmds)):
+			pass
+		p.close()
+
+		dog_partitions = defaultdict(list)
+		for f in os.listdir(tre_dir):
+			og = '.tre'.join(f.split('.tre')[:-1])
+			sys.stderr.write(og + '\n')
+			tre_file = tre_dir + f
+			t = Tree(tre_file)
+			samples_with_og = set([])
+			leaves = set([])
+			for n in t.traverse('postorder'):
+				if n.is_leaf():
+					s = n.name.split('|')[0]
+					samples_with_og.add(s)
+					leaves.add(n.name)
+
+			if len(leaves) < 3: continue
+			if len(samples_with_og) == 1: continue
+
+			if exhaustive_rooting:
+				rooted_t = copy.deepcopy(t)
+				all_rooting_partitions = []
+				for n in t.traverse('preorder'):
+					if n.is_leaf(): continue
+					children = get_children(n)
+					samples = set([x.split('|')[0] for x in children])
+					if len(samples) < 2: continue
+					rooted_t.set_outgroup(n)
+					split_partitions = recursive_splitting(rooted_t, samples_with_og, exhaustive_assessment)
+					pscore_sum = 0 
+					for p in split_partitions:
+						ptree = copy.deepcopy(rooted_t)
+						ptree.prune(p)
+						pscore = determine_tree_score(ptree, samples_with_og)
+						pscore_sum += pscore
+					all_rooting_partitions.append([split_partitions, pscore_sum])
+				for i, sp in enumerate(sorted(all_rooting_partitions, key=itemgetter(1))):
+					if i == 0:
+						dog_partitions[og] = sp
+			else:
+				curr_t = copy.deepcopy(t)
+				R = curr_t.get_midpoint_outgroup()
+				curr_t.set_outgroup(R)
+				split_partitions = recursive_splitting(curr_t, samples_with_og, exhaustive_assessment)
+				dog_partitions[og] = split_partitions
+
+		outf_handle = open(result_file, 'w')
+		samples = []
+		with open(orthofinder_tsv_file) as otf:
+			for i, line in enumerate(otf):
+				line = line.strip('\n')
+				ls = line.split('\t')
+				if i == 0: 
+					samples = ['.ccds'.join(x.split('.ccds')[:-1]) for x in ls[1:]]
+					outf_handle.write('OG/Sample\t' + '\t'.join(samples) + '\n')
+					outf_handle.write(line + '\n')
+				else:
+					dog = ls[0]
+					if dog in dog_partitions:
+						for cluster_id, dog_c in enumerate(dog_partitions[dog]):
+							cluster_name = dog + '_' + str(cluster_id)
+							dog_c_set = set(dog_c)
+							printlist = [cluster_name]
+							for lts in ls[1:]:
+								lts_retained = []
+								for lt in lts.split(','):
+									lt = lt.strip()
+									if lt in dog_c_set:
+										lts_retained.append(lt)
+								printlist.append(', '.join(lts_retained))
+							outf_handle.write('\t'.join(printlist) + '\n')
+					else:
+						outf_handle.write(line + '\n')
+						
+		with open(orthofinder_tsv_singletons_file) as ootsf:
+			for i, line in enumerate(ootsf):
+				line = line.strip('\n')
+				if i == 0: continue
+				outf_handle.write(line + '\n')
+		outf_handle.close()	
+		
+	except:
+		msg = 'Issues splitting domain ortholog groups from OrthoFinder using phylogenetic processing.'
+		logObject.error(msg)
+		sys.stderr.write(msg)
+		logObject.error(traceback.format_exc())
+		sys.stderr.write(traceback.format_exc())
+		sys.exit(1)
+
+def single_linkage_cluster(pairs, all_lts, paired_lts):
+	try:
+		"""	
+		Solution for single-linkage clustering taken from mimomu's repsonse in the stackoverflow page:
+		https://stackoverflow.com/questions/4842613/merge-lists-that-share-common-elements?lq=1
+		"""
+		L = pairs
+		LL = set(itertools.chain.from_iterable(L))
+		for each in LL:
+			components = [x for x in L if each in x]
+			for i in components:
+				L.remove(i)
+			L += [list(set(itertools.chain.from_iterable(components)))]
+
+		for lt in all_lts:
+			if not lt in paired_lts:
+				L.append([lt])
+
+		return (L)
+	except:
+		msg = 'Issue running single linkage clustering!'
+		sys.stderr.wrtie(msg + '\n')
+		sys.stderr.write(traceback.format_exc() + '\n')
+		sys.exit(1)
+
+def resolveOrthogroupsUsingScores(orthofinder_seqid_file, orthofinder_graph_file, orthofinder_tsv_file, orthofinder_tsv_singletons_file, genomad_flag, phage_file, plasmid_file, isfinder_file, result_file, logObject, cutoff_percentile=5):
+	try:
+		ise_mge_ignore_set = defaultdict(set)
+		if genomad_flag:
+			with open(phage_file) as opf:
+				for line in opf:
+					line = line.strip()
+					ls = line.split('\t')
+					ise_mge_ignore_set[ls[0]].add(ls[1])
+
+			with open(plasmid_file) as opf:
+				for line in opf:
+					line = line.strip()
+					ls = line.split('\t')
+					ise_mge_ignore_set[ls[0]].add(ls[1])
+
+		with open(isfinder_file) as oif:
+			for line in oif:
+				line = line.strip()
+				ls = line.split('\t')
+				ise_mge_ignore_set[ls[0]].add(ls[1])
+	
+		seqid_to_name = {}
+		name_to_seqid = {}
+		with open(orthofinder_seqid_file) as oosf:
+			for index, line in enumerate(oosf):
+				line = line.strip()
+				ls = line.split()
+				sid = ls[0][:-1]
+				name = ls[1]
+				seqid_to_name[index] = name
+				name_to_seqid[name] = index
+
+		pairwise_scores = defaultdict(lambda: defaultdict(lambda: 0.0))
+		with open(orthofinder_graph_file) as oogf:
+			for line in oogf:
+				line = line.strip()
+				if not line.endswith('$'): continue
+				ls = line.split()
+				foc_gene = int(ls[0])
+				for comp in ls[1:-1]:
+					comp_gene, score = comp.split(':')
+					comp_gene = int(comp_gene)
+					pairwise_scores[foc_gene][comp_gene] = max([float(score), pairwise_scores[foc_gene][comp_gene], pairwise_scores[comp_gene][foc_gene]])
+					pairwise_scores[comp_gene][foc_gene] = max([float(score), pairwise_scores[foc_gene][comp_gene], pairwise_scores[comp_gene][foc_gene]])
+
+		outf_handle = open(result_file, 'w')
+
+		samples = []
+		sample_sample_scns = defaultdict(list)
+		intra_dog_fpc = defaultdict(set)
+		with open(orthofinder_tsv_file) as otf:
+			for i, line in enumerate(otf):
+				line = line.strip('\n')
+				ls = line.split('\t')
+				if i == 0: 
+					samples = ['.ccds'.join(x.split('.ccds')[:-1]) for x in ls[1:]]
+					outf_handle.write('OG/Sample\t' + '\t'.join(samples) + '\n')
+				else:
+					dog = ls[0]
+					sample_sc_lt = {}
+					for j, lts in enumerate(ls[1:]):
+						s = samples[j]
+						if (not (lts.strip() == '' or ',' in lts)) and (not lts.strip() in ise_mge_ignore_set[s]):
+							sample_sc_lt[s] = name_to_seqid[lts.strip()]
+
+					for k, s1 in enumerate(sorted(sample_sc_lt)):
+						lt1 = sample_sc_lt[s1]
+						for l, s2 in enumerate(sorted(sample_sc_lt)):
+							if k >= l: continue
+							lt2 = sample_sc_lt[s2]
+							pair_name = tuple(sorted([s1, s2]))
+							intra_dog_fpc[dog].add(tuple(sorted([seqid_to_name[lt1], seqid_to_name[lt2]])))
+							ps = pairwise_scores[lt1][lt2]
+							sample_sample_scns[pair_name].append(ps)
+
+
+		sample_to_sample_cutoffs = defaultdict(lambda: None)
+		for k, s1 in enumerate(sorted(samples)):
+			for l, s2 in enumerate(sorted(samples)):
+				if k >= l: continue
+				pair_name = tuple(sorted([s1, s2]))
+				sc_norm_scores = sorted(sample_sample_scns[pair_name])
+				cutoff = np.percentile([x for x in sc_norm_scores if x > 0.0], cutoff_percentile)
+				sample_to_sample_cutoffs[pair_name] = cutoff
+				self1 = tuple(sorted([s1, s1]))
+				self2 = tuple(sorted([s2, s2]))
+				if sample_to_sample_cutoffs[self1] == None or cutoff >= sample_to_sample_cutoffs[self1]:
+					sample_to_sample_cutoffs[self1] = cutoff
+				if sample_to_sample_cutoffs[self2] == None or cutoff >= sample_to_sample_cutoffs[self2]:
+					sample_to_sample_cutoffs[self2] = cutoff
+		
+		samples = []
+		with open(orthofinder_tsv_file) as otf:
+			for i, line in enumerate(otf):
+				line = line.strip('\n')
+				ls = line.split('\t')
+				if i == 0: 
+					samples = ['.ccds'.join(x.split('.ccds')[:-1]) for x in ls[1:]]
+				else:
+					dog = ls[0]
+					lt_sample = defaultdict(set)
+					for j, lts in enumerate(ls[1:]):
+						s = samples[j]
+						for lt in lts.split(','):
+							if lt.strip() != '':
+								lt = lt.strip()
+								lt_sample[lt] = s
+
+					for k, lt1 in enumerate(sorted(lt_sample)):
+						s1 = lt_sample[lt1]
+						for j, lt2 in enumerate(sorted(lt_sample)):
+							if k >= l: continue
+							s2 = lt_sample[lt2]
+							# Previous implementation to handle intra-genome paralogs.
+							# Direct edges between paralogs in the same genome were 
+							# not supported
+							# if s1 == s2: continue
+							ps = pairwise_scores[name_to_seqid[lt1]][name_to_seqid[lt2]]
+							pair_name = tuple(sorted([s1, s2]))
+							if ps >= sample_to_sample_cutoffs[pair_name]: 
+								intra_dog_fpc[dog].add(tuple(sorted([lt1, lt2])))
+					
+					lt_pairs = []
+					clustered_lts = set([])
+					for p in intra_dog_fpc[dog]:
+						pl = list(p)
+						lt_pairs.append([pl[0], pl[1]])
+						clustered_lts.add(pl[0])
+						clustered_lts.add(pl[1])
+					all_lts = set(lt_sample.keys())
+					sl_clustering = single_linkage_cluster(lt_pairs, all_lts, clustered_lts)
+					for cluster_id, dog_c in enumerate(sl_clustering):
+						cluster_name = dog + '_' + str(cluster_id)
+						dog_c_set = set(dog_c)
+						printlist = [cluster_name]
+						for lts in ls[1:]:
+							lts_retained = []
+							for lt in lts.split(','):
+								lt = lt.strip()
+								if lt in dog_c_set:
+									lts_retained.append(lt)
+							printlist.append(', '.join(lts_retained))
+						outf_handle.write('\t'.join(printlist) + '\n')
+		
+		with open(orthofinder_tsv_singletons_file) as ootsf:
+			for i, line in enumerate(ootsf):
+				line = line.strip('\n')
+				if i == 0: continue
+				outf_handle.write(line + '\n')
+		outf_handle.close()	
+		
+	except Exception as e:	
+		msg = 'Issues splitting domain ortholog groups from OrthoFinder using cutoffs based on single-copy ortholog scores between pairs of samples.'
+		logObject.error(msg)
+		sys.stderr.write(msg)
+		logObject.error(traceback.format_exc())
+		sys.stderr.write(traceback.format_exc())
+		sys.exit(1)
+
+def combineOrthoFinderResults(orthofinder_tsv_file, orthofinder_tsv_singletons_file, result_file, logObject):
+	try:
+		outf_handle = open(result_file, 'w')
+		with open(orthofinder_tsv_file) as ootf:
+			for i, line in enumerate(ootf):
+				line = line.strip('\n')
+				if i == 0:
+					ls = line.split('\t')
+					samples = ['.ccds'.join(x.split('.ccds')[:-1]) for x in ls[1:]]
+					outf_handle.write('OG/Sample\t' + '\t'.join(samples) + '\n')
+				else:
+					outf_handle.write(line + '\n')
+
+		with open(orthofinder_tsv_singletons_file) as ootsf:
+			for i, line in enumerate(ootsf):
+				line = line.strip('\n')
+				if i == 0: continue
+				outf_handle.write(line + '\n')
+		outf_handle.close()	
+	except Exception as e:	
+		msg = 'Issues combining ortholog groups and singleton ortholog groups into a single file.'
+		logObject.error(msg)
+		sys.stderr.write(msg)
+		logObject.error(traceback.format_exc())
+		sys.stderr.write(traceback.format_exc())
+		sys.exit(1)
+
 
 def runCmd(cmd, logObject, check_files=[], check_directories=[], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL):
 	if logObject != None:
@@ -161,7 +787,7 @@ def memory_limit(mem):
 	max_virtual_memory = mem*1000000000
 	soft, hard = resource.getrlimit(resource.RLIMIT_AS)
 	resource.setrlimit(resource.RLIMIT_AS, (max_virtual_memory, hard))
-	print(resource.getrlimit(resource.RLIMIT_AS))
+	#print(resource.getrlimit(resource.RLIMIT_AS))
 
 
 def setupReadyDirectory(directories):
@@ -338,7 +964,7 @@ def extractGeneContexts(inputs):
 				scaffold_features[scaffold].append([start, end, name, score, strand])
 
 		output_handle = open(output_file, 'w')
-		output_handle.write('\t'.join(['Protein', 'OG', 'Near scaffold edge?', 'Length', 'Upstream genes', 'Downstream genes', 'Upstream OGs', 'Downstream OGs']))
+		output_handle.write('\t'.join(['Protein', 'OG', 'Near scaffold edge?', 'Length', 'Upstream genes', 'Downstream genes', 'Upstream OGs', 'Downstream OGs']) + '\n')
 		for scaffold in scaffold_features:
 			scaffold_features_sorted = sorted(scaffold_features[scaffold], key=itemgetter(0))
 			max_features = len(scaffold_features[scaffold])
@@ -432,7 +1058,7 @@ def extractGeneContexts(inputs):
 		sys.stderr.write(traceback.format_exc())
 		sys.exit(1)
 
-def determineOrthologGroupContexts(prepare_input_dir, og_context_info_file, surround_info_dir, of_tsv, of_singletons_tsv, logObject, surrounding_bp=10000, threads=1):
+def determineOrthologGroupContexts(bofasa_prep_dir, og_context_info_file, surround_info_dir, og_tsv_file, logObject, surrounding_bp=10000, threads=1):
 	"""
 	Description:
 	This function loads coordinate information of CDSs for each input genome into a dictionary and also 
@@ -444,12 +1070,44 @@ def determineOrthologGroupContexts(prepare_input_dir, og_context_info_file, surr
 	********************************************************************************************************************
 	"""
 	try:
+		isfinder_file = bofasa_prep_dir + 'Sample_IS_Element_Proteins.txt'
+		plasmid_file = bofasa_prep_dir + 'Sample_Plasmid_Proteins.txt'
+		phage_file = bofasa_prep_dir + 'Sample_Phage_Proteins.txt'
+
+		ise_set = defaultdict(set)
+		plasmid_set = defaultdict(set)
+		phage_set = defaultdict(set)
+
+		genomad_flag = False
+		if os.path.isfile(isfinder_file):
+			with open(isfinder_file) as oif:
+				for line in oif:
+					line = line.strip()
+					ls = line.split('\t')
+					ise_set[ls[0]].add(ls[1])
+		
+		if os.path.isfile(plasmid_file):
+			with open(plasmid_file) as opf:
+				for line in opf:
+					line = line.strip()
+					ls = line.split('\t')
+					plasmid_set[ls[0]].add(ls[1])
+			genomad_flag = True
+		
+		if os.path.isfile(phage_file):
+			with open(phage_file) as opf:
+				for line in opf:
+					line = line.strip()
+					ls = line.split('\t')
+					phage_set[ls[0]].add(ls[1])
+			genomad_flag = True
+		
 		og_genes = defaultdict(set)
 		og_samples = defaultdict(set)
 		gene_to_og = {}
-		if os.path.isfile(of_tsv):
+		if os.path.isfile(og_tsv_file):
 			samples = []
-			with open(of_tsv) as oot:
+			with open(og_tsv_file) as oot:
 				for i, line in enumerate(oot):
 					line = line.strip('\n')
 					ls = line.split('\t')
@@ -459,25 +1117,8 @@ def determineOrthologGroupContexts(prepare_input_dir, og_context_info_file, surr
 						og = ls[0]
 						for j, gs in enumerate(ls[1:]):
 							sample = samples[j]
-							for g in gs.split(', '):
+							for g in gs.split(','):
 								g = g.strip()
-								if g != '':
-									og_genes[og].add(g)
-									og_samples[og].add(sample)
-									gene_to_og[g] = og
-
-		if os.path.isfile(of_singletons_tsv):
-			samples = []
-			with open(of_singletons_tsv) as oost:
-				for i, line in enumerate(oost):
-					line = line.strip('\n')
-					ls = line.split('\t')
-					if i == 0: 
-						samples = ls[1:]
-					else:
-						og = ls[0]
-						for j, gs in enumerate(ls[1:]):
-							for g in gs.split(', '):
 								if g != '':
 									og_genes[og].add(g)
 									og_samples[og].add(sample)
@@ -486,19 +1127,20 @@ def determineOrthologGroupContexts(prepare_input_dir, og_context_info_file, surr
 		try:
 			assert(len(og_genes) > 0)
 		except Exception as e:
-			logObject.error("Difficulties parsing OrthoFinder results! Probably it didn't run successfully :(")
+			msg = "Difficulties parsing input orthogroup results in the file: %s" % og_tsv_file
+			logObject.error(msg)
 			logObject.error(traceback.format_exc())
-			sys.stderr.write("Difficulties parsing OrthoFinder results! Probably it didn't run successfully :(\n")
+			sys.stderr.write(msg + '\n')
 			sys.stderr.write(traceback.format_exc() + '\n')
 
-		listing_file = prepare_input_dir + 'Genome_Proteomes_Files.txt'
+		listing_file = bofasa_prep_dir + 'Info_on_Input_Genome_Files.txt'
 		assert(os.path.isfile(listing_file))
 		genome_params = []
 		with open(listing_file) as olf:
-			for line in olf:
+			for i, line in enumerate(olf):
+				if i == 0: continue
 				line = line.strip()
-				sample, proteome_file, coords_file = line.split('\t')
-				coords_file = prepare_input_dir + coords_file
+				sample, ccds_proteome_file, proteome_file, coords_file, genome_file = line.split('\t')
 				output_file = surround_info_dir + sample + '.tsv'
 				genome_params.append([sample, coords_file, output_file, gene_to_og, og_genes, surrounding_bp, logObject])
 
@@ -513,6 +1155,7 @@ def determineOrthologGroupContexts(prepare_input_dir, og_context_info_file, surr
 		og_gene_lengths = defaultdict(list)
 		context_nogs = defaultdict(list)
 		context_nogs_complete = defaultdict(list)
+		og_proteins = defaultdict(list)
 		for genome_info in genome_params:
 			sample, coords_file, output_file, gene_to_og, og_genes, surrounding_bp, logObject = genome_info
 			with open(output_file) as oof:
@@ -521,6 +1164,7 @@ def determineOrthologGroupContexts(prepare_input_dir, og_context_info_file, surr
 					line = line.strip('\n')
 					protein, og, nse, length, upstream_genes, downstream_genes, upstream_ogs, downstream_ogs = line.split('\t')
 					og_gene_lengths[og].append(float(length))
+					og_proteins[og].append(protein)
 					complete_status = 'C:'
 					if nse == 'True':
 						og_contexts_nses[og] += 1
@@ -556,10 +1200,13 @@ def determineOrthologGroupContexts(prepare_input_dir, og_context_info_file, surr
 
 		og_context_info_handle = open(og_context_info_file, 'w')
 		og_context_info_handle.write('\t'.join(['OG', 'Median OG length (bp)', 'Proportion contexts near scaffold edge', 'Number of genomes with OG', 
-										        'Number of instances', 'Context variability score', 'Context variability score - complete contexts', 
+										        'Number of protein in OG', 'Context variability score', 'Context variability score - complete contexts', 
 												'Context entropy score', 'Context entropy score - complete contexts', 'Number of distinct neighbor OGs', 
 												'Number of distinct OGs from complete contexts', 'Avg. number of distinct neighbor OGs', 
-												'Avg. number of distinct neighbor OGs from complete contexts', 'Contexts']) + '\n')
+												'Avg. number of distinct neighbor OGs from complete contexts', 
+												'Proportion instances on plasmid (based on geNomad annotation)', 
+												'Proportion instances on phage (based on geNomad annotation)', 
+												'Proportion homologous to IS-elements (based on ISfinder database)', 'Instances', 'Contexts']) + '\n')
 		for og in sorted(og_contexts):
 			median_length = og_gene_lengths[og][0]
 			if len(og_gene_lengths) > 1:
@@ -591,10 +1238,30 @@ def determineOrthologGroupContexts(prepare_input_dir, og_context_info_file, surr
 				context_var_score_complete = round(avg_nog_complete/total_nog_complete, 2)
 				if total_nog_complete > 1:
 					context_entropy_complete = round(stats.entropy([x/total_nog_complete for x in nog_freqs_complete]), 2)
+			
+			plasmid_count = 0
+			phage_count = 0
+			is_count = 0
+			for p in og_proteins[og]:
+				s = p.split('|')[0]
+				if p in phage_set[s]:
+					phage_count += 1
+				if p in plasmid_set[s]:
+					plasmid_count += 1
+				if p in ise_set[s]:
+					is_count += 1
+				
+			plasmid_per = 100.0*(plasmid_per / float(num_contexts))
+			phage_per = 100.0*(phage_per / float(num_contexts))
+			ise_per = 100.0*(ise_per / float(num_contexts))
 
+			if not genomad_flag:
+				plasmid_per = 'NA'
+				phage_per = 'NA'
+					
 			og_context_info_handle.write('\t'.join([str(x) for x in [og, round(median_length,2), prop_nse, num_samples, num_contexts, context_var_score, 
 								         context_var_score_complete, context_entropy, context_entropy_complete, total_nog, total_nog_complete,
-										 avg_nog, avg_nog_complete, '; '.join(og_contexts[og])]]) + '\n')
+										 avg_nog, avg_nog_complete, plasmid_per, phage_per, ise_per, '; '.join(og_proteins[og]), '; '.join(og_contexts[og])]]) + '\n')
 		og_context_info_handle.close()
 			
 	except Exception as e:
@@ -602,7 +1269,6 @@ def determineOrthologGroupContexts(prepare_input_dir, og_context_info_file, surr
 		logObject.error(traceback.format_exc())
 		sys.stderr.write(traceback.format_exc() + '\n')
 		sys.exit(1)
-
 
 
 def is_fasta(fasta):
@@ -680,7 +1346,7 @@ def is_genbank(gbk, check_for_cds=False):
 	except:
 		return False
 
-def createProteinAlignments(prot_dir, prot_algn_dir, logObject, use_super5=True, threads=1):
+def createProteinAlignments(bofasa_prep_dir, resulting_ogs_file, prot_dir, prot_algn_dir, logObject, use_super5=True, threads=1):
 	"""
 	Description:
 	This function creates protein alignments from a directory of protein sequences.
@@ -688,6 +1354,8 @@ def createProteinAlignments(prot_dir, prot_algn_dir, logObject, use_super5=True,
 	Function originally developed for zol.
 	*******************************************************************************************************************
 	Parameters:
+	- bofasa_prep_dir: Input directory for bofasa generated by bofasa_prep
+	- resulting_ogs_file: Resulting orthogroups file.
 	- prot_dir: A directory containing protein sequences.
 	- prot_algn_dir: A directory to write protein alignments.
 	- logObject: A logging object.
@@ -695,23 +1363,56 @@ def createProteinAlignments(prot_dir, prot_algn_dir, logObject, use_super5=True,
 	- threads: The number of threads to use for alignment.
 	"""
 	try:
+		prot_to_og = defaultdict(dict)
+		samples = []
+		with open(resulting_ogs_file) as orof:
+			for i, line in enumerate(orof):
+				line = line.strip('\n')
+				ls = line.split('\t')
+				if i == 0:
+					samples = ls[1:]
+				og = ls[0]
+				for j, lts in enumerate(ls[1:]):
+					s = samples[j]
+					for lt in lts.split(', '):
+						if lt != '':
+							prot_to_og[s][lt] = og
+		
+		proteome_dir = bofasa_prep_dir + 'Genome_Processing/Proteomes/'
+		for f in os.listdir(proteome_dir):
+			if f.endswith('.faa'): continue
+			s = '.faa'.join(f.split('.faa')[:-1])
+			with open(proteome_dir + f) as opf:
+				for rec in SeqIO.parse(opf, 'fasta'):
+					lt = rec.id
+					og = prot_to_og[s][lt]
+					outf = prot_dir + og + '.faa'
+					outfh = open(outf, 'a+')
+					outfh.write('>' + s + '|' + lt + '\n' + str(rec.seq) + '\n')
+					outfh.close()
+
+		msa_cmds = []
 		for pf in os.listdir(prot_dir):
-			prefix = '.fa'.join(pf.split('.fa')[:-1])
+			prefix = '.faa'.join(pf.split('.faa')[:-1])
 			prot_file = prot_dir + pf
 			prot_algn_file = prot_algn_dir + prefix + '.msa.faa'
-			align_cmd = ['muscle', '-align', prot_file, '-output', prot_algn_file, '-amino', '-threads', str(threads)]
-			if use_super5:
-				align_cmd = ['muscle', '-super5', prot_file, '-output', prot_algn_file, '-amino', '-threads', str(threads)]
-			try:
-				subprocess.call(' '.join(align_cmd), shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-								executable='/bin/bash')
-				assert(os.path.isfile(prot_algn_file))
-				logObject.info('Successfully ran: %s' % ' '.join(align_cmd))
-			except Exception as e:
-				logObject.error('Had an issue running MUSCLE: %s' % ' '.join(align_cmd))
-				sys.stderr.write('Had an issue running MUSCLE: %s\n' % ' '.join(align_cmd))
-				logObject.error(e)
-				sys.exit(1)
+			heavy_job = assess_job_intensity(prot_file)
+
+			if heavy_job:
+				msa_cmd = ['muscle', '-super5', prot_file, '-output', prot_algn_file, '-threads', str(threads)]
+				if not use_super5:
+					msa_cmd = ['muscle', '-align', prot_file, '-output', prot_algn_file, '-threads', str(threads)]
+				runCmd(msa_cmd, logObject)
+			else:
+				msa_cmd = ['muscle', '-super5', prot_file, '-output', prot_algn_file, '-threads', '1', logObject]
+				if not use_super5:
+					msa_cmd = ['muscle', '-align', prot_file, '-output', prot_algn_file, '-threads', '1', logObject]
+				msa_cmds.append(msa_cmd)
+
+		p = multiprocessing.Pool(threads)
+		for _ in tqdm.tqdm(p.imap_unordered(multiProcess, msa_cmds), total=len(msa_cmds)):
+			pass
+		p.close()
 	except Exception as e:
 		sys.stderr.write('Issues with creating protein alignments.\n')
 		logObject.error('Issues with creating protein alignments.')
@@ -745,7 +1446,10 @@ def createProfileHMMsAndConsensusSeqs(prot_algn_dir, phmm_dir, cons_dir, logObje
 			hmmbuild_cmds.append(['hmmbuild', '--amino', '--cpu', '2', '-n', prefix, prot_hmm_file, prot_algn_file, logObject])
 			hmmemit_cmds.append(['hmmemit', '-c', '-o', prot_cons_file, prot_hmm_file, logObject])
 		p = multiprocessing.Pool(threads)
-		p.map(multiProcess, hmmbuild_cmds)
+		for _ in tqdm.tqdm(p.imap_unordered(multiProcess, hmmbuild_cmds), total=len(hmmbuild_cmds)):
+			pass
+		for _ in tqdm.tqdm(p.imap_unordered(multiProcess, hmmemit_cmds), total=len(hmmemit_cmds)):
+			pass
 		p.map(multiProcess, hmmemit_cmds)
 		p.close()
 	except Exception as e:
@@ -755,8 +1459,9 @@ def createProfileHMMsAndConsensusSeqs(prot_algn_dir, phmm_dir, cons_dir, logObje
 		sys.stderr.write(traceback.format_exc())
 		sys.exit(1)
 
-def concatenateConsensusAlignment(og_cons_dir, orthofinder_tsv_singletons_file, prepare_input_dir, concatenated_consensus_seqs_file, logObject):
+def concatenateConsensusAlignment(og_cons_dir, concatenated_consensus_seqs_file, logObject):
 	"""
+
 	"""
 	try:
 		concatenated_consensus_seqs_handle = open(concatenated_consensus_seqs_file, 'w')
@@ -766,29 +1471,6 @@ def concatenateConsensusAlignment(og_cons_dir, orthofinder_tsv_singletons_file, 
 			with open(cons_seq_file) as ocsf:
 				for rec in SeqIO.parse(ocsf, 'fasta'):
 					concatenated_consensus_seqs_handle.write('>' + og + '\n' + str(rec.seq) + '\n')
-
-		# TODO: Consider making look up by sample first to make faster - this is just safer in case orthofinder changes names
-		gene_to_og = {}
-		with open(orthofinder_tsv_singletons_file) as otsf:
-			for i, line in enumerate(otsf):
-				line = line.strip('\n')
-				ls = line.split('\t')
-				if i > 0:
-					og = ls[0]
-					for gs in ls[1:]:
-						for g in gs.split(', '):
-							g = g.strip()
-							if g != '':
-								gene_to_og[g] = og
-		
-		orthofinder_input_dir = prepare_input_dir + 'Formatted_Proteomes/'
-		for f in os.listdir(orthofinder_input_dir):
-			sample_proteome = orthofinder_input_dir + f
-			if f.endswith('.faa'):
-				with open(sample_proteome) as osp:
-					for rec in SeqIO.parse(osp, 'fasta'):
-						if rec.id in gene_to_og:
-							concatenated_consensus_seqs_handle.write('>' + gene_to_og[rec.id] + '\n' + str(rec.seq).replace('*', '') + '\n')
 		concatenated_consensus_seqs_handle.close()
 
 	except Exception as e:
@@ -797,6 +1479,349 @@ def concatenateConsensusAlignment(og_cons_dir, orthofinder_tsv_singletons_file, 
 		sys.stderr.write(str(e) + '\n')
 		sys.stderr.write(traceback.format_exc())
 		sys.exit(1)
+
+def createNearSCCResolvedDomainProteinAlignments(bofasa_prep_dir, resulting_dogs_file, rdog_seqs_dir, 
+												 rdog_algn_dir, rdog_trim_dir, merged_core_genome_file, 
+												 logObject, use_super5=True, near_scc_prop=0.80, threads=1, 
+												 trimal_options='-strict', allow_mge=False):
+	try:
+		isfinder_file = bofasa_prep_dir + 'Sample_IS_Element_Proteins.txt'
+		plasmid_file = bofasa_prep_dir + 'Sample_Plasmid_Proteins.txt'
+		phage_file = bofasa_prep_dir + 'Sample_Phage_Proteins.txt'
+
+		mge_set = defaultdict(set)
+		
+		if os.path.isfile(isfinder_file):
+			with open(isfinder_file) as oif:
+				for line in oif:
+					line = line.strip()
+					ls = line.split('\t')
+					mge_set[ls[0]].add(ls[1])
+		
+		if os.path.isfile(plasmid_file):
+			with open(plasmid_file) as opf:
+				for line in opf:
+					line = line.strip()
+					ls = line.split('\t')
+					mge_set[ls[0]].add(ls[1])
+
+		if os.path.isfile(phage_file):
+			with open(phage_file) as opf:
+				for line in opf:
+					line = line.strip()
+					ls = line.split('\t')
+					mge_set[ls[0]].add(ls[1])
+
+		prot_to_og = {}
+		samples = []
+		with open(resulting_dogs_file) as orof:
+			for i, line in enumerate(orof):
+				line = line.strip('\n')
+				ls = line.split('\t')
+				if i == 0:
+					samples = ls[1:]
+				og = ls[0]
+				if not allow_mge and og in mge_set: continue
+				samples_with_sc = set([])
+				for j, lts in enumerate(ls[1:]):
+					s = samples[j]		
+					if ',' in lts: continue
+					for lt in lts.split(', '):						
+						if lt != '':
+							prot_to_og[lt] = og
+							samples_with_sc.add(lt)
+				if float(len(samples_with_sc)/len(samples)) >= near_scc_prop:
+					for lt in samples_with_sc:
+						prot_to_og[lt] = og
+
+		proteome_dir = bofasa_prep_dir + 'Domain_and_Interdomain_FASTAs/'
+		for f in os.listdir(proteome_dir):
+			if f.endswith('.faa'): continue
+			s = '.faa'.join(f.split('.faa')[:-1])
+			with open(proteome_dir + f) as opf:
+				for rec in SeqIO.parse(opf, 'fasta'):
+					lt = rec.id
+					if lt in prot_to_og:
+						og = prot_to_og[lt]
+						outf = rdog_seqs_dir + og + '.faa'
+						outfh = open(outf, 'a+')
+						outfh.write('>' + s + '|' + lt + '\n' + str(rec.seq) + '\n')
+						outfh.close()
+
+		msa_trim_cmds = []
+		for pf in os.listdir(rdog_seqs_dir):
+			prefix = '.faa'.join(pf.split('.faa')[:-1])
+			prot_file = rdog_seqs_dir + pf
+			prot_algn_file = rdog_algn_dir + prefix + '.msa.faa'
+			prot_algn_trim_file = rdog_trim_dir + prefix + '.trimmed.msa.faa'
+			heavy_job = assess_job_intensity(prot_file)
+
+			if heavy_job:
+				msa_cmd = ['muscle', '-super5', prot_file, '-output', prot_algn_file, '-threads', str(threads)]
+				if not use_super5:
+					msa_cmd = ['muscle', '-align', prot_file, '-output', prot_algn_file, '-threads', str(threads)]
+				runCmd(msa_cmd, logObject)
+				trimal_cmd = ['trimal', '-in', prot_algn_file, '-out', prot_algn_trim_file, trimal_options, logObject]
+				msa_trim_cmds.append(trimal_cmd)
+			else:
+				msa_cmd = ['muscle', '-super5', prot_file, '-output', prot_algn_file, '-threads', '1']
+				if not use_super5:
+					msa_cmd = ['muscle', '-align', prot_file, '-output', prot_algn_file, '-threads', '1']
+				trimal_cmd = ['trimal', '-in', prot_algn_file, '-out', prot_algn_trim_file, trimal_options, logObject]
+				msa_trim_cmd = msa_cmd + [';'] + trimal_cmd 
+				msa_trim_cmds.append(msa_trim_cmd)
+
+		p = multiprocessing.Pool(threads)
+		for _ in tqdm.tqdm(p.imap_unordered(multiProcess, msa_trim_cmds), total=len(msa_trim_cmds)):
+			pass
+		p.close()
+
+		sample_seqs = defaultdict(lambda: "")
+		for f in os.listdir(rdog_trim_dir):
+			samples_accounted = set([])
+			seqlen = 0
+			with open(rdog_trim_dir + f) as ortf:
+				for rec in SeqIO.parse(ortf, 'fasta'):
+					seq = str(rec.seq)
+					seqlen = len(seq)
+					if seqlen == 0: continue 
+					s = rec.id.split('|')[0]
+					samples_accounted.add(s)
+					sample_seqs[s] += seq
+
+			for s in samples:
+				if not s in samples_accounted:
+					sample_seqs[s] += ('-'*seqlen)
+
+		aln_handle = open(merged_core_genome_file)
+		for s in sample_seqs:
+			aln_handle.write('>' + s + '\n' + sample_seqs[s] + '\n')
+		aln_handle.close()
+	except Exception as e:
+		msg = 'Issues with create core genome alignment(s).'
+		sys.stderr.write(msg + '\n')
+		logObject.error(msg)
+		sys.stderr.write(str(e) + '\n')
+		sys.stderr.write(traceback.format_exc())
+		sys.exit(1)
+
+def createFinalReport(bofasa_prep_dir, og_context_info_file, final_result_file, logObject):
+	"""
+	"""
+	try:
+		plasmid_file = bofasa_prep_dir + 'Sample_Plasmid_Proteins.txt'
+		phage_file = bofasa_prep_dir + 'Sample_Phage_Proteins.txt'
+
+		genomad_flag = False
+		if os.path.isfile(plasmid_file) or os.path.isfile(phage_file):
+			genomad_flag = True
+
+		# Generate Excel spreadsheet
+		writer = pd.ExcelWriter(final_result_file, engine='xlsxwriter')
+		workbook = writer.book
+		dd_sheet = workbook.add_worksheet('Data Dictionary')
+		dd_sheet.write(0, 0, 'Data Dictionary describing columns of "bofasa Results" spreadsheet can be found below and on bofasa\'s Wiki page at:')
+		dd_sheet.write(1, 0, 'https://github.com/raufs/bofasa')
+
+
+		wrap_format = workbook.add_format({'text_wrap': True, 'valign': 'vcenter', 'align': 'center', 'border': 1})
+		header_format = workbook.add_format({'bold': True, 'text_wrap': True, 'valign': 'top', 'fg_color': '#FFFFFF', 'border': 1})
+
+		numeric_columns = set(['Median OG length (bp)', 'Proportion contexts near scaffold edge', 'Number of genomes with OG', 
+						       'Number of protein in OG', 'Context variability score', 'Context variability score - complete contexts', 
+							   'Context entropy score', 'Context entropy score - complete contexts', 'Number of distinct neighbor OGs', 
+							   'Number of distinct OGs from complete contexts', 'Avg. number of distinct neighbor OGs', 
+							   'Avg. number of distinct neighbor OGs from complete contexts', 
+							   'Proportion instances on plasmid (based on geNomad annotation)', 
+							   'Proportion instances on phage (based on geNomad annotation)', 
+							   'Proportion homologous to IS-elements (based on ISfinder database)'])
+
+		warn_format = workbook.add_format({'bg_color': '#bf241f', 'bold': True, 'font_color': '#FFFFFF'})
+		na_format = workbook.add_format({'font_color': '#a6a6a6', 'bg_color': '#FFFFFF', 'italic': True})
+		header_format = workbook.add_format({'bold': True, 'text_wrap': True, 'valign': 'top', 'fg_color': '#D7E4BC', 'border': 1})
+
+		results_df = loadTableInPandaDataFrame(og_context_info_file, numeric_columns)
+		num_rows = results_df.shape[0]
+		results_df.to_excel(writer, sheet_name='bofasa Results', index=False, na_rep="NA")
+		
+		worksheet =  writer.sheets['bofasa Results']
+		worksheet.conditional_format('A2:BA' + str(num_rows), {'type': 'cell', 'criteria': '==', 'value': '"NA"', 'format': na_format})
+		worksheet.conditional_format('A1:BA1', {'type': 'cell', 'criteria': '!=', 'value': 'NA', 'format': header_format})
+
+
+		max_values = defaultdict(lambda: 0.0)
+		with open(og_context_info_file) as ocif:
+			for i, line in enumerate(ocif):
+				if i == 0: continue
+				line = line.strip()
+				ls = line.split('\t')
+				num_genomes = float(ls[3])
+				num_proteins = float(ls[4])
+				context_var_score = float(ls[5])
+				context_var_score_comp = float(ls[6])
+				context_ent_score = float(ls[7])
+				context_ent_score_comp = float(ls[8])
+
+				if num_genomes > max_values['num_genomes']:
+					max_values['num_genomes'] = num_genomes
+				if num_proteins > max_values['num_proteins']:
+					max_values['num_proteins'] = num_proteins
+				if context_var_score > max_values['context_var_score']:
+					max_values['context_var_score'] = context_var_score
+				if context_var_score_comp > max_values['context_var_score_comp']:
+					max_values['context_var_score_comp'] = context_var_score_comp
+				if context_ent_score > max_values['context_ent_score']:
+					max_values['context_ent_score_comp'] = context_ent_score
+				if context_ent_score_comp > max_values['context_ent_score_comp']:
+					max_values['context_ent_score_comp'] = context_ent_score_comp
+
+		# median OG length
+		worksheet.conditional_format('B2:B' + str(num_rows), {'type': '2_color_scale', 'min_color': "#a9cafc", 'max_color': "#736991", "min_value": 0, "max_value": 2500, 'min_type': 'num', 'max_type': 'num'})
+
+		# proportion instances near scaffold edge
+		worksheet.conditional_format('C2:C' + str(num_rows), {'type': '2_color_scale', 'min_color': "#ffffff", 'max_color': "#ed9393", "min_value": 0.0, "max_value": 1.0, 'min_type': 'num', 'max_type': 'num'})
+
+		# num genomes with OG
+		worksheet.conditional_format('D2:D' + str(num_rows), {'type': '2_color_scale', 'min_color': "#f2c6f7", 'max_color': "#b07fb5", "min_value": 0.0, "max_value": max_values['num_genomes'], 'min_type': 'num', 'max_type': 'num'})
+
+		# num proteins with OG
+		worksheet.conditional_format('E2:E' + str(num_rows), {'type': '2_color_scale', 'min_color': "#e7cdf7", 'max_color': "#a186b3", "min_value": 0.0, "max_value": max_values['num_proteins'], 'min_type': 'num', 'max_type': 'num'})
+
+		# context variability score
+		worksheet.conditional_format('F2:F' + str(num_rows), {'type': '2_color_scale', 'min_color': "#e6f5ab", 'max_color': "#a4b36b", "min_value": 0.0, "max_value": max_values['context_var_score'], 'min_type': 'num', 'max_type': 'num'})
+		
+		# context variability score - complete
+		worksheet.conditional_format('G2:G' + str(num_rows), {'type': '2_color_scale', 'min_color': "#e6f5ab", 'max_color': "#a4b36b", "min_value": 0.0, "max_value": max_values['context_var_score_comp'], 'min_type': 'num', 'max_type': 'num'})
+	
+		# context variability score
+		worksheet.conditional_format('H2:H' + str(num_rows), {'type': '2_color_scale', 'min_color': "#b3e3d6", 'max_color': "#6aa192", "min_value": 0.0, "max_value": max_values['context_ent_score'], 'min_type': 'num', 'max_type': 'num'})
+		
+		# context variability score - complete
+		worksheet.conditional_format('I2:I' + str(num_rows), {'type': '2_color_scale', 'min_color': "#b3e3d6", 'max_color': "#6aa192", "min_value": 0.0, "max_value": max_values['context_ent_score_comp'], 'min_type': 'num', 'max_type': 'num'})
+
+		if genomad_flag:
+			# proportion on plasmid
+			worksheet.conditional_format('N2:N' + str(num_rows), {'type': '2_color_scale', 'min_color': "#ffffff", 'max_color': "#ed9393", "min_value": 0.0, "max_value": 1.0, 'min_type': 'num', 'max_type': 'num'})
+			
+			# proportion on phage
+			worksheet.conditional_format('O2:O' + str(num_rows), {'type': '2_color_scale', 'min_color': "#ffffff", 'max_color': "#ed9393", "min_value": 0.0, "max_value": 1.0, 'min_type': 'num', 'max_type': 'num'})
+
+		# proportion homologous to IS-elements
+		worksheet.conditional_format('P2:P' + str(num_rows), {'type': '2_color_scale', 'min_color': "#ffffff", 'max_color': "#ed9393", "min_value": 0.0, "max_value": 1.0, 'min_type': 'num', 'max_type': 'num'})
+
+		worksheet.autofilter('A1:BA' + str(num_rows))
+		workbook.close()
+	except Exception as e:
+		msg = 'Issues with create final XLSX report.'
+		sys.stderr.write(msg + '\n')
+		logObject.error(msg)
+		sys.stderr.write(str(e) + '\n')
+		sys.stderr.write(traceback.format_exc())
+		sys.exit(1)
+
+def createFinalVisual(bofasa_prep_dir, tmp_result_file, og_context_info_file, final_result_plot, logObject):
+	"""
+	"""
+	try:
+
+		isfinder_file = bofasa_prep_dir + 'Sample_IS_Element_Proteins.txt'
+		plasmid_file = bofasa_prep_dir + 'Sample_Plasmid_Proteins.txt'
+		phage_file = bofasa_prep_dir + 'Sample_Phage_Proteins.txt'
+
+		mge_set = set([])
+
+		if os.path.isfile(isfinder_file):
+			with open(isfinder_file) as oif:
+				for line in oif:
+					line = line.strip()
+					ls = line.split('\t')
+					mge_set.add(ls[1])
+		
+		if os.path.isfile(plasmid_file):
+			with open(plasmid_file) as opf:
+				for line in opf:
+					line = line.strip()
+					ls = line.split('\t')
+					mge_set.add(ls[1])
+		
+		if os.path.isfile(phage_file):
+			with open(phage_file) as opf:
+				for line in opf:
+					line = line.strip()
+					ls = line.split('\t')
+					mge_set.add(ls[1])
+			
+		tmp_file_header = ['OG', 'Number of protein in OG', 'Context entropy score', 'Over 50%% of protein instances homologous to IS-element or on plasmid or phage.']
+		outf_handle = open(tmp_result_file, 'w')
+		outf_handle.write(tmp_file_header + '\n')
+		with open(og_context_info_file) as oocif:
+			for i, line in enumerate(oocif):
+				if i == 0: continue
+				line = line.strip()
+				ls = line.split('\t')
+				mge_related = 'No'
+				tot = 0
+				mge = 0
+				for p in ls[-2].split('; '):
+					if p in mge_set:
+						mge += 1
+				if mge/tot >= 0.5:
+					mge_related = 'Yes'
+				outf_handle.write('\t'.join([ls[0], ls[4], ls[7], mge_related]) + '\n')
+		outf_handle.close()
+				
+		numeric_columns = set(['Number of protein in OG', 'Context entropy score'])
+		simple_df = loadTableInPandaDataFrame(tmp_result_file, numeric_columns)
+		fig = px.scatter(simple_df, x="Number of protein in OG", y="Context entropy score",
+						color="Over 50%% of protein instances homologous to IS-element or on plasmid or phage.", 
+						marginal_x="histogram", marginal_y="histogram")
+		fig.write_html(final_result_plot)
+	except Exception as e:
+		msg = 'Issues with create final HTML report.'
+		sys.stderr.write(msg + '\n')
+		logObject.error(msg)
+		sys.stderr.write(str(e) + '\n')
+		sys.stderr.write(traceback.format_exc())
+		sys.exit(1)
+
+def loadTableInPandaDataFrame(input_file, numeric_columns):
+	"""
+	Description:
+	This function formats reads a TSV file and stores it as a pandas dataframe. Note, last two columns are skiped.
+	********************************************************************************************************************
+	Parameters:
+	- input_file: The input TSV file, with first row corresponding to the header.
+	- numeric_columns: Set of column names which should have numeric data.
+	********************************************************************************************************************
+	Returns:
+	- panda_df: A pandas DataFrame object reprsentation of the input TSV file.
+	********************************************************************************************************************
+	"""
+	import pandas as pd
+	panda_df = None
+	try:
+		data = []
+		with open(input_file) as oif:
+			for line in oif:
+				line = line.strip('\n')
+				ls = line.split('\t')[:-2]
+				data.append(ls)
+
+		panda_dict = {}
+		for ls in zip(*data):
+			key = ls[0]
+			cast_vals = ls[1:]
+			if key in numeric_columns:
+				cast_vals = []
+				for val in ls[1:]:
+					cast_vals.append(castToNumeric(val))
+			panda_dict[key] = cast_vals
+		panda_df = pd.DataFrame(panda_dict)
+
+	except Exception as e:
+		sys.stderr.write(traceback.format_exc())
+		sys.exit(1)
+	return panda_df
 
 
 def trimAlignments(prot_algn_dir, codo_algn_dir, prot_algn_trim_dir, codo_algn_trim_dir, logObject, threads=1):
@@ -833,35 +1858,6 @@ def trimAlignments(prot_algn_dir, codo_algn_dir, prot_algn_trim_dir, codo_algn_t
 		sys.stderr.write(traceback.format_exc())
 		sys.exit(1)
 
-def createGeneTrees(codo_algn_trim_dir, tree_dir, logObject, threads=1):
-	"""
-	Description:
-	This function creates gene trees from trimmed codon alignments using FastTree2 for ortholog groups.
-	*******************************************************************************************************************
-	Parameters:
-	- codo_algn_trim_dir: The directory containing trimmed codon alignments.
-	- tree_dir: The directory where trees in Newick format will be saved.
-	- logObject: A logging object.
-	- threads: The number of threads to use.
-	*******************************************************************************************************************
-	"""
-	try:
-		fasttree_cmds = []
-		for catf in os.listdir(codo_algn_trim_dir):
-			if not catf.endswith('.msa.fna'): continue
-			prefix = '.msa.faa'.join(catf.split('.msa.fna')[:-1])
-			codo_algn_trim_file = codo_algn_trim_dir + catf
-			tree_file = tree_dir + prefix + '.tre'
-			fasttree_cmds.append(['fasttree', '-nt', codo_algn_trim_file, '>', tree_file, logObject])
-		p = multiprocessing.Pool(threads)
-		p.map(util.multiProcess, fasttree_cmds)
-		p.close()
-	except Exception as e:
-		sys.stderr.write('Issues with creating gene-trees.\n')
-		logObject.error('Issues with creating gene-trees.')
-		sys.stderr.write(str(e) + '\n')
-		sys.stderr.write(traceback.format_exc())
-		sys.exit(1)
 
 def determinePhagesAndPlasmids(sample_wgs, sample_beds, genomad_dir, phage_protein_listing_file, plasmid_protein_listing_file, logObject, threads=1, genome_splits=8):
 	"""
