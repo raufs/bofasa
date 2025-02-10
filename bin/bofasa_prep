@@ -306,7 +306,8 @@ def prepare_input():
 					msg = 'Unable to validate proper processing for sample %s, skipping it' % sample
 					logObject.info(msg)
 					sys.stderr.write(msg + '\n')
-					del sample_wgs[sample]
+					if sample in sample_wgs:
+						del sample_wgs[sample]
 		else:
 			util.processGenomesAsGenbanks(sample_genomes, gp_dir, logObject,
 									threads=threads, locus_tag_length=3, rename_locus_tags=rename_locus_tags)
@@ -315,7 +316,8 @@ def prepare_input():
 				bed = gp_dir + sample + '.coords.bed'
 				fna = gp_dir + sample + '.fna'
 				try:
-					assert(os.path.isfile(faa) and os.path.isfile(bed))				
+					assert(os.path.isfile(faa) and os.path.isfile(bed) and os.path.isfile(fna))
+					assert(os.path.getsize(faa) > 0 and os.path.getsize(bed) > 0 and os.path.getsize(fna) > 0)
 					renamed_faa = faa_dir + sample + '.faa'
 					renamed_bed = bed_dir + sample + '.bed'
 					shutil.move(faa, renamed_faa)
@@ -327,7 +329,8 @@ def prepare_input():
 					msg = 'Unable to validate proper processing for sample %s, skipping it' % sample
 					logObject.info(msg)
 					sys.stderr.write(msg + '\n')
-					del sample_wgs[sample]
+					if sample in sample_wgs:
+						del sample_wgs[sample]
 
 		msg = 'Found and successfully processed %d genomes in %s format, continuing ...' % (len(sample_genomes), format)
 		logObject.info(msg)
@@ -349,6 +352,7 @@ def prepare_input():
 		possible_locustags = util.createLocusTagOptions(3)
 		gff_iter = 0 	
 		sample_old_to_new_lts = defaultdict(dict)
+		prot_id_counts = defaultdict(int)
 		for subdir, dirs, files in os.walk(input_prokka_dir):
 			for file in files:
 				filepath = subdir + '/' + file
@@ -394,10 +398,20 @@ def prepare_input():
 							prot_score = '1'
 							if (scaffold_lengths[sample][scaffold]-end) < 1000 or start < 1000:
 								prot_score = '0'							
+							prot_id_counts[final_lt] += 1
 							bed_outfile_handle.write('\t'.join([str(x) for x in [scaffold, start, end, final_lt, prot_score, direction]]) + '\n')
 					bed_outfile_handle.close()
 					sample_beds[sample] = bed_file
 					gff_iter += 1
+
+		for pi in prot_id_counts:
+			try:
+				assert(prot_id_counts[pi] == 1)
+			except:
+				msg = 'Not all protein locus tags across genomes are unique! Please try running bofasa_prep again with the --rename-locus-tags option. Exiting now ...'
+				sys.stderr.write(msg + '\n')
+				logObject.error(msg)
+				sys.exit(1)
 
 		for subdir, dirs, files in os.walk(input_prokka_dir):
 			for file in files:
@@ -431,6 +445,7 @@ def prepare_input():
 
 		possible_locustags = util.createLocusTagOptions(3)
 		gff_iter = 0 	
+		prot_id_counts = defaultdict(int)
 		sample_old_to_new_lts = defaultdict(dict)
 		for subdir, dirs, files in os.walk(input_bakta_dir):
 			for file in files:
@@ -476,11 +491,22 @@ def prepare_input():
 							ci += 1
 							prot_score = '1'
 							if (scaffold_lengths[sample][scaffold]-end) < 1000 or start < 1000:
-								prot_score = '0'							
+								prot_score = '0'	
+							prot_id_counts[final_lt]						
 							bed_outfile_handle.write('\t'.join([str(x) for x in [scaffold, start, end, final_lt, prot_score, direction]]) + '\n')
 					bed_outfile_handle.close()
 					sample_beds[sample] = bed_file
 					gff_iter += 1
+
+		
+		for pi in prot_id_counts:
+			try:
+				assert(prot_id_counts[pi] == 1)
+			except:
+				msg = 'Not all protein locus tags across genomes are unique! Please try running bofasa_prep again with the --rename-locus-tags option. Exiting now ...'
+				sys.stderr.write(msg + '\n')
+				logObject.error(msg)
+				sys.exit(1)
 
 		for subdir, dirs, files in os.walk(input_bakta_dir):
 			for file in files:

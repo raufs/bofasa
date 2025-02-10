@@ -21,3 +21,8 @@ dependencies:
   - rich-argparse
   - tqdm
   - plotly
+  - slclust
+  - pandas
+  - xlsxwriter
+  - hmmer
+  - trimal
