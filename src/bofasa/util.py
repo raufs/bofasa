@@ -26,6 +26,9 @@ from ete3 import Tree
 import pandas as pd
 import plotly.express as px
 from scipy import stats
+import random
+
+random.seed(12345)
 
 single_copy_dogs = set([])
 protein_dogs = defaultdict(lambda: defaultdict(int))
@@ -631,30 +634,44 @@ def determine_tree_score_bl(ptree):
 		sys.stderr.write(msg + '\n')
 		
 def splitDOGs(inputs):
-	og, tre_file, spl_file, exhaustive_assessment, exhaustive_rooting, logObject = inputs
+	og, tre_file, spl_file, exhaustive_assessment, exhaustive_rooting, rooting_seeds, fixation_index_cutoff, logObject = inputs
+	rooting_seeds = min([rooting_seeds, 1])
 	try:		
 		t = Tree(tre_file)
 		samples_with_og = set([])
-		leaves = set([])
+		leafs = set([])
 		for n in t.traverse('postorder'):
 			if n.is_leaf():
 				s = n.name.split('|')[0]
 				samples_with_og.add(s)
-				leaves.add(n.name)
+				leafs.add(n.name)
 
-		if len(leaves) < 3: return
+		if len(leafs) < 3: return
 		if len(samples_with_og) == 1: return
 
-		spl_outf = open(spl_file, 'w')
+		all_rooting_partitions = []
 		if exhaustive_rooting:
-			rooted_t = copy.deepcopy(t)
-			all_rooting_partitions = []
-			for n in t.traverse('preorder'):
+
+			possible_nodes_for_rooting = set([])
+			for node_id, n in enumerate(t.traverse('preorder')):
 				if n.is_leaf(): continue
 				children = get_children(n)
 				samples = set([x.split('|')[0] for x in children])
 				if len(samples) < 2: continue
-				
+				n.name = 'node_' + str(node_id+1)	
+				possible_nodes_for_rooting.add(n.name)
+
+			if len(possible_nodes_for_rooting) > (rooting_seeds-1):
+				possible_nodes_for_rooting = set(random.sample(list(possible_nodes_for_rooting), rooting_seeds-1))
+
+			for n in t.traverse('preorder'):
+				if n.is_leaf(): continue
+				if not n.name in possible_nodes_for_rooting: continue
+				children = get_children(n)
+				samples = set([x.split('|')[0] for x in children])
+				if len(samples) < 2: continue
+
+				rooted_t = copy.deepcopy(t)
 				try:
 					node_for_rooting = rooted_t.get_common_ancestor(list(children))
 					if node_for_rooting is rooted_t:
@@ -670,7 +687,7 @@ def splitDOGs(inputs):
 
 				sp = recursive_splitting(rooted_t, samples_with_og, exhaustive_assessment)
 				sp_further_split = furtherSplitDisjointDOGPartitions(rooted_t, sp)
-				sp_merge = mergeBackDOGPartitions(og, rooted_t, sp_further_split, fixation_index_cutoff=0.1)
+				sp_merge = mergeBackDOGPartitions(og, rooted_t, sp_further_split, fixation_index_cutoff=fixation_index_cutoff)
 				pscore_sum = 0 
 				pscore_bl_sum = 0.0
 				for p in sp_merge:
@@ -681,32 +698,41 @@ def splitDOGs(inputs):
 					del ptree
 					pscore_sum += pscore
 					pscore_bl_sum += pscore_bl
-				all_rooting_partitions.append([sp_merge, pscore_sum, pscore_bl_sum])
-			
+				all_rooting_partitions.append([sp_merge, pscore_sum, pscore_bl_sum])			
+				del rooted_t
+
+		mp_t = copy.deepcopy(t)
+		R = mp_t.get_midpoint_outgroup()
+		children = get_children(R)
+		samples = set([x.split('|')[0] for x in children])
+		if len(samples) >= 2:
+			mp_t.set_outgroup(R)
+			sp = recursive_splitting(mp_t, samples_with_og, exhaustive_assessment)
+			sp_further_split = furtherSplitDisjointDOGPartitions(mp_t, sp)
+			sp_merge = mergeBackDOGPartitions(og, mp_t, sp_further_split, fixation_index_cutoff=fixation_index_cutoff)
+			pscore_sum = 0
+			pscore_bl_sum = 0.0
+			for p in sp_merge:
+				ptree = copy.deepcopy(mp_t)
+				ptree.prune(p, preserve_branch_length=True)
+				pscore = determine_tree_score(ptree, samples_with_og)
+				pscore_bl = determine_tree_score_bl(ptree)
+				del ptree
+				pscore_sum += pscore
+				pscore_bl_sum += pscore_bl
+			all_rooting_partitions.append([sp_merge, pscore_sum, pscore_bl_sum])
+		del mp_t
+
+		if len(all_rooting_partitions) > 0:
+			spl_outf = open(spl_file, 'w')
 			for i, sp in enumerate(sorted(all_rooting_partitions, key=itemgetter(1,2))):
 				if i == 0:
-					spl_outf = open(spl_file, 'w')
 					for it, spi in enumerate(sp[0]):
 						spog = og + '_' + str(it)
 						for dom in spi:
 							spl_outf.write(spog + '\t' + dom + '\n')
-					spl_outf.close()
-			del rooted_t
-
-		else:
-			curr_t = copy.deepcopy(t)
-			R = curr_t.get_midpoint_outgroup()
-			curr_t.set_outgroup(R)
-			sp = recursive_splitting(curr_t, samples_with_og, exhaustive_assessment)
-			sp_further_split = furtherSplitDisjointDOGPartitions(curr_t, sp)
-			sp_merge = mergeBackDOGPartitions(og, curr_t, sp_further_split, fixation_index_cutoff=0.1)
-			spl_outf = open(spl_file, 'w')
-			for it, spi in enumerate(sp_merge):
-				spog = og + '_' + str(it)
-				for dom in spi:
-					spl_outf.write(spog + '\t' + dom + '\n')
 			spl_outf.close()
-			del curr_t
+
 		return
 	except:
 		msg = 'Issue with splitting ortholog group %s - based on phylo from full MSA.' % og
@@ -806,16 +832,16 @@ def processTreeVariability(inputs):
 		sys.stderr.write(traceback.format_exc() + '\n')
 		logObject.error(msg)
 
-def resolveOrthogroupsUsingPhylogeny(orthofinder_fasta_dir, orthofinder_tsv_file, orthofinder_tsv_singletons_file, resdog_dir, result_file, logObject, use_super5=True, exhaustive_rooting=False, exhaustive_assessment=False, unexpected_cutoff=0.05, trimal_options='-gt 0.9', threads=1):
+def resolveOrthogroupsUsingPhylogeny(orthofinder_fasta_dir, orthofinder_tsv_file, orthofinder_tsv_singletons_file, resdog_dir, result_file, logObject, use_super5=True, exhaustive_rooting=False, exhaustive_assessment=False, fixation_index_cutoff=0.05, rooting_seeds=100, trimal_options='-gt 0.9', threads=1):
 	try:
 		msa_dir = resdog_dir + 'Protein_MSAs/'
 		trim_dir = resdog_dir + 'Protein_MSAs_Trimmed/'
 		tre_dir = resdog_dir + 'Protein_Trees/'
 		dog_var_dir = resdog_dir + 'Unsplit_DOG_Variabilites/'
 		spl_full_dir = resdog_dir + 'Split_Protein_Listings_Full_MSA/'
-		spl_trim_dir = resdog_dir + 'Split_Protein_Listings_Trim_MSA/'
+		#spl_trim_dir = resdog_dir + 'Split_Protein_Listings_Trim_MSA/'
 		svs_dir = resdog_dir + 'Sample_to_Sample_SingleCopy_Cutoffs/'
-		setupReadyDirectory([msa_dir, trim_dir, tre_dir, dog_var_dir, spl_full_dir, spl_trim_dir, svs_dir])
+		setupReadyDirectory([msa_dir, trim_dir, tre_dir, dog_var_dir, spl_full_dir, svs_dir])
 
 		muscle_cmds = []
 		trimal_cmds = []
@@ -969,18 +995,18 @@ def resolveOrthogroupsUsingPhylogeny(orthofinder_fasta_dir, orthofinder_tsv_file
 		"""
 							
 		split_inputs_full_msa = []
-		split_inputs_trim_msa = []
+		#split_inputs_trim_msa = []
 		for f in os.listdir(tre_dir):
 			dog = '.tre'.join(f.split('.tre')[:-1])
 			tre_file = tre_dir + f
 			spl_full_file = spl_full_dir + dog + '.txt'
 			# fallback method for dogs where trimmed alignment is very short (< 10aa long)
-			split_inputs_full_msa.append([dog, tre_file, spl_full_file, exhaustive_assessment, exhaustive_rooting, logObject])
-			if dog in trim_msa_dogs:
-				# primary method
-				tre_file = tre_dir + f
-				spl_trim_file = spl_trim_dir + dog + '.txt'
-				split_inputs_trim_msa.append([dog, tre_file, spl_trim_file, unexpected_cutoff, exhaustive_rooting, logObject])
+			split_inputs_full_msa.append([dog, tre_file, spl_full_file, exhaustive_assessment, exhaustive_rooting, rooting_seeds, fixation_index_cutoff, logObject])
+			#if dog in trim_msa_dogs:
+			#	# primary method
+			#	tre_file = tre_dir + f
+			#	spl_trim_file = spl_trim_dir + dog + '.txt'
+			#	split_inputs_trim_msa.append([dog, tre_file, spl_trim_file, unexpected_cutoff, exhaustive_rooting, logObject])
 
 		p = multiprocessing.Pool(threads)
 		for _ in tqdm.tqdm(p.imap_unordered(splitDOGs, split_inputs_full_msa), total=len(split_inputs_full_msa)):
@@ -1003,9 +1029,9 @@ def resolveOrthogroupsUsingPhylogeny(orthofinder_fasta_dir, orthofinder_tsv_file
 					outf_handle.write('OG/Sample\t' + '\t'.join(samples) + '\n')
 				else:
 					dog = ls[0]
-					dog_spl_file = spl_trim_dir + dog + '.txt'
-					if not os.path.isfile(dog_spl_file):
-						dog_spl_file = spl_full_dir + dog + '.txt'
+					#dog_spl_file = spl_trim_dir + dog + '.txt'
+					#if not os.path.isfile(dog_spl_file):
+					dog_spl_file = spl_full_dir + dog + '.txt'
 					if os.path.isfile(dog_spl_file):						
 						cluster_prots = defaultdict(set)
 						with open(dog_spl_file) as odsf:

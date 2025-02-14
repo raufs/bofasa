@@ -77,8 +77,9 @@ def create_parser():
 	parser.add_argument('-ph', '--profile-hmms', action='store_true', help="Create profile HMMs of ortholog groups for annotation of new genomes.", required=False, default=False)
 	parser.add_argument('-cg', '--core-genome', action='store_true', help="Construct core genome alignment(s) using (near) single-copy-core resolved domain ortholog groups for phylogenomics.", required=False, default=False)
 	parser.add_argument('-dj', '--dog-jaccard', type=float, help="The Jaccard index threshold for domain ortholog group overlap between two pairs of proteins needed to consider them as sharing an edge. Will be automatically lowered for cases where single-copy domain ortholog groups are observed [Default is 0.5].", required=False, default=0.5)
-	parser.add_argument('-uc', '--unexpected-cutoff', type=float, help="Unexpected cutoff for domain ortholog group splitting using phylogenetic branch lengths [Default is 0.05].", required=False, default=0.05)
+	parser.add_argument('-fic', '--fixation-index-cutoff', type=float, help="Fixation index cutoff for domain ortholog group re-merging following phylogenetic splitting [Default is 0.25].", required=False, default=0.25)
 	parser.add_argument('-spr', '--skip-phylo-refine', action='store_true', help="Skip phylogenetic refinement of domain ortholog groups.", required=False, default=False)
+	parser.add_argument('-rs', '--rooting-seeds', type=int, help="The maximum number of nodes to try for rooting. A random sampling is performed.", required=False, default=1000)
 	parser.add_argument('-qa', '--quality-alignments', action='store_true', help="Prioritize quality over speed for constructing domain-resolution ortholog group protein alignments. Uses MUSCLE align mode instead of super5 mode.", required=False, default=False)
 	#parser.add_argument('-ea', '--exhaustive-assessment', action='store_true', help="Perform exhausitive assessment when using the phylogenetic method to attempt to split paralogous subsections of ortholog groups.", required=False, default=False)
 	parser.add_argument('-ser', '--skip-exhaustive-rooting', action='store_true', help="Skip exhausitive rooting of ortholog group phylogenies instead of just midpoint rooting when using the phylogenetic method to attempt to split paralogous subsections of ortholog groups.", required=False, default=False)
@@ -116,12 +117,13 @@ def bofasa():
 	threads = myargs.threads
 	max_memory = myargs.max_memory
 	dog_jaccard = myargs.dog_jaccard
-	unexpected_cutoff = myargs.unexpected_cutoff
+	fixation_index_cutoff = myargs.fixation_index_cutoff
 	profile_hmms_flag = myargs.profile_hmms
 	core_genome_flag = myargs.core_genome
 	skip_phylo_refine_flag = myargs.skip_phylo_refine
 	quality_alignment_flag = myargs.quality_alignments
 	skip_exhaustive_rooting_flag = myargs.skip_exhaustive_rooting
+	rooting_seeds_count = myargs.rooting_seeds
 	#exhaustive_assessment_flag = myargs.exhaustive_assessment
 	near_scc_prop = myargs.near_scc_prop
 	ultra_sens_flag = myargs.ultra_sens
@@ -156,14 +158,14 @@ def bofasa():
 	logObject.info("Saving parameters for future records.")
 	parameters_file = outdir + 'Parameter_Inputs.txt'
 	parameter_values = [bofasa_prep_dir, outdir, surrounding_bp, mcl_inflation, ultra_sens_flag, 
-					   unexpected_cutoff, dog_jaccard, skip_phylo_refine_flag, 
+					   fixation_index_cutoff, dog_jaccard, skip_phylo_refine_flag, rooting_seeds_count,
 					   skip_exhaustive_rooting_flag, quality_alignment_flag, profile_hmms_flag, 
 					   core_genome_flag, near_scc_prop, threads, max_memory]
 	parameter_names = ["bofasa_prep directory", "Output directory", "Surrounding BP for syntenic conservation assessment",
 					   "MCL inflation", "Use ultra-sensitivity mode for DIAMOND searching in OrthoFinder?",
-					   "Unexpected cutoff for domain ortholog group splitting using phylogenetic branch lengths", 
+					   "Fixation index cutoff for domain ortholog group re-merging following phylogenetic splitting", 
 					   "Jaccard index cutoff for domain ortholog groups shared between full protein pairs",
-					   "Skip phylogenetic refinement of domain ortholog groups?",
+					   "Skip phylogenetic refinement of domain ortholog groups?", "Maximum number of nodes to try for rooting",
 					   "Skip exhaustive rooting testing for phylogeny resolution of domain ortholog groups?", 
 					   "High-quality alignment method?", "Create profile HMMs for ortholog groups?", 
 					   "Create core genome alignment(s) for phylogenomics?", "Near-SCC conservation proportion?",
@@ -248,8 +250,8 @@ def bofasa():
 			util.setupReadyDirectory([resdog_dir])
 			util.resolveOrthogroupsUsingPhylogeny(orthofinder_fasta_dir, orthofinder_tsv_file, orthofinder_tsv_singletons_file, 
 												resdog_dir, resulting_dogs_file, logObject, use_super5=(not quality_alignment_flag), 
-												exhaustive_rooting=not(skip_exhaustive_rooting_flag), 
-												unexpected_cutoff=unexpected_cutoff, threads=threads)
+												exhaustive_rooting=not(skip_exhaustive_rooting_flag), rooting_seeds=rooting_seeds_count,
+												fixation_index_cutoff=fixation_index_cutoff, threads=threads)
 		os.system('echo "DONE" > %s' % step2_checkpoint_file)
 
 	# Step 3: Determine protein-resolution ortholog groups from domain-resolution ortholog groups
