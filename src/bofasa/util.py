@@ -535,7 +535,7 @@ def assess_job_intensity(faa_file):
 		sys.stderr.write(traceback.format_exc() + '\n')
 		sys.exit(1)
 
-def mergeBackDOGPartitions(og, t, split_partitions, fixation_index_cutoff=0.1):	
+def mergeBackDOGPartitions(og, t, split_partitions, fixation_index_cutoff=0.25):	
 
 	all_sps = set([])
 	leaf_to_clade = {}
