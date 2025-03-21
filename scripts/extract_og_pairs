@@ -167,7 +167,7 @@ def extract_og_pairs():
 				line = line.rstrip('\n')
 				ls = line.split('\t')
 				if ls[0] == 'Directory with ortholog groups:':
-					result_file = ls[1]
+					result_file = ls[1] + 'flat.ortholog_groups.tsv'
 
 		try:
 			assert(os.path.isfile(result_file))
@@ -180,7 +180,7 @@ def extract_og_pairs():
 			for i, line in enumerate(orf):
 				if i == 0: continue
 				line = line.rstrip('\n')
-				ls = line.strip('\t')
+				ls = line.split('\t')
 				og_lts = set([])
 				for lts in ls[1:]:
 					if lts == '*': continue
@@ -293,7 +293,7 @@ def extract_og_pairs():
 			for i, line in enumerate(orf):
 				if i == 0: continue
 				line = line.rstrip('\n')
-				lt, og = line.split('\t')
+				lt, g, og = line.split('\t')
 				og_lts[og].add(lt)
 				
 		for og in og_lts:

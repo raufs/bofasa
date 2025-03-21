@@ -26,7 +26,11 @@ from ete3 import Tree
 import pandas as pd
 import plotly.express as px
 from scipy import stats
+from scipy.spatial import distance
 import random
+from Bio import Phylo
+from Bio.Phylo.TreeConstruction import _DistanceMatrix
+from Bio.Phylo.TreeConstruction import DistanceTreeConstructor
 
 random.seed(12345)
 
@@ -83,7 +87,6 @@ def generate_og_name(i):
 		sys.stderr.write(msg + '\n')
 		sys.stderr.write(traceback.format_exc() + '\n')
 
-
 def runSetOfProteinComparisons(inputs):
 	try:
 		input_listing_file, result_file, dj = inputs
@@ -124,12 +127,91 @@ def runSetOfProteinComparisons(inputs):
 		sys.stderr.write(msg + '\n')
 		sys.stderr.write(traceback.format_exc() + '\n')	
 
+def splitNJT(input):
+	og, cog_list_file, cog_dist_file, tre_file, spl_file, logObject, threads = input
+	try:
+		all_prots = set([])
+		with open(cog_list_file) as oclf:
+			for line in oclf:
+				line = line.strip()
+				all_prots.add(line)
+
+		all_dogs = set([])					
+		for p in all_prots:
+			for d in protein_dogs[p]:
+				all_dogs.add(d)
+
+		prot_dog_vectors = defaultdict(list)
+		for p in all_prots:
+			for d in sorted(all_dogs):
+				prot_dog_vectors[p].append(protein_dogs[p][d])
+				
+		prot_dog_vectors_np = {}
+		for p in prot_dog_vectors:
+			prot_dog_vectors_np[p] = np.array(prot_dog_vectors[p])
+		
+		naming = {}
+		outf = open(cog_dist_file, 'w')
+		outf.write(str(len(prot_dog_vectors_np.keys())) + '\n')
+		for p1i, p1 in enumerate(sorted(prot_dog_vectors_np)):
+			p1_dist = []
+			for p2 in sorted(prot_dog_vectors_np):
+				dist = distance.cosine(prot_dog_vectors_np[p1], prot_dog_vectors_np[p2])
+				p1_dist.append(str(dist))
+			len_id = len(str(p1i))
+			assert(10 > len_id)
+			naming[str(p1i)] = p1
+			name = str(p1i) + (' '*(10-len_id))
+			outf.write(name + ' '.join(p1_dist) + '\n')
+		outf.close()
+	
+		fastme_cmd = ['fastme', '-i', cog_dist_file, '-o', tre_file, '-T', str(threads)]
+		runCmd(fastme_cmd, logObject, check_files=[tre_file])
+		
+		t = Tree(tre_file)
+
+		samples_with_og = set([])
+		leafs = set([])
+		for n in t.traverse('postorder'):
+			if n.is_leaf():
+				n.name = naming[n.name]
+				s = n.name.split('|')[0]
+				samples_with_og.add(s)
+				leafs.add(n.name)
+
+		if len(leafs) < 3: return
+		if len(samples_with_og) == 1: return
+
+		R = t.get_midpoint_outgroup()		
+		children = get_children(R)
+		samples = set([x.split('|')[0] for x in children])
+		if len(samples) >= 2:
+			t.set_outgroup(R)
+			sp = recursive_splitting(t, samples_with_og, False, are_proteins=True)
+			sp_further_split = furtherSplitDisjointDOGPartitions(t, sp)
+			spl_outf = open(spl_file, 'w')
+			for spi in sp_further_split:
+				spl_outf.write(' '.join(sorted(spi)) + '\n')
+			spl_outf.close()
+		return
+	except:
+		msg = 'Issue with splitting protein ortholog group %s - based on domain cosine distances neighbor-joining tree.' % og
+		sys.stderr.write(msg + '\n')
+		sys.stderr.write(traceback.format_exc() + '\n')
+		logObject.error(msg)
+		sys.exit(1)
 
 def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logObject, dj=0.5, threads=1):
 	try:	
 		input_dir = protein_clustering_dir + 'Comparison_Listings/'
 		pairwise_dir = protein_clustering_dir + 'Protein_Pairs_Based_on_DOGs/' 
-		setupReadyDirectory([input_dir, pairwise_dir])
+		p_clust_list_dir = protein_clustering_dir + 'Protein_Coarse_Cluster_Listings/'
+		p_dist_dir = protein_clustering_dir + 'FASTME_Inputs/'
+		p_tre_dir = protein_clustering_dir + 'Protein_DOG_Distance_Trees/'
+		p_split_dir = protein_clustering_dir + 'Protein_Splitting/'
+
+		setupReadyDirectory([input_dir, pairwise_dir, p_clust_list_dir, p_dist_dir, 
+					         p_tre_dir, p_split_dir])
 		pairwise_file = protein_clustering_dir + 'Protein_Pairs_Based_on_DOGs.txt'
 		clusters_file = protein_clustering_dir + 'Protein_Clusters_Based_on_DOGs.txt'
 		outf_handle = open(ogs_file, 'w')
@@ -172,10 +254,10 @@ def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logO
 							prot_id = '|'.join(lt.split('|')[:2])
 							all_proteins.add(prot_id)
 							protein_dogs[prot_id][dog] += 1
-							#dog_proteins[dog].add(prot_id)
 							dog_lts.add(prot_id)
 					if sample_with == 1:
 						sc_flag = False
+					
 					dog_conservation[dog] = sample_with/float(sample_count)
 					if sc_flag:
 						single_copy_dogs.add(dog)
@@ -210,25 +292,73 @@ def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logO
 			assert (os.path.isfile(clusters_file))
 			logObject.info('Successfully ran: %s' % ' '.join(clust_cmd))
 		except Exception as e:
-			logObject.error('Had an issue running slclust: %s' % ' '.join(clust_cmd))
-			sys.stderr.write('Had an issue running slclust: %s\n' % ' '.join(clust_cmd))
+			logObject.error('Had an issue running concatenation: %s' % ' '.join(clust_cmd))
+			sys.stderr.write('Had an issue running concatentation: %s\n' % ' '.join(clust_cmd))
 			logObject.error(e)
 			sys.exit(1)
 		
 		protein_og_clusters = []
+		large_protein_og_clusters = []
 		paired_proteins = set([])
+		split_nj_trees_input = []
 		with open(clusters_file) as ocf:
-			for line in ocf:
+			for i, line in enumerate(ocf):
 				line = line.strip()
 				ls = line.split()
-				protein_og_clusters.append(ls)
+				for p in ls: paired_proteins.add(p)
+				sample_og_counts = defaultdict(int)
 				for p in ls:
-					paired_proteins.add(p)
+					s = p.split('|')[0]
+					sample_og_counts[s] += 1
+				og_counts = []
+				for s in sample_og_counts:
+					og_counts.append(sample_og_counts[s])
+				median_og_count = statistics.median(og_counts)
+				if median_og_count >= 2 and len(sample_og_counts) >= 2:
+					og_uniq_id = 'CoarseOG_' + str(i) 
+					cog_list_file = p_clust_list_dir + og_uniq_id + '.txt'
+					cog_dist_file = p_dist_dir + og_uniq_id + '.phylip'
+					og_split_file = p_split_dir + og_uniq_id + '.txt'
+					og_tre_file = p_tre_dir + og_uniq_id + '.tre'
+					cl_handle = open(cog_list_file, 'w')
+					for p in ls:
+						cl_handle.write(p + '\n')
+					cl_handle.close()
+					
+					split_nj_trees_input.append([og_uniq_id, cog_list_file, cog_dist_file, og_tre_file, 
+								                 og_split_file, logObject, 1])
+					large_protein_og_clusters.append(ls)
+				else:
+					protein_og_clusters.append(ls)
+
+		p = multiprocessing.Pool(threads)
+		for _ in tqdm.tqdm(p.imap_unordered(splitNJT, split_nj_trees_input), total=len(split_nj_trees_input)):
+			pass
+		p.close()
+
+		accounted_for_in_splitting = set([])
+		for f in os.listdir(p_split_dir):
+			split_listing_file = p_split_dir + f 
+			with open(split_listing_file) as oslf:
+				for line in oslf:
+					line = line.strip()
+					ls = line.split()
+					for p in ls:
+						accounted_for_in_splitting.add(p)
+					protein_og_clusters.append(ls)
+
+		for pog_full in large_protein_og_clusters:
+			missing = []
+			for p in pog_full:
+				if not p in accounted_for_in_splitting:
+					missing.append(p)
+			if len(missing) > 0:
+				protein_og_clusters.append(missing)
 
 		for prot in all_proteins:
 			if not prot in paired_proteins:
 				protein_og_clusters.append([prot])
-		
+
 		for i, c in enumerate(protein_og_clusters):
 			samp_lts = defaultdict(list)
 			for p in c:
@@ -249,13 +379,16 @@ def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logO
 		sys.stderr.write(traceback.format_exc())
 		sys.exit(1)
 
-def determine_tree_score(intree, all_og_samples):
+def determine_tree_score(intree, all_og_samples, are_proteins=False):
 	try:
 		sample_lts = defaultdict(set)
 		for n in intree.traverse('postorder'):
 			if n.is_leaf():
 				s = n.name.split('|')[0]
-				sample_lts[s].add('|'.join(n.name.split('|')[:-2]))
+				if are_proteins:
+					sample_lts[s].add(n.name)
+				else:
+					sample_lts[s].add('|'.join(n.name.split('|')[:-2]))
 
 		curr_score = 0
 		for s in all_og_samples:
@@ -283,64 +416,64 @@ def get_children(intree):
 		sys.stderr.write(traceback.format_exc() + '\n')
 		sys.exit(1)
 
-def recursive_splitting(intree, all_og_samples, exhaustive_assessment):
+def determine_tree_score_bl_sim(ptree, min_bl=0.0005):
 	try:
-		full_score = determine_tree_score(intree, all_og_samples)
+		phylo_breadth = 0.0
+		for n in ptree.traverse('postorder'):
+			if n.is_root(): continue
+			phylo_breadth += min_bl # minimum branch length in normal FastTree 2 after v2.1.7
+		return(phylo_breadth)
+	except:
+		msg = 'Issue determining branch-length score for tree partitioning.'
+		sys.stderr.write(msg + '\n')
+
+def recursive_splitting(intree, all_og_samples, exhaustive_assessment, are_proteins=False):
+	try:
 		all_leaves = get_children(intree)
+		bl_sum = determine_tree_score_bl(intree)
+		if are_proteins:
+			if bl_sum == 0.0: 
+				return([all_leaves])
+		else:
+			threshold = determine_tree_score_bl_sim(intree)
+			if bl_sum <= threshold:
+				return([all_leaves])
+
+		full_score = determine_tree_score(intree, all_og_samples, are_proteins=are_proteins)
 
 		subtree_info = []
 		min_score = 1e100
+		samples = set([])
 		for n in intree.traverse('preorder'):
-			if n.is_leaf(): continue
-			subtree_score = determine_tree_score(n, all_og_samples)
-			subtree_info.append([get_children(n), subtree_score])
-			if subtree_score < min_score:
-				min_score = subtree_score
+			if n.is_leaf(): 
+				samples.add(n.name.split('|')[0])
+			else:
+				subtree_score = determine_tree_score(n, all_og_samples, are_proteins=are_proteins)
+				subtree_info.append([get_children(n), subtree_score])				
+				if subtree_score < min_score:
+					min_score = subtree_score
 
-		if min_score >= full_score:
-			del intree
+		if min_score >= full_score or len(samples) == 1:
 			return([all_leaves])
 
-		best_partitionings = []
-		best_partition_score = 1e100
+		accounted_for = set([])
+		best_partitions = []
 		for i, sti in enumerate(sorted(subtree_info, key=itemgetter(1))):
-			if not exhaustive_assessment and i != 0: continue
 			if sti[1] == min_score:
-				st_leaves = sti[0]
-				st_samples = set([x.split('|')[0] for x in sorted(list(st_leaves))])
-				if len(st_samples) < 2: continue
-				del st_samples
-				complement_leaves = all_leaves.difference(st_leaves)
-				complement_samples = set([x.split('|')[0] for x in sorted(list(complement_leaves))])
-				if len(complement_samples) < 2: continue
-				complement_tree = copy.deepcopy(intree)
-				complement_tree.prune(list(complement_leaves))
-				psamples = sorted(recursive_splitting(complement_tree, all_og_samples, exhaustive_assessment))
-				del complement_tree
-				psamples = [st_leaves] + psamples
-				pscore_sum = 0
-				for p in psamples:
-					ptree = copy.deepcopy(intree)
-					ptree.prune(list(p))
-					pscore = determine_tree_score(ptree, all_og_samples)
-					del ptree
-					pscore_sum += pscore
-				if pscore_sum < best_partition_score:
-					best_partition_score = pscore_sum
-					best_partitionings = [[psamples, pscore_sum]]
-				elif pscore_sum == best_partition_score:
-					best_partitionings.append([psamples, pscore_sum])
-		del subtree_info
-		if len(best_partitionings) > 0:
-			result = None
-			for i, bp in enumerate(sorted(best_partitionings, key=itemgetter(1))):
-				if bp[1] == best_partition_score and i == 0:
-					result = bp[0]
-			assert(result != None)
-			del intree
-			return(result)
-		else:
-			return([all_leaves])
+				if len(sti[0].intersection(accounted_for)) == 0:
+					best_partitions.append([sti[0], sti[1]])
+					accounted_for = accounted_for.union(sti[0])
+
+		complement_leaves = all_leaves.difference(accounted_for)
+		complement_samples = set([x.split('|')[0] for x in complement_leaves])
+		complement_splitting = [complement_leaves]
+		if len(complement_samples) >= 2:
+			complement_tree = intree.copy()
+			complement_tree.prune(list(complement_leaves), preserve_branch_length=True)
+			complement_splitting = recursive_splitting(complement_tree, all_og_samples, exhaustive_assessment, are_proteins=are_proteins)
+			del complement_tree
+		result = [accounted_for] + complement_splitting
+		return(result)
 	except:
 		msg = 'Issues splitting ortholog group tree using the recursive function.'
 		sys.stderr.write(msg + '\n')
@@ -838,8 +971,7 @@ def resolveOrthogroupsUsingPhylogeny(orthofinder_fasta_dir, orthofinder_tsv_file
 		trim_dir = resdog_dir + 'Protein_MSAs_Trimmed/'
 		tre_dir = resdog_dir + 'Protein_Trees/'
 		dog_var_dir = resdog_dir + 'Unsplit_DOG_Variabilites/'
-		spl_full_dir = resdog_dir + 'Split_Protein_Listings_Full_MSA/'
-		#spl_trim_dir = resdog_dir + 'Split_Protein_Listings_Trim_MSA/'
+		spl_full_dir = resdog_dir + 'Split_Protein_Listings/'
 		svs_dir = resdog_dir + 'Sample_to_Sample_SingleCopy_Cutoffs/'
 		setupReadyDirectory([msa_dir, trim_dir, tre_dir, dog_var_dir, spl_full_dir, svs_dir])
 
@@ -903,12 +1035,12 @@ def resolveOrthogroupsUsingPhylogeny(orthofinder_fasta_dir, orthofinder_tsv_file
 			
 			dog_trim_msa_sites[dog] = trim_num_sites
 			if trim_num_sites >= 10:
-				tre_cmd = ['fasttree', '-out', tre_file, msa_file, logObject]
+				tre_cmd = ['fasttree', '-out', tre_file, trim_file, logObject]
 				fasttree_cmds.append(tre_cmd)
 				tre_process.append([dog, tre_file, dog_var_file, logObject])
 				trim_msa_dogs.add(dog)
 			else:
-				tre_cmd = ['fasttree', '-out', tre_file, trim_file, logObject]
+				tre_cmd = ['fasttree', '-out', tre_file, msa_file, logObject]
 				fasttree_cmds.append(tre_cmd)
 
 		msg = 'Running phylogeny constructions using FastTree 2.'
@@ -1649,7 +1781,7 @@ def determineOrthologGroupContexts(bofasa_prep_dir, og_context_info_file, surrou
 
 		og_context_info_handle = open(og_context_info_file, 'w')
 		og_context_info_handle.write('\t'.join(['OG', 'Median OG length (bp)', 'Proportion contexts near scaffold edge', 'Number of genomes with OG', 
-										        'Number of protein in OG', 'Context variability score', 'Context variability score - complete contexts', 
+										        'Number of protein in OG', 'Context conservation score', 'Context conservation score - complete contexts', 
 												'Context entropy score', 'Context entropy score - complete contexts', 'Number of distinct neighbor OGs', 
 												'Number of distinct OGs from complete contexts', 'Avg. number of distinct neighbor OGs', 
 												'Avg. number of distinct neighbor OGs from complete contexts', 
@@ -2089,7 +2221,7 @@ def createFinalReport(bofasa_prep_dir, og_context_info_file, final_result_file, 
 		header_format = workbook.add_format({'bold': True, 'text_wrap': True, 'valign': 'top', 'fg_color': '#FFFFFF', 'border': 1})
 
 		numeric_columns = set(['Median OG length (bp)', 'Proportion contexts near scaffold edge', 'Number of genomes with OG', 
-						       'Number of protein in OG', 'Context variability score', 'Context variability score - complete contexts', 
+						       'Number of protein in OG', 'Context conservation score', 'Context conservation score - complete contexts', 
 							   'Context entropy score', 'Context entropy score - complete contexts', 'Number of distinct neighbor OGs', 
 							   'Number of distinct OGs from complete contexts', 'Avg. number of distinct neighbor OGs', 
 							   'Avg. number of distinct neighbor OGs from complete contexts', 
@@ -2567,61 +2699,73 @@ def createChoppedProteomes(inputs):
 		- threads: The number of threads to use [Default is 1].
 	********************************************************************************************************************
 	"""
-	prot_file, ccds_prot_file, pfam_db_file, pfam_z, minimal_length, logObject, threads = inputs
+	prot_file, ccds_prot_file, pfam_db_file, pfam_z, minimal_length, logObject, threads, skip_domain_splitting = inputs
 	try:
 		sample = '.'.join(prot_file.split('/')[-1].split('.')[:-1])
+		if not skip_domain_splitting:
+			# align Pfam domains and remove overlap similar to BiG-SCAPE
+			alphabet = pyhmmer.easel.Alphabet.amino()
+			sequences = []
+			with pyhmmer.easel.SequenceFile(prot_file, digital=True, alphabet=alphabet) as seq_file:
+				sequences = list(seq_file)
 
-		# align Pfam domains and remove overlap similar to BiG-SCAPE
-		alphabet = pyhmmer.easel.Alphabet.amino()
-		sequences = []
-		with pyhmmer.easel.SequenceFile(prot_file, digital=True, alphabet=alphabet) as seq_file:
-			sequences = list(seq_file)
+			target_dom_hits = defaultdict(list)
+			with pyhmmer.plan7.HMMFile(pfam_db_file) as hmm_file:
+				for hits in pyhmmer.hmmsearch(hmm_file, sequences, bit_cutoffs="trusted", Z=int(pfam_z), cpus=threads):
+					for hit in hits:
+						for domain in hit.domains.included:
+							target_dom_hits[hit.name.decode()].append([hits.query_name.decode(), domain.alignment.target_from, domain.alignment.target_to, domain.score, domain.i_evalue])
 
-		target_dom_hits = defaultdict(list)
-		with pyhmmer.plan7.HMMFile(pfam_db_file) as hmm_file:
-			for hits in pyhmmer.hmmsearch(hmm_file, sequences, bit_cutoffs="trusted", Z=int(pfam_z), cpus=threads):
-				for hit in hits:
-					for domain in hit.domains.included:
-						target_dom_hits[hit.name.decode()].append([hits.query_name.decode(), domain.alignment.target_from, domain.alignment.target_to, domain.score, domain.i_evalue])
+			# chop up FASTA based on mostly non-overlapping domains, 10% leaway is given
+			breakpoints = defaultdict(list)
+			dom_start_names = defaultdict(lambda: 'NA')
+			for tg in target_dom_hits:
+				tg_dom_name_iter = defaultdict(int)
+				accounted_coords = set([])
+				for dom_align_info in sorted(target_dom_hits[tg], key=itemgetter(3), reverse=True):
+					dom_name, start, end, score, i_evalue = dom_align_info
+					overlap_coords = accounted_coords.intersection(set(range(start, end+1)))
+					if len(overlap_coords)/float(end-start+1) >= 0.1: continue
+					accounted_coords = accounted_coords.union(set(range(start, end+1)))
+					breakpoints[tg].append(start)
+					breakpoints[tg].append(end+1)
+					dom_start_names[tg + '|' + str(start)] = tg + '|' + dom_name + '|' + str(tg_dom_name_iter[dom_name]+1) 
+					tg_dom_name_iter[dom_name] += 1
 
-		# chop up FASTA based on mostly non-overlapping domains, 10% leaway is given
-		breakpoints = defaultdict(list)
-		dom_start_names = defaultdict(lambda: 'NA')
-		for tg in target_dom_hits:
-			tg_dom_name_iter = defaultdict(int)
-			accounted_coords = set([])
-			for dom_align_info in sorted(target_dom_hits[tg], key=itemgetter(3), reverse=True):
-				dom_name, start, end, score, i_evalue = dom_align_info
-				overlap_coords = accounted_coords.intersection(set(range(start, end+1)))
-				if len(overlap_coords)/float(end-start+1) >= 0.1: continue
-				accounted_coords = accounted_coords.union(set(range(start, end+1)))
-				breakpoints[tg].append(start)
-				breakpoints[tg].append(end+1)
-				dom_start_names[tg + '|' + str(start)] = tg + '|' + dom_name + '|' + str(tg_dom_name_iter[dom_name]+1) 
-				tg_dom_name_iter[dom_name] += 1
-
-		cpf_handle = open(ccds_prot_file, 'w')
-		with open(prot_file) as ocf:
-			for rec in SeqIO.parse(ocf, 'fasta'):
-				tg = rec.id
-				tg_seq = str(rec.seq)
-				prev_end_coord = 1
-				tg_interdomain_index = 1
-				if not tg in breakpoints and len(tg_seq) >= minimal_length:
-					dn = sample + '|' + tg + '|full_protein|1'
-					cpf_handle.write('>' + dn + '\n' + str(tg_seq) + '\n')
-				else:
-					for tg_seq_chunk in split_by_idx(tg_seq, ([0] + sorted(breakpoints[tg]))):
-						if tg_seq_chunk.strip() == '': continue
-						end_coord = prev_end_coord + len(tg_seq_chunk) - 1
-						if len(tg_seq_chunk) >= minimal_length:
-							dn = sample + '|' + dom_start_names[tg + '|' + str(prev_end_coord-1)]
-							if dom_start_names[tg + '|' + str(prev_end_coord-1)] == 'NA':
-								dn = sample + '|' + tg + '|inter-domain_region|' + str(tg_interdomain_index)
-								tg_interdomain_index += 1
-							cpf_handle.write('>' + dn + '\n' + str(tg_seq_chunk) + '\n')
-						prev_end_coord = end_coord + 1
-		cpf_handle.close()
+			cpf_handle = open(ccds_prot_file, 'w')
+			with open(prot_file) as ocf:
+				for rec in SeqIO.parse(ocf, 'fasta'):
+					tg = rec.id
+					tg_seq = str(rec.seq)
+					prev_end_coord = 1
+					tg_interdomain_index = 1
+					if not tg in breakpoints and len(tg_seq) >= minimal_length:
+						dn = sample + '|' + tg + '|full_protein|1'
+						cpf_handle.write('>' + dn + '\n' + str(tg_seq) + '\n')
+					else:
+						for tg_seq_chunk in split_by_idx(tg_seq, ([0] + sorted(breakpoints[tg]))):
+							if tg_seq_chunk.strip() == '': continue
+							end_coord = prev_end_coord + len(tg_seq_chunk) - 1
+							if len(tg_seq_chunk) >= minimal_length:
+								dn = sample + '|' + dom_start_names[tg + '|' + str(prev_end_coord-1)]
+								if dom_start_names[tg + '|' + str(prev_end_coord-1)] == 'NA':
+									dn = sample + '|' + tg + '|inter-domain_region|' + str(tg_interdomain_index)
+									tg_interdomain_index += 1
+								cpf_handle.write('>' + dn + '\n' + str(tg_seq_chunk) + '\n')
+							prev_end_coord = end_coord + 1
+			cpf_handle.close()
+		else:
+			cpf_handle = open(ccds_prot_file, 'w')
+			with open(prot_file) as ocf:
+				for rec in SeqIO.parse(ocf, 'fasta'):
+					tg = rec.id
+					tg_seq = str(rec.seq)
+					prev_end_coord = 1
+					tg_interdomain_index = 1
+					if len(tg_seq) >= minimal_length:
+						dn = sample + '|' + tg + '|full_protein|1'
+						cpf_handle.write('>' + dn + '\n' + str(tg_seq) + '\n')
+			cpf_handle.close()
 	except:
 		msg = 'An issue occurred with creating chopped up version of proteome file %s.' % prot_file
 		logObject.error(msg)
@@ -2630,7 +2774,7 @@ def createChoppedProteomes(inputs):
 		sys.stderr.write(msg + '\n')
 		sys.exit(1)
 
-def annotateAndSplitProteinsUsingPfam(sample_proteomes, split_proteins_dir, domain_coord_info_file, logObject, minimal_length=20, threads=1):
+def annotateAndSplitProteinsUsingPfam(sample_proteomes, split_proteins_dir, domain_coord_info_file, logObject, minimal_length=20, threads=1, skip_domain_splitting=False):
 	"""	
 	Description:
 	Create chopped CDS GenBank files from regular GenBank input with CDS features.
@@ -2679,7 +2823,7 @@ def annotateAndSplitProteinsUsingPfam(sample_proteomes, split_proteins_dir, doma
 		for sample in sample_proteomes:
 			ccds_prot_file = split_proteins_dir + sample + '.ccds.faa'
 			prot_file = sample_proteomes[sample]
-			prot_mod_inputs.append([prot_file, ccds_prot_file, pfam_hmm_path, pfam_z, minimal_length, logObject, threads])
+			prot_mod_inputs.append([prot_file, ccds_prot_file, pfam_hmm_path, pfam_z, minimal_length, logObject, threads, skip_domain_splitting])
 
 		msg = "Creating domain-chopped up version of GenBank files for %d gene clusters" % len(prot_mod_inputs) 
 		logObject.info(msg)

@@ -87,9 +87,10 @@ def create_parser():
 	parser.add_argument('-mi', '--mcl-inflation', type=float, help="MCL inflation parameter for determining coarse ortholog groups via OrthoFinder [Default is 1.2; to perform the most coarse clustering].", required=False, default=1.5)
 	parser.add_argument('-ns', '--near-scc-prop', type=float, help="Proportion of genomes which single-copy resolved domain ortholog groups need to be found in for constructing core genome alignment for phylogenomics [Default is 0.80].", required=False, default=0.95)
 	parser.add_argument('-c', '--threads', type=int, help="Total number of cores/threads to use [Default is 4].", required=False, default=4)
+	parser.add_argument('-mrd', '--max-recursion-depth', type=int, help="The maximum recursion depth.", required=False, default=5000)	
 	parser.add_argument('-mm', '--max_memory', type=int, help='Uses resource module to set soft memory limit. Provide in Giga-bytes.\nGenerally memory shouldn\'t be a major concern unless working\nwith hundreds of large metagenomes. [currently\nexperimental; default is None].', default=None, required=False)
 	parser.add_argument('-v', '--version', action='store_true', help="Get version and exit.", required=False, default=False)
-
+	
 	args = parser.parse_args()
 	return args
 
@@ -127,6 +128,9 @@ def bofasa():
 	#exhaustive_assessment_flag = myargs.exhaustive_assessment
 	near_scc_prop = myargs.near_scc_prop
 	ultra_sens_flag = myargs.ultra_sens
+	max_recursion_depth = myargs.max_recursion_depth
+
+	sys.setrecursionlimit(max_recursion_depth)
 
 	if os.path.isdir(outdir):
 		sys.stderr.write("Output directory exists! Overwriting in 5 seconds, but only where needed.\n ")
