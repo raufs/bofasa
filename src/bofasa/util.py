@@ -1,8 +1,6 @@
 import os
 import sys
 from Bio import SeqIO
-from Bio.SeqFeature import SeqFeature, FeatureLocation
-from Bio.Seq import Seq
 import logging
 import subprocess
 from operator import itemgetter
@@ -14,10 +12,8 @@ import gzip
 import copy
 import itertools
 import multiprocessing
-import pickle
 import resource
 import pkg_resources  # part of setuptools
-import shutil
 import statistics
 from scipy import stats
 import decimal 
@@ -28,13 +24,11 @@ import plotly.express as px
 from scipy import stats
 from scipy.spatial import distance
 import random
-from Bio import Phylo
-from Bio.Phylo.TreeConstruction import _DistanceMatrix
-from Bio.Phylo.TreeConstruction import DistanceTreeConstructor
 
 random.seed(12345)
 
 single_copy_dogs = set([])
+largely_idr_dogs = set([])
 protein_dogs = defaultdict(lambda: defaultdict(int))
 dog_conservation = {}
 dog_trim_msa_sites = {}
@@ -115,12 +109,14 @@ def runSetOfProteinComparisons(inputs):
 				union_count = 0
 				intersect_count = 0
 				for d in union_dogs:
+					if d in largely_idr_dogs: continue
 					union_count += p1dogs[d] + p2dogs[d] - min([p1dogs[d], p2dogs[d]])
 					intersect_count += min([p1dogs[d], p2dogs[d]])
 
-				jaccard_index = intersect_count/union_count
-				if jaccard_index >= threshold:
-					outf_handle.write(p1 + '\t' + p2 + '\n')
+				if union_count > 0:
+					jaccard_index = intersect_count/union_count
+					if jaccard_index >= threshold:
+						outf_handle.write(p1 + '\t' + p2 + '\t' + str(jaccard_index*100.0) + '\n')
 		outf_handle.close()
 	except:
 		msg = 'Issue performing pairwise assessment between proteins based on DOGs to determine protein-resolution ortholog groups.'
@@ -157,7 +153,12 @@ def splitNJT(input):
 			p1_dist = []
 			for p2 in sorted(prot_dog_vectors_np):
 				dist = distance.cosine(prot_dog_vectors_np[p1], prot_dog_vectors_np[p2])
-				p1_dist.append(str(dist))
+				dist = str(dist)
+				if 'e' in dist:
+					p1_dist.append('{:.10f}'.format(dist))
+				else:
+					p1_dist.append(str(dist))
+
 			len_id = len(str(p1i))
 			assert(10 > len_id)
 			naming[str(p1i)] = p1
@@ -202,6 +203,20 @@ def splitNJT(input):
 		sys.exit(1)
 
 def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logObject, dj=0.5, threads=1):
+	# Add description to this this function
+	"""
+	Description:
+	This function determines the protein ortholog groups based on the domain ortholog groups.
+	********************************************************************************************************************	
+	Parameters:
+	- dogs_file: The input matrix file describing the membership of domain ortholog groups.
+	- protein_clustering_dir: The directory where temporary files pertaining to protein clustering files will be stored.
+	- ogs_file: The output file where the protein ortholog groups will be written.
+	- logObject: The logger object for logging messages.
+	- dj: The Jaccard index threshold for determining the similarity between two proteins.
+	- threads: The number of threads to use for parallel processing.
+	********************************************************************************************************************
+	"""
 	try:	
 		input_dir = protein_clustering_dir + 'Comparison_Listings/'
 		pairwise_dir = protein_clustering_dir + 'Protein_Pairs_Based_on_DOGs/' 
@@ -217,6 +232,7 @@ def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logO
 		outf_handle = open(ogs_file, 'w')
 
 		global single_copy_dogs
+		global largely_idr_dogs
 		global protein_dogs
 		global dog_conservation
 
@@ -244,6 +260,8 @@ def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logO
 					sc_flag = True
 					sample_with = 0
 					dog_lts = set([])
+					tot = 0 
+					idr = 0 
 					for lts in ls[1:]:
 						if ',' in lts:
 							sc_flag = False
@@ -255,6 +273,13 @@ def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logO
 							all_proteins.add(prot_id)
 							protein_dogs[prot_id][dog] += 1
 							dog_lts.add(prot_id)
+							tot += 1
+							if lt.split('|')[2] == 'inter-domain_region':
+								idr += 1
+					idr_prop = idr/float(tot)
+					if idr_prop >= 0.8:
+						largely_idr_dogs.add(dog)
+
 					if sample_with == 1:
 						sc_flag = False
 					
@@ -285,7 +310,8 @@ def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logO
 
 		os.system('find %s -maxdepth 1 -type f | xargs cat >> %s' % (pairwise_dir, pairwise_file))
 
-		clust_cmd = ['slclust', '<', pairwise_file, '>', clusters_file]
+		#clust_cmd = ['slclust', '<', pairwise_file, '>', clusters_file]
+		clust_cmd = ['mcl', pairwise_file, '--abc', '-I', '1.2', '-o', clusters_file, '-te', str(threads)]
 
 		try:
 			subprocess.call(' '.join(clust_cmd), shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, executable='/bin/bash')
@@ -301,6 +327,7 @@ def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logO
 		large_protein_og_clusters = []
 		paired_proteins = set([])
 		split_nj_trees_input = []
+		large_split_nj_trees_input = []
 		with open(clusters_file) as ocf:
 			for i, line in enumerate(ocf):
 				line = line.strip()
@@ -324,12 +351,20 @@ def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logO
 					for p in ls:
 						cl_handle.write(p + '\n')
 					cl_handle.close()
-					
-					split_nj_trees_input.append([og_uniq_id, cog_list_file, cog_dist_file, og_tre_file, 
-								                 og_split_file, logObject, 1])
+					if len(ls) > 400:
+						large_split_nj_trees_input.append([og_uniq_id, cog_list_file, cog_dist_file, og_tre_file, 
+									               		   og_split_file, logObject, threads])
+					else:
+						split_nj_trees_input.append([og_uniq_id, cog_list_file, cog_dist_file, og_tre_file, 
+									                 og_split_file, logObject, 1])
 					large_protein_og_clusters.append(ls)
 				else:
 					protein_og_clusters.append(ls)
+
+		p = multiprocessing.Pool(1)
+		for _ in tqdm.tqdm(p.imap_unordered(splitNJT, large_split_nj_trees_input), total=len(large_split_nj_trees_input)):
+			pass
+		p.close()
 
 		p = multiprocessing.Pool(threads)
 		for _ in tqdm.tqdm(p.imap_unordered(splitNJT, split_nj_trees_input), total=len(split_nj_trees_input)):
