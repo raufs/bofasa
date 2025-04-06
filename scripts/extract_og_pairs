@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/workspace/local/rauf/bofasa/conda_env/bin/python3.11
 
 ### Program: extract_og_pairs
 ### Author: Rauf Salamzade
@@ -227,7 +227,7 @@ def extract_og_pairs():
 
 		sample_ids_in_order = defaultdict(list)
 		for f in os.listdir(pirate_input_dir):
-			s = '.'.join(f.split('.')[:-1])
+			s = '_'.join(f.split('.')[:-1])
 			with open(pirate_input_dir + f) as ogff:
 				for line in ogff:
 					if line.startswith('#'): continue
@@ -273,7 +273,12 @@ def extract_og_pairs():
 				for lts in ls[22:]:
 					for lt in lts.split(';'):
 						if lt.strip() == '': continue
-						og_lts.add(gid_to_gname[lt.strip()])
+						if lt.startswith('('):
+							lt = lt[1:-1]
+							for slt in lt.split(':'):
+								og_lts.add(gid_to_gname[slt.strip()])
+						else:
+							og_lts.add(gid_to_gname[lt.strip()])
 				for j, lt1 in enumerate(sorted(og_lts)):
 					for k, lt2 in enumerate(sorted(og_lts)):
 						if j >= k: continue
