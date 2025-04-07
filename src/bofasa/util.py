@@ -2726,6 +2726,7 @@ def createChoppedProteomes(inputs):
 	- inputs:
 		- prot_file: The original proteome file.
 		- ccds_prot_file: The chopped up proteome FASTA file to create.
+		- dom_coord_file: The domain coordinates file.
 		- pfam_db_file: The Pfam HMM DB file.
 		- pfam_z: The Pfam record count - for accurate E-value estimation.
 		- minimal_length: The minimum length in amino acids for a domain matching or intra-domain region to be kept and
@@ -2734,7 +2735,7 @@ def createChoppedProteomes(inputs):
 		- threads: The number of threads to use [Default is 1].
 	********************************************************************************************************************
 	"""
-	prot_file, ccds_prot_file, pfam_db_file, pfam_z, minimal_length, logObject, threads, skip_domain_splitting = inputs
+	prot_file, ccds_prot_file, dom_coord_file, pfam_db_file, pfam_z, minimal_length, logObject, threads, skip_domain_splitting = inputs
 	try:
 		sample = '.'.join(prot_file.split('/')[-1].split('.')[:-1])
 		if not skip_domain_splitting:
@@ -2760,7 +2761,7 @@ def createChoppedProteomes(inputs):
 				for dom_align_info in sorted(target_dom_hits[tg], key=itemgetter(3), reverse=True):
 					dom_name, start, end, score, i_evalue = dom_align_info
 					overlap_coords = accounted_coords.intersection(set(range(start, end+1)))
-					if len(overlap_coords)/float(end-start+1) >= 0.1: continue
+					if len(overlap_coords)/float(end-start+1) >= 0.1 or len(overlap_coords) >= minimal_length: continue
 					accounted_coords = accounted_coords.union(set(range(start, end+1)))
 					breakpoints[tg].append(start)
 					breakpoints[tg].append(end+1)
@@ -2768,6 +2769,8 @@ def createChoppedProteomes(inputs):
 					tg_dom_name_iter[dom_name] += 1
 
 			cpf_handle = open(ccds_prot_file, 'w')
+			dcf_handle = open(dom_coord_file, 'w')
+			dcf_handle.write('Sample\tProtein\tAnnotation\tAnnotation_Iterator\tStart\tEnd\n')
 			with open(prot_file) as ocf:
 				for rec in SeqIO.parse(ocf, 'fasta'):
 					tg = rec.id
@@ -2777,6 +2780,7 @@ def createChoppedProteomes(inputs):
 					if not tg in breakpoints and len(tg_seq) >= minimal_length:
 						dn = sample + '|' + tg + '|full_protein|1'
 						cpf_handle.write('>' + dn + '\n' + str(tg_seq) + '\n')
+						dcf_handle.write('\t'.join([sample, tg, dn.split('|')[2], dn.split('|')[3], str(prev_end_coord), str(len(tg_seq))]) + '\n')
 					else:
 						for tg_seq_chunk in split_by_idx(tg_seq, ([0] + sorted(breakpoints[tg]))):
 							if tg_seq_chunk.strip() == '': continue
@@ -2787,20 +2791,25 @@ def createChoppedProteomes(inputs):
 									dn = sample + '|' + tg + '|inter-domain_region|' + str(tg_interdomain_index)
 									tg_interdomain_index += 1
 								cpf_handle.write('>' + dn + '\n' + str(tg_seq_chunk) + '\n')
+								dcf_handle.write('\t'.join([sample, tg, dn.split('|')[2], dn.split('|')[3], str(prev_end_coord), str(end_coord)]) + '\n')
 							prev_end_coord = end_coord + 1
 			cpf_handle.close()
+			dcf_handle.close()
 		else:
 			cpf_handle = open(ccds_prot_file, 'w')
+			dcf_handle = open(dom_coord_file, 'w')
+			dcf_handle.write('Sample\tProtein\tAnnotation\tAnnotation_Iterator\tStart\tEnd\n')
 			with open(prot_file) as ocf:
 				for rec in SeqIO.parse(ocf, 'fasta'):
 					tg = rec.id
 					tg_seq = str(rec.seq)
-					prev_end_coord = 1
 					tg_interdomain_index = 1
 					if len(tg_seq) >= minimal_length:
 						dn = sample + '|' + tg + '|full_protein|1'
 						cpf_handle.write('>' + dn + '\n' + str(tg_seq) + '\n')
+						dcf_handle.write('\t'.join([sample, tg, dn.split('|')[2], dn.split('|')[3], '1', str(len(tg_seq))]) + '\n')
 			cpf_handle.close()
+			dcf_handle.close()
 	except:
 		msg = 'An issue occurred with creating chopped up version of proteome file %s.' % prot_file
 		logObject.error(msg)
@@ -2809,7 +2818,7 @@ def createChoppedProteomes(inputs):
 		sys.stderr.write(msg + '\n')
 		sys.exit(1)
 
-def annotateAndSplitProteinsUsingPfam(sample_proteomes, split_proteins_dir, domain_coord_info_file, logObject, minimal_length=20, threads=1, skip_domain_splitting=False):
+def annotateAndSplitProteinsUsingPfam(sample_proteomes, split_proteins_dir, domain_coords_dir, domain_coord_info_file, logObject, minimal_length=20, threads=1, skip_domain_splitting=False):
 	"""	
 	Description:
 	Create chopped CDS GenBank files from regular GenBank input with CDS features.
@@ -2817,6 +2826,7 @@ def annotateAndSplitProteinsUsingPfam(sample_proteomes, split_proteins_dir, doma
 	Parameters:
 	- sample_proteomes: Dictionary mapping sample names (keys) to proteome file paths (values).
 	- split_proteins_dir: Directory where to write resulting cCDS proteomes.
+	- domain_coords_dir: Directory where to write resulting domain coordinates.
 	- domain_coord_info_file: Resulting domain/inter-domain information file.
 	- logObject: A logging object.
 	- minimal_length: The minimum length in amino acids for a domain matching or intra-domain region to be kept and
@@ -2857,8 +2867,9 @@ def annotateAndSplitProteinsUsingPfam(sample_proteomes, split_proteins_dir, doma
 		prot_mod_inputs = []
 		for sample in sample_proteomes:
 			ccds_prot_file = split_proteins_dir + sample + '.ccds.faa'
+			domain_coord_file = domain_coords_dir + sample + '.domain_coords.txt'
 			prot_file = sample_proteomes[sample]
-			prot_mod_inputs.append([prot_file, ccds_prot_file, pfam_hmm_path, pfam_z, minimal_length, logObject, threads, skip_domain_splitting])
+			prot_mod_inputs.append([prot_file, ccds_prot_file, domain_coord_file, pfam_hmm_path, pfam_z, minimal_length, logObject, threads, skip_domain_splitting])
 
 		msg = "Creating domain-chopped up version of GenBank files for %d gene clusters" % len(prot_mod_inputs) 
 		logObject.info(msg)
@@ -2871,15 +2882,15 @@ def annotateAndSplitProteinsUsingPfam(sample_proteomes, split_proteins_dir, doma
 
 		dci_handle = open(domain_coord_info_file, 'w')
 		sample_ccds_proteomes = {}
-		for f in os.listdir(split_proteins_dir):
-			sample = f.split('.ccds.faa')[0]
-			ccds_prot_file = split_proteins_dir + f
+		for f in os.listdir(domain_coords_dir):
+			sample = f.split('.domain_coords.txt')[0]
+			ccds_prot_file = split_proteins_dir + sample + '.ccds.faa'
+			dom_coord_file = domain_coords_dir + f
 			sample_ccds_proteomes[sample] = ccds_prot_file
-			with open(ccds_prot_file) as ogf:
-				for rec in SeqIO.parse(ogf, 'fasta'):
-					name = rec.id
-					sample, prot, dom, index = name.split('|')
-					dci_handle.write('\t'.join([sample, prot, dom, index, ccds_prot_file]) + '\n')
+			with open(dom_coord_file) as odf:
+				for i, line in enumerate(odf):
+					if i == 0: continue
+					dci_handle.write(line)
 		dci_handle.close()
 		return(sample_ccds_proteomes)
 	except:
