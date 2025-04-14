@@ -31,9 +31,7 @@ single_copy_dogs = set([])
 largely_idr_dogs = set([])
 protein_dogs = defaultdict(lambda: defaultdict(int))
 dog_conservation = {}
-dog_trim_msa_sites = {}
-svs_cutoffs = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: None)))
-dog_variability_ratio = defaultdict(lambda: 1.0)
+tree_obj = None
 
 version = pkg_resources.require("bofasa")[0].version
 
@@ -153,11 +151,7 @@ def splitNJT(input):
 			p1_dist = []
 			for p2 in sorted(prot_dog_vectors_np):
 				dist = distance.cosine(prot_dog_vectors_np[p1], prot_dog_vectors_np[p2])
-				dist = str(dist)
-				if 'e' in dist:
-					p1_dist.append('{:.10f}'.format(dist))
-				else:
-					p1_dist.append(str(dist))
+				p1_dist.append('{:.10f}'.format(dist))
 
 			len_id = len(str(p1i))
 			assert(10 > len_id)
@@ -184,16 +178,16 @@ def splitNJT(input):
 		if len(samples_with_og) == 1: return
 
 		R = t.get_midpoint_outgroup()		
-		children = get_children(R)
-		samples = set([x.split('|')[0] for x in children])
-		if len(samples) >= 2:
-			t.set_outgroup(R)
-			sp = recursive_splitting(t, samples_with_og, False, are_proteins=True)
-			sp_further_split = furtherSplitDisjointDOGPartitions(t, sp)
-			spl_outf = open(spl_file, 'w')
-			for spi in sp_further_split:
-				spl_outf.write(' '.join(sorted(spi)) + '\n')
-			spl_outf.close()
+		#children = get_children(R)
+		#samples = set([x.split('|')[0] for x in children])
+		#if len(samples) >= 2:
+		t.set_outgroup(R)
+		sp = recursive_splitting(t, samples_with_og, are_proteins=True)
+		sp_further_split = furtherSplitDisjointDOGPartitions(t, sp)
+		spl_outf = open(spl_file, 'w')
+		for spi in sp_further_split:
+			spl_outf.write(' '.join(sorted(spi)) + '\n')
+		spl_outf.close()
 		return
 	except:
 		msg = 'Issue with splitting protein ortholog group %s - based on domain cosine distances neighbor-joining tree.' % og
@@ -226,7 +220,7 @@ def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logO
 		p_split_dir = protein_clustering_dir + 'Protein_Splitting/'
 
 		setupReadyDirectory([input_dir, pairwise_dir, p_clust_list_dir, p_dist_dir, 
-					         p_tre_dir, p_split_dir])
+							 p_tre_dir, p_split_dir])
 		pairwise_file = protein_clustering_dir + 'Protein_Pairs_Based_on_DOGs.txt'
 		clusters_file = protein_clustering_dir + 'Protein_Clusters_Based_on_DOGs.txt'
 		outf_handle = open(ogs_file, 'w')
@@ -340,8 +334,8 @@ def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logO
 				og_counts = []
 				for s in sample_og_counts:
 					og_counts.append(sample_og_counts[s])
-				median_og_count = statistics.median(og_counts)
-				if median_og_count >= 2 and len(sample_og_counts) >= 2:
+				max_og_count = max(og_counts)
+				if max_og_count >= 2 and len(sample_og_counts) >= 2 and len(ls) >= 4:
 					og_uniq_id = 'CoarseOG_' + str(i) 
 					cog_list_file = p_clust_list_dir + og_uniq_id + '.txt'
 					cog_dist_file = p_dist_dir + og_uniq_id + '.phylip'
@@ -353,10 +347,10 @@ def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logO
 					cl_handle.close()
 					if len(ls) > 400:
 						large_split_nj_trees_input.append([og_uniq_id, cog_list_file, cog_dist_file, og_tre_file, 
-									               		   og_split_file, logObject, threads])
+												   		   og_split_file, logObject, threads])
 					else:
 						split_nj_trees_input.append([og_uniq_id, cog_list_file, cog_dist_file, og_tre_file, 
-									                 og_split_file, logObject, 1])
+													 og_split_file, logObject, 1])
 					large_protein_og_clusters.append(ls)
 				else:
 					protein_og_clusters.append(ls)
@@ -462,7 +456,7 @@ def determine_tree_score_bl_sim(ptree, min_bl=0.0005):
 		msg = 'Issue determining branch-length score for tree partitioning.'
 		sys.stderr.write(msg + '\n')
 
-def recursive_splitting(intree, all_og_samples, exhaustive_assessment, are_proteins=False):
+def recursive_splitting(intree, all_og_samples, are_proteins=False):
 	try:
 		all_leaves = get_children(intree)
 		bl_sum = determine_tree_score_bl(intree)
@@ -496,7 +490,7 @@ def recursive_splitting(intree, all_og_samples, exhaustive_assessment, are_prote
 		for i, sti in enumerate(sorted(subtree_info, key=itemgetter(1))):
 			if sti[1] == min_score:
 				if len(sti[0].intersection(accounted_for)) == 0:
-					best_partitions.append([sti[0], sti[1]])
+					best_partitions.append(sti[0])
 					accounted_for = accounted_for.union(sti[0])
 
 		complement_leaves = all_leaves.difference(accounted_for)
@@ -505,9 +499,9 @@ def recursive_splitting(intree, all_og_samples, exhaustive_assessment, are_prote
 		if len(complement_samples) >= 2:
 			complement_tree = intree.copy()
 			complement_tree.prune(list(complement_leaves), preserve_branch_length=True)
-			complement_splitting = recursive_splitting(complement_tree, all_og_samples, exhaustive_assessment, are_proteins=are_proteins)
+			complement_splitting = recursive_splitting(complement_tree, all_og_samples, are_proteins=are_proteins)
 			del complement_tree
-		result = [accounted_for] + complement_splitting
+		result = best_partitions + complement_splitting
 		return(result)
 	except:
 		msg = 'Issues splitting ortholog group tree using the recursive function.'
@@ -516,41 +510,42 @@ def recursive_splitting(intree, all_og_samples, exhaustive_assessment, are_prote
 		sys.exit(1)
 
 def furtherSplitDisjointDOGPartitions(rooted_t, sps):
-    """
-    """
-    try:
-        node_id = 1
-        innernode_children = []
-        for n in rooted_t.traverse('postorder'):
-            if n.is_leaf():
-                innernode_children.append([node_id, set([n.name]), 1])
-            else:
-                children = get_children(n)
-                innernode_children.append([node_id, children, len(children)])
-            node_id += 1
-        updated_sp = []
-        for sp in sps:
-            monophyletic_flag = False
-            for n in innernode_children:
-                if sp == n[1]:
-                    monophyletic_flag = True
-            if monophyletic_flag:
-                updated_sp.append(sp)
-            else:
-                accounted_leafs = set([])
-                for n in sorted(innernode_children, key=itemgetter(2), reverse=True):
-                    nc = n[1]
-                    if nc.issubset(sp) and len(nc.difference(sp)) == 0 and len(nc.intersection(accounted_leafs)) == 0:
-                        accounted_leafs = accounted_leafs.union(nc)
-                        updated_sp.append(nc)
-                assert(sp == accounted_leafs)
-        return updated_sp
+	"""
+	"""
+	try:
+		node_id = 1
+		innernode_children = []
+		for n in rooted_t.traverse('postorder'):
+			if n.is_leaf():
+				innernode_children.append([node_id, set([n.name]), 1])
+			else:
+				children = get_children(n)
+				innernode_children.append([node_id, children, len(children)])
+			node_id += 1
 
-    except:
-        msg = 'Issues further refining domain ortholog groups based on phylogenetics.'
-        sys.stderr.write(msg + '\n')
-        sys.stderr.write(traceback.format_exc() + '\n')
-        sys.exit(1)
+		updated_sp = []
+		for sp in sps:
+			monophyletic_flag = False
+			for n in innernode_children:
+				if sp == n[1]:
+					monophyletic_flag = True
+			if monophyletic_flag:
+				updated_sp.append(sp)
+			else:
+				accounted_leafs = set([])
+				for n in sorted(innernode_children, key=itemgetter(2), reverse=True):
+					nc = n[1]
+					if nc.issubset(sp) and len(nc.difference(sp)) == 0 and len(nc.intersection(accounted_leafs)) == 0:
+						accounted_leafs = accounted_leafs.union(nc)
+						updated_sp.append(nc)
+				assert(sp == accounted_leafs)
+		return updated_sp
+
+	except:
+		msg = 'Issues further refining domain ortholog groups based on phylogenetics.'
+		sys.stderr.write(msg + '\n')
+		sys.stderr.write(traceback.format_exc() + '\n')
+		sys.exit(1)
 		
 def assess_job_intensity(faa_file):
 	try:
@@ -570,8 +565,7 @@ def assess_job_intensity(faa_file):
 		sys.stderr.write(traceback.format_exc() + '\n')
 		sys.exit(1)
 
-def mergeBackDOGPartitions(og, t, split_partitions, fixation_index_cutoff=0.25):	
-
+def mergeBackDOGPartitions(t, pw_dists, split_partitions, fixation_index_cutoff=0.5):	
 	all_sps = set([])
 	leaf_to_clade = {}
 	clade_leaves = defaultdict(set)
@@ -581,50 +575,58 @@ def mergeBackDOGPartitions(og, t, split_partitions, fixation_index_cutoff=0.25):
 			leaf_to_clade[l] = i
 			all_sps.add(i)
 
+	if len(clade_leaves) == 1:
+		return(split_partitions)
+
+	node_clade_samples = defaultdict(lambda: defaultdict(list))
+	node_tot_children = defaultdict(int)
+	for ni, n in enumerate(t.traverse('postorder')):
+		if n.is_leaf(): continue
+		name = 'Node_' + str(ni+1)
+		n.name = name
+		for l in n.traverse('postorder'):
+			if l.is_leaf():
+				c = leaf_to_clade[l.name]
+				node_clade_samples[name][c].append(l.name)
+				node_tot_children[name] += 1			
+
 	merge_sps = []
 	paired_sps = set([])
 	for n in t.traverse('postorder'):
 		if n.is_leaf(): continue
-		clade_samples = defaultdict(list)
-		tot_children = 0
-		for l in n.traverse('postorder'):
-			if l.is_leaf():
-				c = leaf_to_clade[l.name]
-				clade_samples[c].append(l.name)
-				tot_children += 1
-
-		if len(clade_samples) > 1:
-			within_dists = []
-			between_dists = []
-			for c in clade_samples:
-				for i, s1 in enumerate(sorted(clade_samples[c])):
-					for j, s2 in enumerate(sorted(clade_samples[c])):
-						if i >= j: continue
-						dist = t.get_distance(s1, s2)
-						within_dists.append(dist)
-
-			for i, c1 in enumerate(sorted(clade_samples)):
-				for j, c2 in enumerate(sorted(clade_samples)):
+		if len(node_clade_samples[n.name]) == 1: continue
+		within_dists = []
+		for c in sorted(node_clade_samples[n.name]):
+			for i, s1 in enumerate(sorted(node_clade_samples[n.name][c])):
+				for j, s2 in enumerate(sorted(node_clade_samples[n.name][c])):
 					if i >= j: continue
-					for s1 in clade_samples[c1]:
-						for s2 in clade_samples[c2]:
-							dist = t.get_distance(s1, s2)
-							between_dists.append(dist)
+					key = tuple(sorted([s1, s2]))
+					dist = pw_dists[key]
+					within_dists.append(dist)
 
-			pi_between = statistics.mean(between_dists)
-			pi_within = pi_between
-			if len(within_dists) > 0:
-				pi_within = statistics.mean(within_dists)
+		between_dists = []
+		for i, c1 in enumerate(sorted(node_clade_samples[n.name])):
+			for j, c2 in enumerate(sorted(node_clade_samples[n.name])):
+				if i >= j: continue
+				for s1 in node_clade_samples[n.name][c1]:
+					for s2 in node_clade_samples[n.name][c2]:
+						key = tuple(sorted([s1, s2]))
+						dist = pw_dists[key]
+						between_dists.append(dist)
+		
+		if len(within_dists) == 0: continue
+		pi_within = statistics.mean(within_dists)
+		pi_between = statistics.mean(between_dists)
+		fix_index = (pi_between - pi_within)/pi_between
 
-			fix_index = (pi_between - pi_within)/pi_between
-			if fix_index <= fixation_index_cutoff:
-				for i, c1 in enumerate(sorted(clade_samples)):
-					for j, c2 in enumerate(sorted(clade_samples)):
-						if i >= j: continue
-						merge_sps.append([c1, c2])
-						paired_sps.add(c1)
-						paired_sps.add(c2)
-	
+		if fix_index > fixation_index_cutoff: continue
+		for i, c1 in enumerate(sorted(node_clade_samples[n.name])):
+			for j, c2 in enumerate(sorted(node_clade_samples[n.name])):	
+				if i >= j: continue
+				merge_sps.append([c1, c2])
+				paired_sps.add(c1)
+				paired_sps.add(c2)
+
 	if len(merge_sps) > 0:
 		merged_sp_ids = single_linkage_cluster(merge_sps, all_sps, paired_sps)
 		merged_sp_listing = []
@@ -636,159 +638,7 @@ def mergeBackDOGPartitions(og, t, split_partitions, fixation_index_cutoff=0.25):
 			merged_sp_listing.append(msl)
 		return(merged_sp_listing)
 	else:
-		return(split_partitions)		
-
-def splitDOGsBL(inputs):
-	og, tre_file, spl_file, unexpected_cutoff, exhaustive_rooting, logObject = inputs
-
-	best_split_partitions = []
-
-	all_leafs = set([])
-	t = Tree(tre_file)
-	for n in t.traverse('preorder'):
-		if n.is_leaf(): all_leafs.add(n.name)		
-
-	try:
-		if exhaustive_rooting:
-			split_partitions_best_score = 1e100
-			best_split_partitions = []
-			for n in t.traverse('preorder'):
-				if n.is_leaf(): continue
-
-				children = get_children(n)
-				samples = set([x.split('|')[0] for x in children])
-
-				if len(samples) < 2: continue
-
-				rooted_t = copy.deepcopy(t)				
-				if len(all_leafs) > 2:
-					try:
-						node_for_rooting = rooted_t.get_common_ancestor(list(children))
-						if node_for_rooting is rooted_t:
-							rooted_t.unroot()
-							node_for_rooting = rooted_t.get_common_ancestor(list(children))
-							rooted_t.set_outgroup(node_for_rooting)
-						else:
-							rooted_t.set_outgroup(node_for_rooting)
-					except:
-						continue
-
-				innernode_children = []
-				node_id = 1
-				for n2 in rooted_t.traverse('postorder'):
-					if n2.is_leaf():
-						innernode_children.append([node_id, set([n2.name]), 1])
-						all_leafs.add(n2.name)
-					else:
-						children = get_children(n2)
-						innernode_children.append([node_id, children, len(children)])
-					node_id += 1
-
-				prot_type = 'long'
-				if dog_trim_msa_sites[og] <= 60:
-					prot_type = 'short'
-				elif dog_trim_msa_sites[og] <= 600:
-					prot_type = 'medium'
-
-				split_partitions = []
-				accounted_leafs = set([])
-				score = 0
-				for n2 in sorted(innernode_children, key=itemgetter(2), reverse=True):
-					nc = n2[1]
-					if len(nc.intersection(accounted_leafs)) == 0 and len(nc) > 1:
-						total_comparisons = 0
-						unexpected_divergence = 0
-						for i, c1 in enumerate(sorted(nc)):
-							s1 = c1.split('|')[0]
-							for j, c2 in enumerate(sorted(nc)):
-								if i >= j: continue
-								s2 = c2.split('|')[0]
-								cutoff = svs_cutoffs[s1][s2][prot_type]
-								if cutoff != None:
-									dist = t.get_distance(c1, c2)
-									cutoff = cutoff*(max([dog_variability_ratio[og], 1.0]))
-									total_comparisons += 1
-									if dist > cutoff:
-										unexpected_divergence += 1
-						if total_comparisons > 0:
-							pval = unexpected_divergence/total_comparisons
-							if pval < unexpected_cutoff:
-								accounted_leafs = accounted_leafs.union(nc)
-								split_partitions.append(list(nc))
-								score += pval
-				
-				for leaf in all_leafs:
-					if not leaf in accounted_leafs:
-						score += 1
-
-				if split_partitions_best_score > score:
-					best_split_partitions = split_partitions
-					split_partitions_best_score = score
-		else:
-			R = t.get_midpoint_outgroup()
-			t.set_outgroup(R)
-
-			innernode_children = []
-			node_id = 1
-			for n in rooted_t.traverse('postorder'):
-				if n.is_leaf():
-					innernode_children.append([node_id, set([n.name]), 1])
-					all_leafs.add(n.name)
-				else:
-					children = get_children(n)
-					innernode_children.append([node_id, children, len(children)])
-				node_id += 1
-
-			prot_type = 'long'
-			if dog_trim_msa_sites[og] <= 60:
-				prot_type = 'short'
-			elif dog_trim_msa_sites[og] <= 600:
-				prot_type = 'medium'
-
-			for n in sorted(innernode_children, key=itemgetter(2), reverse=True):
-				nc = n[1]
-				if len(nc.intersection(accounted_leafs)) == 0 and len(nc) > 1:
-					total_comparisons = 0
-					unexpected_divergence = 0
-					for i, c1 in enumerate(sorted(nc)):
-						s1 = c1.split('|')[0]
-						for j, c2 in enumerate(sorted(nc)):
-							if i >= j: continue
-							s2 = c2.split('|')[0]
-							cutoff = svs_cutoffs[s1][s2][prot_type]
-							if cutoff != None:
-								dist = t.get_distance(c1, c2)
-								cutoff = cutoff*(max([dog_variability_ratio[og], 1.0]))
-								total_comparisons += 1
-								if dist > cutoff:
-									unexpected_divergence += 1
-					if total_comparisons > 0:
-						pval = unexpected_divergence/total_comparisons
-						if pval < unexpected_cutoff:
-							best_split_partitions.append(list(nc))
-
-		spl_outf = open(spl_file, 'w')
-		it = 1
-		accounted_leafs = set([])
-		for spi in best_split_partitions:
-			spog = og + '_' + str(it)
-			it += 1
-			for dom in spi:
-				accounted_leafs.add(dom)
-				spl_outf.write(spog + '\t' + dom + '\n')
-
-		for leaf in all_leafs:
-			if not leaf in accounted_leafs:
-				spog = og + '_' + str(it)
-				it += 1
-				spl_outf.write(spog + '\t' + leaf + '\n')
-		spl_outf.close()
-	except:
-		msg = 'Issue with splitting ortholog group %s - based on phylo from trimmed MSA' % og
-		sys.stderr.write(msg + '\n')
-		sys.stderr.write(traceback.format_exc() + '\n')
-		logObject.error(msg)
-		sys.exit(1)
+		return(split_partitions)
 
 def determine_tree_score_bl(ptree):
 	try:
@@ -800,10 +650,16 @@ def determine_tree_score_bl(ptree):
 	except:
 		msg = 'Issue determining branch-length score for tree partitioning.'
 		sys.stderr.write(msg + '\n')
-		
+
+def pairwise_dist(inputs):
+	d, l1, l2 = inputs
+	dist = tree_obj.get_distance(l1, l2)
+	key = tuple(sorted([l1, l2]))
+	d[key] = dist
+
 def splitDOGs(inputs):
-	og, tre_file, spl_file, exhaustive_assessment, exhaustive_rooting, rooting_seeds, fixation_index_cutoff, logObject = inputs
-	rooting_seeds = min([rooting_seeds, 1])
+	og, tre_file, spl_file, skip_merge_back_flag, rooting_seeds, fixation_index_cutoff, threads, logObject = inputs
+	rooting_seeds = max([rooting_seeds, 1])
 	try:		
 		t = Tree(tre_file)
 		samples_with_og = set([])
@@ -814,86 +670,102 @@ def splitDOGs(inputs):
 				samples_with_og.add(s)
 				leafs.add(n.name)
 
-		if len(leafs) < 3: return
-		if len(samples_with_og) == 1: return
+		pw_dists = None
+		if threads > 1:
+			with multiprocessing.Manager() as manager:
+				d = manager.dict()
+				pairs = []
+				for i, l1 in enumerate(leafs):
+					for j, l2 in enumerate(leafs):
+						if i < j:
+							pairs.append([d, l1, l2])
+
+				with manager.Pool(threads) as pool:
+					pool.map(pairwise_dist, pairs)
+
+				pw_dists = dict(d)
+
+			for l in leafs:
+				pw_dists[tuple([l, l])] = 0.0
+
+		else:
+			pw_dists = {}
+			for i, l1 in enumerate(leafs):
+				for j, l2 in enumerate(leafs):
+					if i >= j: continue
+					dist = t.get_distance(l1, l2)
+					key = tuple(sorted([l1, l2]))
+					pw_dists[key] = dist
 
 		all_rooting_partitions = []
-		if exhaustive_rooting:
-
-			possible_nodes_for_rooting = set([])
-			for node_id, n in enumerate(t.traverse('preorder')):
-				if n.is_leaf(): continue
-				children = get_children(n)
-				samples = set([x.split('|')[0] for x in children])
-				if len(samples) < 2: continue
+		possible_nodes_for_rooting = set([])
+		for node_id, n in enumerate(t.traverse('preorder')):
+			if not n.is_leaf():
 				n.name = 'node_' + str(node_id+1)	
-				possible_nodes_for_rooting.add(n.name)
+			possible_nodes_for_rooting.add(n.name)
 
-			if len(possible_nodes_for_rooting) > (rooting_seeds-1):
-				possible_nodes_for_rooting = set(random.sample(list(possible_nodes_for_rooting), rooting_seeds-1))
+		if len(possible_nodes_for_rooting) > (rooting_seeds-1):
+			possible_nodes_for_rooting = set(random.sample(list(possible_nodes_for_rooting), rooting_seeds-1))
 
+		if len(possible_nodes_for_rooting) > 0:
 			for n in t.traverse('preorder'):
-				if n.is_leaf(): continue
 				if not n.name in possible_nodes_for_rooting: continue
-				children = get_children(n)
-				samples = set([x.split('|')[0] for x in children])
-				if len(samples) < 2: continue
-
 				rooted_t = copy.deepcopy(t)
 				try:
-					node_for_rooting = rooted_t.get_common_ancestor(list(children))
-					if node_for_rooting is rooted_t:
+					if n.name is rooted_t.name:
 						pass
-						#rooted_t.unroot()
-						#node_for_rooting = rooted_t.get_common_ancestor(list(children))
-						#rooted_t.set_outgroup(node_for_rooting)
 					else:
-						rooted_t.set_outgroup(node_for_rooting)
+						rooted_t.set_outgroup(n.name)
 				except:
 					sys.stderr.write(traceback.format_exc() + '\n')
 					continue
 
-				sp = recursive_splitting(rooted_t, samples_with_og, exhaustive_assessment)
+				sp = recursive_splitting(rooted_t, samples_with_og)
 				sp_further_split = furtherSplitDisjointDOGPartitions(rooted_t, sp)
-				sp_merge = mergeBackDOGPartitions(og, rooted_t, sp_further_split, fixation_index_cutoff=fixation_index_cutoff)
+				sp_merge = sp_further_split
+				if not skip_merge_back_flag:
+					sp_merge = mergeBackDOGPartitions(rooted_t, pw_dists, sp_further_split, fixation_index_cutoff=fixation_index_cutoff)
+
 				pscore_sum = 0 
 				pscore_bl_sum = 0.0
 				for p in sp_merge:
 					ptree = copy.deepcopy(rooted_t)
 					ptree.prune(p, preserve_branch_length=True)
-					pscore = determine_tree_score(ptree, samples_with_og)
+					ptree_samples = set([x.split('|')[0] for x in p])
+					pscore = determine_tree_score(ptree, ptree_samples)
 					pscore_bl = determine_tree_score_bl(ptree)
 					del ptree
 					pscore_sum += pscore
 					pscore_bl_sum += pscore_bl
-				all_rooting_partitions.append([sp_merge, pscore_sum, pscore_bl_sum])			
+				all_rooting_partitions.append([sp_merge, pscore_sum, len(sp_merge), pscore_bl_sum])			
 				del rooted_t
 
 		mp_t = copy.deepcopy(t)
 		R = mp_t.get_midpoint_outgroup()
-		children = get_children(R)
-		samples = set([x.split('|')[0] for x in children])
-		if len(samples) >= 2:
-			mp_t.set_outgroup(R)
-			sp = recursive_splitting(mp_t, samples_with_og, exhaustive_assessment)
-			sp_further_split = furtherSplitDisjointDOGPartitions(mp_t, sp)
-			sp_merge = mergeBackDOGPartitions(og, mp_t, sp_further_split, fixation_index_cutoff=fixation_index_cutoff)
-			pscore_sum = 0
-			pscore_bl_sum = 0.0
-			for p in sp_merge:
-				ptree = copy.deepcopy(mp_t)
-				ptree.prune(p, preserve_branch_length=True)
-				pscore = determine_tree_score(ptree, samples_with_og)
-				pscore_bl = determine_tree_score_bl(ptree)
-				del ptree
-				pscore_sum += pscore
-				pscore_bl_sum += pscore_bl
-			all_rooting_partitions.append([sp_merge, pscore_sum, pscore_bl_sum])
+		mp_t.set_outgroup(R)
+		sp = recursive_splitting(mp_t, samples_with_og)
+		sp_further_split = furtherSplitDisjointDOGPartitions(mp_t, sp)
+		sp_merge = sp_further_split
+		if not skip_merge_back_flag:
+			sp_merge = mergeBackDOGPartitions(mp_t, pw_dists, sp_further_split, fixation_index_cutoff=fixation_index_cutoff)
+			
+		pscore_sum = 0
+		pscore_bl_sum = 0.0
+		for p in sp_merge:
+			ptree = copy.deepcopy(mp_t)
+			ptree.prune(p, preserve_branch_length=True)
+			ptree_samples = set([x.split('|')[0] for x in p])
+			pscore = determine_tree_score(ptree, ptree_samples)
+			pscore_bl = determine_tree_score_bl(ptree)
+			del ptree
+			pscore_sum += pscore
+			pscore_bl_sum += pscore_bl
+		all_rooting_partitions.append([sp_merge, pscore_sum, len(sp_merge), pscore_bl_sum])
 		del mp_t
 
 		if len(all_rooting_partitions) > 0:
 			spl_outf = open(spl_file, 'w')
-			for i, sp in enumerate(sorted(all_rooting_partitions, key=itemgetter(1,2))):
+			for i, sp in enumerate(sorted(all_rooting_partitions, key=itemgetter(1,2,3))):
 				if i == 0:
 					for it, spi in enumerate(sp[0]):
 						spog = og + '_' + str(it)
@@ -908,107 +780,18 @@ def splitDOGs(inputs):
 		sys.stderr.write(traceback.format_exc() + '\n')
 		logObject.error(msg)
 		sys.exit(1)
-
-def determineSampleToSampleDists(inputs):
-	s1, s2, tre_dir, out_file, logObject = inputs
-	try:
-		short_prots = [] # 0-60
-		medium_prots = [] # 61-600
-		long_prots = [] # >=601
-		for f in os.listdir(tre_dir):
-			dog = f.split('.')[0]
-			t = Tree(tre_dir + f)
-			s1_leaves = []
-			s2_leaves = []
-			for n in t.traverse("postorder"):
-				if n.is_leaf():
-					sn = n.name.split('|')[0]
-					if sn == s1:
-						s1_leaves.append(n.name)
-					elif sn == s2:
-						s2_leaves.append(n.name)
-			if len(s1_leaves) == 1 and len(s2_leaves) == 1:
-				dist = t.get_distance(s1_leaves[0], s2_leaves[0])
-				dog_len = dog_trim_msa_sites[dog]
-				if dog_len <= 60:
-					short_prots.append(dist)
-				elif dog_len <= 600:
-					medium_prots.append(dist)
-				else:
-					long_prots.append(dist)
-
-		short_cutoff = 'NA'
-		medium_cutoff = 'NA'
-		long_cutoff = 'NA'
-
-		general_mad = stats.median_abs_deviation(short_prots + medium_prots + long_prots)
-		if len(short_prots) >= 10:
-			short_median = statistics.median(short_prots)
-			short_mad = stats.median_abs_deviation(short_prots)
-			short_cutoff = short_median + max([short_mad*3, general_mad*3]) 
-		if len(medium_prots) >= 10:
-			medium_median = statistics.median(medium_prots)
-			medium_mad = stats.median_abs_deviation(medium_prots)
-			medium_cutoff = medium_median + max([medium_mad*3, general_mad*3]) 
-		if len(long_prots) >= 10:
-			long_median = statistics.median(long_prots)
-			long_mad = stats.median_abs_deviation(long_prots)
-			long_cutoff = long_median + max([long_mad*3, general_mad*3])
-
-		out_handle = open(out_file, 'w')
-		out_handle.write('\t'.join([str(x) for x in [s1, s2, short_cutoff, medium_cutoff, long_cutoff]]) + '\n') 
-		out_handle.close()
-	except:
-		msg = 'Issue determining sample to sample dists between %s and %s' % (s1, s2)
-		sys.stderr.write(msg + '\n')
-		logObject.error(msg)
-
-def processTreeVariability(inputs):
-	dog, tre_file, var_file, logObject = inputs
-	try:
-		t = Tree(tre_file)
-
-		sample_leafs = defaultdict(list)
-		for n in t.traverse('postorder'):
-			if n.is_leaf(): 
-				name = n.name
-				sample = name.split('|')[0]
-				sample_leafs[sample].append(name) 
-
-		min_svs_dists = []
-		for i, s1 in enumerate(sorted(sample_leafs)):
-			for j, s2 in enumerate(sorted(sample_leafs)):
-				if i >= j: continue
-				min_s1_s2_dist = 100000.0
-				for l1 in sample_leafs[s1]:
-					for l2 in sample_leafs[s2]:
-						dist = t.get_distance(l1, l2)
-						if min_s1_s2_dist > dist:
-							min_s1_s2_dist = dist
-				min_svs_dists.append(min_s1_s2_dist)
-
-		median_svs_dist = 'NA'
-		if len(min_svs_dists) >= 1:
-			median_svs_dist = statistics.median(min_svs_dists)
-		outf = open(var_file, 'w')
-		outf.write(dog + '\t' + str(median_svs_dist) + '\n')
-		outf.close()
-
-	except:
 		msg = 'Issue determining median sequence divergence from phylogeny for unsplit DOG %s' % dog
 		sys.stderr.write(msg + '\n')
 		sys.stderr.write(traceback.format_exc() + '\n')
 		logObject.error(msg)
 
-def resolveOrthogroupsUsingPhylogeny(orthofinder_fasta_dir, orthofinder_tsv_file, orthofinder_tsv_singletons_file, resdog_dir, result_file, logObject, use_super5=True, exhaustive_rooting=False, exhaustive_assessment=False, fixation_index_cutoff=0.05, rooting_seeds=100, trimal_options='-gt 0.9', threads=1):
+def resolveOrthogroupsUsingPhylogenetics(orthofinder_fasta_dir, orthofinder_tsv_file, orthofinder_tsv_singletons_file, resdog_dir, result_file, logObject, use_super5=True, exhaustive_rooting=False, skip_merge_back_flag=False, fixation_index_cutoff=0.25, rooting_seeds=100, trimal_options='-gt 0.9', threads=1):
 	try:
 		msa_dir = resdog_dir + 'Protein_MSAs/'
 		trim_dir = resdog_dir + 'Protein_MSAs_Trimmed/'
 		tre_dir = resdog_dir + 'Protein_Trees/'
-		dog_var_dir = resdog_dir + 'Unsplit_DOG_Variabilites/'
 		spl_full_dir = resdog_dir + 'Split_Protein_Listings/'
-		svs_dir = resdog_dir + 'Sample_to_Sample_SingleCopy_Cutoffs/'
-		setupReadyDirectory([msa_dir, trim_dir, tre_dir, dog_var_dir, spl_full_dir, svs_dir])
+		setupReadyDirectory([msa_dir, trim_dir, tre_dir, spl_full_dir])
 
 		muscle_cmds = []
 		trimal_cmds = []
@@ -1051,15 +834,12 @@ def resolveOrthogroupsUsingPhylogeny(orthofinder_fasta_dir, orthofinder_tsv_file
 		p.close()
 
 		fasttree_cmds = []
-		tre_process = []
-		global dog_trim_msa_sites
 		trim_msa_dogs = set([])
 		for f in os.listdir(orthofinder_fasta_dir):
 			dog = '.'.join(f.split('.')[:-1])
 			msa_file = msa_dir + dog + '.msa.faa'
 			trim_file = trim_dir + dog + '.msa.trimmed.faa'
 			tre_file = tre_dir + dog + '.tre'
-			dog_var_file = dog_var_dir + dog + '.txt'
 		
 			trim_num_sites = 0
 			if os.path.isfile(trim_file):
@@ -1068,11 +848,9 @@ def resolveOrthogroupsUsingPhylogeny(orthofinder_fasta_dir, orthofinder_tsv_file
 						if i == 0:
 							trim_num_sites = len(str(rec.seq))
 			
-			dog_trim_msa_sites[dog] = trim_num_sites
 			if trim_num_sites >= 10:
 				tre_cmd = ['fasttree', '-out', tre_file, trim_file, logObject]
 				fasttree_cmds.append(tre_cmd)
-				tre_process.append([dog, tre_file, dog_var_file, logObject])
 				trim_msa_dogs.add(dog)
 			else:
 				tre_cmd = ['fasttree', '-out', tre_file, msa_file, logObject]
@@ -1086,38 +864,6 @@ def resolveOrthogroupsUsingPhylogeny(orthofinder_fasta_dir, orthofinder_tsv_file
 			pass
 		p.close()
 
-		msg = 'Processing phylogenies for variabilities.'
-		sys.stderr.write(msg + '\n')
-		logObject.info(msg)
-		p = multiprocessing.Pool(threads)
-		for _ in tqdm.tqdm(p.imap_unordered(processTreeVariability, tre_process), total=len(tre_process)):
-			pass
-		p.close()
-
-		concat_tv_file = resdog_dir + 'DOG_Variability.txt' 
-		os.system('find %s -maxdepth 1 -type f | xargs cat >> %s' % (dog_var_dir, concat_tv_file))
-
-		all_var_scores = []
-		with open(concat_tv_file) as octf:
-			for line in octf:
-				line = line.strip()
-				dog, var_score = line.split('\t')
-				if var_score != 'NA':
-					var_score = float(var_score)
-					all_var_scores.append(var_score)
-		
-		median_var_score = statistics.median(all_var_scores)
-
-		global dog_variability_ratio
-		with open(concat_tv_file) as octf:
-			for line in octf:
-				line = line.strip()
-				dog, var_score = line.split('\t')
-				if var_score != 'NA':
-					var_score = float(var_score)
-					var_score_ratio = var_score/median_var_score
-					dog_variability_ratio[dog] = var_score_ratio				
-
 		samples = []
 		with open(orthofinder_tsv_file) as otf:
 			for i, line in enumerate(otf):
@@ -1126,64 +872,27 @@ def resolveOrthogroupsUsingPhylogeny(orthofinder_fasta_dir, orthofinder_tsv_file
 				if i == 0: 
 					samples = ['.ccds'.join(x.split('.ccds')[:-1]) for x in ls[1:]]
 		
-		svs_inputs = []
-		for i, s1 in enumerate(samples):
-			for j, s2 in enumerate(samples):
-				if i >= j: continue
-				outf = svs_dir + s1 + '_' + s2 + '.txt'
-				svs_inputs.append([s1, s2, tre_dir, outf, logObject]) 
-
-		"""
-		msg = 'Determining median and MAD values between samples.'
-		sys.stderr.write(msg + '\n')
-		logObject.info(msg)
-		p = multiprocessing.Pool(threads)
-		for _ in tqdm.tqdm(p.imap_unordered(determineSampleToSampleDists, svs_inputs), total=len(svs_inputs)):
-			pass
-		p.close()
-
-		concat_svs_file = resdog_dir + 'Sample_to_Sample_SingleCopy_Cutoffs.txt' 
-		os.system('find %s -maxdepth 1 -type f | xargs cat >> %s' % (svs_dir, concat_svs_file))
-
-		global svs_cutoffs
-		with open(concat_svs_file) as ocsf:
-			for line in ocsf:
-				line = line.strip()
-				s1, s2, sc, mc, lc = line.split('\t')
-				if sc != "NA":
-					svs_cutoffs[s1][s2]['short'] = float(sc)
-					svs_cutoffs[s2][s1]['short'] = float(sc)
-				if mc != "NA":
-					svs_cutoffs[s1][s2]['medium'] = float(mc)
-					svs_cutoffs[s2][s1]['medium'] = float(mc)
-				if lc != "NA":
-					svs_cutoffs[s1][s2]['long'] = float(lc)
-					svs_cutoffs[s2][s1]['long'] = float(lc)
-		"""
-							
-		split_inputs_full_msa = []
-		#split_inputs_trim_msa = []
+		split_inputs = []
 		for f in os.listdir(tre_dir):
 			dog = '.tre'.join(f.split('.tre')[:-1])
 			tre_file = tre_dir + f
 			spl_full_file = spl_full_dir + dog + '.txt'
-			# fallback method for dogs where trimmed alignment is very short (< 10aa long)
-			split_inputs_full_msa.append([dog, tre_file, spl_full_file, exhaustive_assessment, exhaustive_rooting, rooting_seeds, fixation_index_cutoff, logObject])
-			#if dog in trim_msa_dogs:
-			#	# primary method
-			#	tre_file = tre_dir + f
-			#	spl_trim_file = spl_trim_dir + dog + '.txt'
-			#	split_inputs_trim_msa.append([dog, tre_file, spl_trim_file, unexpected_cutoff, exhaustive_rooting, logObject])
+			t = Tree(tre_file)
+			if len(t.get_leaves()) < 500:
+				split_inputs.append([dog, tre_file, spl_full_file, skip_merge_back_flag, rooting_seeds, fixation_index_cutoff, 1, logObject])
+			else:
+				global tree_obj
+				tree_obj = Tree(tre_file)
+				splitDOGs([dog, tre_file, spl_full_file, skip_merge_back_flag, rooting_seeds, fixation_index_cutoff, threads, logObject])
+				tree_obj = None
 
+		msg = 'Using phylogenetics to split coarse domain resolution ortholog groups.'
+		sys.stderr.write(msg + '\n')
+		logObject.info(msg)
 		p = multiprocessing.Pool(threads)
-		for _ in tqdm.tqdm(p.imap_unordered(splitDOGs, split_inputs_full_msa), total=len(split_inputs_full_msa)):
+		for _ in tqdm.tqdm(p.imap_unordered(splitDOGs, split_inputs), total=len(split_inputs)):
 			pass
 		p.close()
-
-		#p = multiprocessing.Pool(threads)
-		#for _ in tqdm.tqdm(p.imap_unordered(splitDOGsBL, split_inputs_trim_msa), total=len(split_inputs_trim_msa)):
-		#	pass
-		#p.close()
 
 		outf_handle = open(result_file, 'w')
 		samples = []
@@ -1196,8 +905,6 @@ def resolveOrthogroupsUsingPhylogeny(orthofinder_fasta_dir, orthofinder_tsv_file
 					outf_handle.write('OG/Sample\t' + '\t'.join(samples) + '\n')
 				else:
 					dog = ls[0]
-					#dog_spl_file = spl_trim_dir + dog + '.txt'
-					#if not os.path.isfile(dog_spl_file):
 					dog_spl_file = spl_full_dir + dog + '.txt'
 					if os.path.isfile(dog_spl_file):						
 						cluster_prots = defaultdict(set)
@@ -1315,7 +1022,7 @@ def multiProcess(input):
 	********************************************************************************************************************
 	Parameters:
 	- input: A list corresponding to a command to run with the last item in the list corresponding to a logging object
-	         for the function.
+			 for the function.
 	********************************************************************************************************************
 	"""
 	input_cmd = input[:-1]
@@ -1500,7 +1207,7 @@ def processGenomesAsGenbanks(sample_genomes, gp_dir, logObject, threads=1, locus
 	********************************************************************************************************************
 	Parameters:
 	- sample_genomes: A dictionary mapping sample identifiers to the path of their genomes in GenBank format with CDS
-	                  features available.
+					  features available.
 	- proteomes_directory: Directory where final proteome files (in FASTA format) for target genomes will be saved.
 	- genbanks_directory: Directory where final GenBank files for target genomes will be saved.
 	- gene_name_mapping_outdir: Directory where mapping files for original locus tags to new locus tags will be saved.
@@ -1816,7 +1523,7 @@ def determineOrthologGroupContexts(bofasa_prep_dir, og_context_info_file, surrou
 
 		og_context_info_handle = open(og_context_info_file, 'w')
 		og_context_info_handle.write('\t'.join(['OG', 'Median OG length (bp)', 'Proportion contexts near scaffold edge', 'Number of genomes with OG', 
-										        'Number of protein in OG', 'Context conservation score', 'Context conservation score - complete contexts', 
+												'Number of protein in OG', 'Context conservation score', 'Context conservation score - complete contexts', 
 												'Context entropy score', 'Context entropy score - complete contexts', 'Number of distinct neighbor OGs', 
 												'Number of distinct OGs from complete contexts', 'Avg. number of distinct neighbor OGs', 
 												'Avg. number of distinct neighbor OGs from complete contexts', 
@@ -1875,7 +1582,7 @@ def determineOrthologGroupContexts(bofasa_prep_dir, og_context_info_file, surrou
 				phage_per = 'NA'
 					
 			og_context_info_handle.write('\t'.join([str(x) for x in [og, round(median_length,2), prop_nse, num_samples, num_contexts, context_var_score, 
-								         context_var_score_complete, context_entropy, context_entropy_complete, total_nog, total_nog_complete,
+										 context_var_score_complete, context_entropy, context_entropy_complete, total_nog, total_nog_complete,
 										 avg_nog, avg_nog_complete, plasmid_per, phage_per, ise_per, '; '.join(og_proteins[og]), '; '.join(og_contexts[og])]]) + '\n')
 		og_context_info_handle.close()
 			
@@ -2256,7 +1963,7 @@ def createFinalReport(bofasa_prep_dir, og_context_info_file, final_result_file, 
 		header_format = workbook.add_format({'bold': True, 'text_wrap': True, 'valign': 'top', 'fg_color': '#FFFFFF', 'border': 1})
 
 		numeric_columns = set(['Median OG length (bp)', 'Proportion contexts near scaffold edge', 'Number of genomes with OG', 
-						       'Number of protein in OG', 'Context conservation score', 'Context conservation score - complete contexts', 
+							   'Number of protein in OG', 'Context conservation score', 'Context conservation score - complete contexts', 
 							   'Context entropy score', 'Context entropy score - complete contexts', 'Number of distinct neighbor OGs', 
 							   'Number of distinct OGs from complete contexts', 'Avg. number of distinct neighbor OGs', 
 							   'Avg. number of distinct neighbor OGs from complete contexts', 
@@ -2544,7 +2251,7 @@ def determinePhagesAndPlasmids(sample_wgs, sample_beds, genomad_dir, phage_prote
 			input_genome = sample_wgs[sample]
 			genomad_results = genomad_dir + sample + '/'
 			genomad_cmd = ['genomad', 'end-to-end', '--cleanup', '--threads', str(threads), '--splits', 
-				 	       str(genome_splits), input_genome, genomad_results, genomad_db_dir]
+				 		   str(genome_splits), input_genome, genomad_results, genomad_db_dir]
 			prophage_coords_tsv = None
 			plasmid_coords_tsv = None
 			try:
@@ -2625,7 +2332,7 @@ def annotateIsFinder(sample_proteomes, annot_dir, isfinder_protein_listing_file,
 	- sample_proteomes: Dictionary mapping sample names (keys) to proteome file paths (values).
 	- annot_dir: Directory where to store DIAMOND BLASTp results.
 	- isfinder_protein_listing_file: Final resulting file with information of which proteins exhibit homology to IS 
-	                                 elements.
+									 elements.
 	- logObject: A logging object.
 	- threads: The number of threads to use.
 	- max_annotation_evalue: The maximum e-value to consider proteins as homologous to transposons.
@@ -2706,16 +2413,16 @@ def annotateIsFinder(sample_proteomes, annot_dir, isfinder_protein_listing_file,
 		sys.exit(1)
 
 def split_by_idx(S, list_of_indices):
-        """
-        Function taken from https://stackoverflow.com/questions/10851445/splitting-a-string-by-list-of-indices
-        """
-        left, right = 0, list_of_indices[0]
-        yield S[left:right]
-        left = right
-        for right in list_of_indices[1:]:
-                yield S[left:right]
-                left = right
-        yield S[left:]
+		"""
+		Function taken from https://stackoverflow.com/questions/10851445/splitting-a-string-by-list-of-indices
+		"""
+		left, right = 0, list_of_indices[0]
+		yield S[left:right]
+		left = right
+		for right in list_of_indices[1:]:
+				yield S[left:right]
+				left = right
+		yield S[left:]
 
 def createChoppedProteomes(inputs):
 	"""
@@ -2730,7 +2437,7 @@ def createChoppedProteomes(inputs):
 		- pfam_db_file: The Pfam HMM DB file.
 		- pfam_z: The Pfam record count - for accurate E-value estimation.
 		- minimal_length: The minimum length in amino acids for a domain matching or intra-domain region to be kept and
-	                      tagged as a chopped CDS feature [Default is 20].
+						  tagged as a chopped CDS feature [Default is 20].
 		- logObject: A logging object.
 		- threads: The number of threads to use [Default is 1].
 	********************************************************************************************************************
@@ -2830,7 +2537,7 @@ def annotateAndSplitProteinsUsingPfam(sample_proteomes, split_proteins_dir, doma
 	- domain_coord_info_file: Resulting domain/inter-domain information file.
 	- logObject: A logging object.
 	- minimal_length: The minimum length in amino acids for a domain matching or intra-domain region to be kept and
-	                  tagged as a chopped CDS feature
+					  tagged as a chopped CDS feature
 	- threads: The number of threads to use [Default is 1].
 	********************************************************************************************************************
 	Returns:
