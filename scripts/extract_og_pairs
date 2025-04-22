@@ -50,8 +50,7 @@ def create_parser():
 	Affiliation: University of Wisconsin - Madsion, McMaster University								  
 								  
     extract_og_pairs: a simple script to list pairs of proteins in the 
-    same ortholog group for method comparison. Takes in the results 
-    folder for the program and outputs.
+    same ortholog group for method comparison. 
 
     Options for software supported include:
     ===================================================================
@@ -296,7 +295,6 @@ def extract_og_pairs():
 		og_lts = defaultdict(set)
 		with open(result_file) as orf:
 			for i, line in enumerate(orf):
-				if i == 0: continue
 				line = line.rstrip('\n')
 				lt, g, og = line.split('\t')
 				og_lts[og].add(lt)

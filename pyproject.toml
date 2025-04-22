@@ -12,6 +12,7 @@ build-backend = "setuptools.build_meta"
 script-files=["bin/bofasa", 
               "bin/bofasa_prep", 
               "scripts/extract_og_pairs",
+              "scripts/extract_scc_og_pairs",
               "scripts/compare_og_pairs",
               "scripts/determine_og_freqs",
               "scripts/setup_annotation_dbs.py",

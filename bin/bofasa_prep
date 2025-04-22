@@ -558,9 +558,10 @@ def prepare_input():
 	logObject.info(msg)
 
 	split_proteins_dir = outdir + 'Domain_and_Interdomain_FASTAs/'
+	domain_coords_dir = outdir + 'Domain_and_Interdomain_Coordinates/'
 	domain_coord_info_file = outdir + 'Sample_Domain_and_InterDomain_Information.txt'
-	util.setupReadyDirectory([split_proteins_dir])
-	sample_ccds_proteomes = util.annotateAndSplitProteinsUsingPfam(sample_proteomes, split_proteins_dir, domain_coord_info_file, logObject, minimal_length=min_length, threads=threads, skip_domain_splitting=skip_domain_splitting)
+	util.setupReadyDirectory([split_proteins_dir, domain_coords_dir])
+	sample_ccds_proteomes = util.annotateAndSplitProteinsUsingPfam(sample_proteomes, split_proteins_dir, domain_coords_dir, domain_coord_info_file, logObject, minimal_length=min_length, threads=threads, skip_domain_splitting=skip_domain_splitting)
 
 	# Step 4: Finalize setting up for final bofasa analysis 
 	msg = '--------------------\nStep 4\n--------------------\nNearly there, putting together final files.'
