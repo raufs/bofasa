@@ -130,7 +130,7 @@ def splitNJT(input):
 				line = line.strip()
 				all_prots.add(line)
 
-		all_dogs = set([])					
+		all_dogs = set([])
 		for p in all_prots:
 			for d in protein_dogs[p]:
 				all_dogs.add(d)
@@ -139,11 +139,11 @@ def splitNJT(input):
 		for p in all_prots:
 			for d in sorted(all_dogs):
 				prot_dog_vectors[p].append(protein_dogs[p][d])
-				
+
 		prot_dog_vectors_np = {}
 		for p in prot_dog_vectors:
 			prot_dog_vectors_np[p] = np.array(prot_dog_vectors[p])
-		
+
 		naming = {}
 		outf = open(cog_dist_file, 'w')
 		outf.write(str(len(prot_dog_vectors_np.keys())) + '\n')
@@ -159,10 +159,10 @@ def splitNJT(input):
 			name = str(p1i) + (' '*(10-len_id))
 			outf.write(name + ' '.join(p1_dist) + '\n')
 		outf.close()
-	
+
 		fastme_cmd = ['fastme', '-i', cog_dist_file, '-o', tre_file, '-T', str(threads)]
 		runCmd(fastme_cmd, logObject, check_files=[tre_file])
-		
+
 		t = Tree(tre_file)
 
 		samples_with_og = set([])
@@ -177,13 +177,11 @@ def splitNJT(input):
 		if len(leafs) < 3: return
 		if len(samples_with_og) == 1: return
 
-		R = t.get_midpoint_outgroup()		
-		#children = get_children(R)
-		#samples = set([x.split('|')[0] for x in children])
-		#if len(samples) >= 2:
+		R = t.get_midpoint_outgroup()
 		t.set_outgroup(R)
 		sp = recursive_splitting(t, samples_with_og, are_proteins=True)
-		sp_further_split = furtherSplitDisjointDOGPartitions(t, sp)
+		sp_refined = furtherSplitOutlierArtifactGroups(t, sp)
+		sp_further_split = furtherSplitDisjointDOGPartitions(t, sp_refined)
 		spl_outf = open(spl_file, 'w')
 		for spi in sp_further_split:
 			spl_outf.write(' '.join(sorted(spi)) + '\n')
@@ -196,7 +194,7 @@ def splitNJT(input):
 		logObject.error(msg)
 		sys.exit(1)
 
-def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logObject, dj=0.5, threads=1):
+def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logObject, dj=0.25, threads=1):
 	# Add description to this this function
 	"""
 	Description:
@@ -317,43 +315,47 @@ def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logO
 			logObject.error(e)
 			sys.exit(1)
 		
+		mcl_lists = []
+		with open(clusters_file) as ocf:
+			for line in ocf:
+				line = line.strip()
+				ls = line.split()
+				mcl_lists.append(sorted(ls))
+
 		protein_og_clusters = []
 		large_protein_og_clusters = []
 		paired_proteins = set([])
 		split_nj_trees_input = []
 		large_split_nj_trees_input = []
-		with open(clusters_file) as ocf:
-			for i, line in enumerate(ocf):
-				line = line.strip()
-				ls = line.split()
-				for p in ls: paired_proteins.add(p)
-				sample_og_counts = defaultdict(int)
+		for i, ls in enumerate(sorted(mcl_lists)):
+			for p in ls: paired_proteins.add(p)
+			sample_og_counts = defaultdict(int)
+			for p in ls:
+				s = p.split('|')[0]
+				sample_og_counts[s] += 1
+			og_counts = []
+			for s in sample_og_counts:
+				og_counts.append(sample_og_counts[s])
+			max_og_count = max(og_counts)
+			if max_og_count >= 2 and len(sample_og_counts) >= 2 and len(ls) >= 4:
+				og_uniq_id = 'CoarseOG_' + str(i) 
+				cog_list_file = p_clust_list_dir + og_uniq_id + '.txt'
+				cog_dist_file = p_dist_dir + og_uniq_id + '.phylip'
+				og_split_file = p_split_dir + og_uniq_id + '.txt'
+				og_tre_file = p_tre_dir + og_uniq_id + '.tre'
+				cl_handle = open(cog_list_file, 'w')
 				for p in ls:
-					s = p.split('|')[0]
-					sample_og_counts[s] += 1
-				og_counts = []
-				for s in sample_og_counts:
-					og_counts.append(sample_og_counts[s])
-				max_og_count = max(og_counts)
-				if max_og_count >= 2 and len(sample_og_counts) >= 2 and len(ls) >= 4:
-					og_uniq_id = 'CoarseOG_' + str(i) 
-					cog_list_file = p_clust_list_dir + og_uniq_id + '.txt'
-					cog_dist_file = p_dist_dir + og_uniq_id + '.phylip'
-					og_split_file = p_split_dir + og_uniq_id + '.txt'
-					og_tre_file = p_tre_dir + og_uniq_id + '.tre'
-					cl_handle = open(cog_list_file, 'w')
-					for p in ls:
-						cl_handle.write(p + '\n')
-					cl_handle.close()
-					if len(ls) > 400:
-						large_split_nj_trees_input.append([og_uniq_id, cog_list_file, cog_dist_file, og_tre_file, 
-												   		   og_split_file, logObject, threads])
-					else:
-						split_nj_trees_input.append([og_uniq_id, cog_list_file, cog_dist_file, og_tre_file, 
-													 og_split_file, logObject, 1])
-					large_protein_og_clusters.append(ls)
+					cl_handle.write(p + '\n')
+				cl_handle.close()
+				if len(ls) > 400:
+					large_split_nj_trees_input.append([og_uniq_id, cog_list_file, cog_dist_file, og_tre_file, 
+														og_split_file, logObject, threads])
 				else:
-					protein_og_clusters.append(ls)
+					split_nj_trees_input.append([og_uniq_id, cog_list_file, cog_dist_file, og_tre_file, 
+													og_split_file, logObject, 1])
+				large_protein_og_clusters.append(ls)
+			else:
+				protein_og_clusters.append(ls)
 
 		p = multiprocessing.Pool(1)
 		for _ in tqdm.tqdm(p.imap_unordered(splitNJT, large_split_nj_trees_input), total=len(large_split_nj_trees_input)):
@@ -388,7 +390,7 @@ def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logO
 			if not prot in paired_proteins:
 				protein_og_clusters.append([prot])
 
-		for i, c in enumerate(protein_og_clusters):
+		for i, c in enumerate(sorted(protein_og_clusters)):
 			samp_lts = defaultdict(list)
 			for p in c:
 				s = p.split('|')[0]
@@ -396,7 +398,7 @@ def determineProteinOrthogroup(dogs_file, protein_clustering_dir, ogs_file, logO
 			og_id = generate_og_name(i)
 			printlist = [og_id]
 			for s in samples:
-				printlist.append(', '.join(samp_lts[s]))
+				printlist.append(', '.join(sorted(samp_lts[s])))
 			outf_handle.write('\t'.join(printlist) + '\n')
 
 		outf_handle.close()
@@ -509,8 +511,136 @@ def recursive_splitting(intree, all_og_samples, are_proteins=False):
 		sys.stderr.write(traceback.format_exc() + '\n')
 		sys.exit(1)
 
+def furtherSplitOutlierArtifactGroups(rooted_t, sps):
+	"""
+	Further split ortholog groups that may contain small proteins or be the result
+	of outlier sequences being claded together after midpoint rooting of FastME tree.
+	"""	
+	try:
+		all_proteins = get_children(rooted_t)
+
+		updated_sp = []
+		for sp in sps:
+			singletons = set([])
+			for p1 in sorted(sp):
+				p1dogs = protein_dogs[p1]
+				max_jacc_internal = 0.0
+				max_jacc_external = 0.0
+				for p2 in sorted(sp):
+					if p1 == p2: continue
+					
+					p2dogs = protein_dogs[p2]
+
+					union_dogs = (set(p1dogs.keys())).union(set(p2dogs.keys()))
+
+					union_count = 0
+					intersect_count = 0
+					for d in union_dogs:
+						if d in largely_idr_dogs: continue
+						union_count += p1dogs[d] + p2dogs[d] - min([p1dogs[d], p2dogs[d]])
+						intersect_count += min([p1dogs[d], p2dogs[d]])
+
+					if union_count > 0:
+						jaccard_index = intersect_count/union_count
+						if jaccard_index > max_jacc_internal:
+							max_jacc_internal = jaccard_index
+
+				for p2 in sorted(all_proteins):
+					if p2 in sp: continue
+					p2dogs = protein_dogs[p2]
+
+					union_dogs = (set(p1dogs.keys())).union(set(p2dogs.keys()))
+
+					union_count = 0
+					intersect_count = 0
+					for d in union_dogs:
+						if d in largely_idr_dogs: continue
+						union_count += p1dogs[d] + p2dogs[d] - min([p1dogs[d], p2dogs[d]])
+						intersect_count += min([p1dogs[d], p2dogs[d]])
+
+					if union_count > 0:
+						jaccard_index = intersect_count/union_count
+						if jaccard_index > max_jacc_external:
+							max_jacc_external = jaccard_index
+	
+				if max_jacc_internal <= max_jacc_external:
+					singletons.add(p1)
+					updated_sp.append(set([p1]))
+			
+			remaining_sp = set([])
+			for p in sp:
+				if p in singletons: continue
+				remaining_sp.add(p)
+			
+			if len(remaining_sp) == 0: continue
+			updated_sp.append(remaining_sp)
+
+		return(updated_sp)
+	except:
+		msg = 'Issues refining domain ortholog groups based on phylogenetics.'
+		sys.stderr.write(msg + '\n')
+		sys.stderr.write(traceback.format_exc() + '\n')
+		sys.exit(1)
+
+def furtherSplitOutlierArtifactGroupBurstApproach(rooted_t, sps, dj=0.25, bt=0.5):
+	"""
+	Burst clades with very disconnected proteins that might just artificially be produced
+	by FastME into singletons.
+	"""	
+	try:
+		updated_sp = []
+		
+		for sp in sps:
+			total_comparisons = 0
+			meet_threshold = 0
+			for i, p1 in enumerate(sorted(sp)):
+				for j, p2 in enumerate(sorted(sp)):
+					if i >= j: continue
+					total_comparisons += 1
+
+					p1dogs = protein_dogs[p1]
+					p2dogs = protein_dogs[p2]
+					
+					intersect_dogs = (set(p1dogs.keys())).intersection(set(p2dogs.keys()))
+					union_dogs = (set(p1dogs.keys())).union(set(p2dogs.keys()))
+					sc_dogs = single_copy_dogs.intersection(intersect_dogs)
+
+					threshold = dj
+					if len(sc_dogs) >= 1:
+						for sd in sc_dogs:
+							sd_conservation = dog_conservation[sd]
+							updated_threshold = dj - (dj*sd_conservation)
+							if updated_threshold < threshold:
+								threshold = updated_threshold
+
+					union_count = 0
+					intersect_count = 0
+					for d in union_dogs:
+						if d in largely_idr_dogs: continue
+						union_count += p1dogs[d] + p2dogs[d] - min([p1dogs[d], p2dogs[d]])
+						intersect_count += min([p1dogs[d], p2dogs[d]])
+
+					if union_count > 0:
+						jaccard_index = intersect_count/union_count
+						if jaccard_index >= threshold:
+							meet_threshold += 1
+
+			if total_comparisons > 1 and ((total_comparisons-meet_threshold)/float(total_comparisons)) >= bt:
+				for p in sp:
+					updated_sp.append(set([p]))
+			else:
+				updated_sp.append(sp)
+
+		return(updated_sp)
+	except:
+		msg = 'Issues refining domain ortholog groups based on phylogenetics.'
+		sys.stderr.write(msg + '\n')
+		sys.stderr.write(traceback.format_exc() + '\n')
+		sys.exit(1)
+
 def furtherSplitDisjointDOGPartitions(rooted_t, sps):
 	"""
+	Function to further split disjoint domain ortholog groups based on the phylogenetic tree.
 	"""
 	try:
 		node_id = 1
@@ -1522,21 +1652,21 @@ def determineOrthologGroupContexts(bofasa_prep_dir, og_context_info_file, surrou
 					context_nogs_complete[og].append(len(context_ogs))
 
 		og_context_info_handle = open(og_context_info_file, 'w')
-		og_context_info_handle.write('\t'.join(['OG', 'Median OG length (bp)', 'Proportion contexts near scaffold edge', 'Number of genomes with OG', 
+		og_context_info_handle.write('\t'.join(['OG', 'Median OG length (bp)', 'Percentage contexts near scaffold edge', 'Number of genomes with OG', 
 												'Number of protein in OG', 'Context conservation score', 'Context conservation score - complete contexts', 
 												'Context entropy score', 'Context entropy score - complete contexts', 'Number of distinct neighbor OGs', 
 												'Number of distinct OGs from complete contexts', 'Avg. number of distinct neighbor OGs', 
 												'Avg. number of distinct neighbor OGs from complete contexts', 
-												'Proportion instances on plasmid (based on geNomad annotation)', 
-												'Proportion instances on phage (based on geNomad annotation)', 
-												'Proportion homologous to IS-elements (based on ISfinder database)', 'Instances', 'Contexts']) + '\n')
+												'Percentage instances on plasmid (based on geNomad annotation)', 
+												'Percentage instances on phage (based on geNomad annotation)', 
+												'Percentage homologous to IS-elements (based on ISfinder database)', 'Instances', 'Contexts']) + '\n')
 		for og in sorted(og_contexts):
 			median_length = og_gene_lengths[og][0]
 			if len(og_gene_lengths) > 1:
 				median_length = statistics.median(og_gene_lengths[og])
 			num_samples = len(og_samples[og])
 			num_contexts = len(og_contexts[og])
-			prop_nse = round(og_contexts_nses[og]/float(num_contexts),2)
+			nse_perc = round(100.0*(og_contexts_nses[og]/float(num_contexts)),2)
 			nog_freqs = []
 			total_nog = 0
 			nog_freqs_complete = []
@@ -1581,7 +1711,7 @@ def determineOrthologGroupContexts(bofasa_prep_dir, og_context_info_file, surrou
 				plasmid_per = 'NA'
 				phage_per = 'NA'
 					
-			og_context_info_handle.write('\t'.join([str(x) for x in [og, round(median_length,2), prop_nse, num_samples, num_contexts, context_var_score, 
+			og_context_info_handle.write('\t'.join([str(x) for x in [og, round(median_length,2), nse_perc, num_samples, num_contexts, context_var_score, 
 										 context_var_score_complete, context_entropy, context_entropy_complete, total_nog, total_nog_complete,
 										 avg_nog, avg_nog_complete, plasmid_per, phage_per, ise_per, '; '.join(og_proteins[og]), '; '.join(og_contexts[og])]]) + '\n')
 		og_context_info_handle.close()
@@ -1962,14 +2092,14 @@ def createFinalReport(bofasa_prep_dir, og_context_info_file, final_result_file, 
 		wrap_format = workbook.add_format({'text_wrap': True, 'valign': 'vcenter', 'align': 'center', 'border': 1})
 		header_format = workbook.add_format({'bold': True, 'text_wrap': True, 'valign': 'top', 'fg_color': '#FFFFFF', 'border': 1})
 
-		numeric_columns = set(['Median OG length (bp)', 'Proportion contexts near scaffold edge', 'Number of genomes with OG', 
+		numeric_columns = set(['Median OG length (bp)', 'Percentage contexts near scaffold edge', 'Number of genomes with OG', 
 							   'Number of protein in OG', 'Context conservation score', 'Context conservation score - complete contexts', 
 							   'Context entropy score', 'Context entropy score - complete contexts', 'Number of distinct neighbor OGs', 
 							   'Number of distinct OGs from complete contexts', 'Avg. number of distinct neighbor OGs', 
 							   'Avg. number of distinct neighbor OGs from complete contexts', 
-							   'Proportion instances on plasmid (based on geNomad annotation)', 
-							   'Proportion instances on phage (based on geNomad annotation)', 
-							   'Proportion homologous to IS-elements (based on ISfinder database)'])
+							   'Percentage instances on plasmid (based on geNomad annotation)', 
+							   'Percentage instances on phage (based on geNomad annotation)', 
+							   'Percentage homologous to IS-elements (based on ISfinder database)'])
 
 		warn_format = workbook.add_format({'bg_color': '#bf241f', 'bold': True, 'font_color': '#FFFFFF'})
 		na_format = workbook.add_format({'font_color': '#a6a6a6', 'bg_color': '#FFFFFF', 'italic': True})
@@ -1982,7 +2112,6 @@ def createFinalReport(bofasa_prep_dir, og_context_info_file, final_result_file, 
 		worksheet =  writer.sheets['bofasa Results']
 		worksheet.conditional_format('A2:BA' + str(num_rows), {'type': 'cell', 'criteria': '==', 'value': '"NA"', 'format': na_format})
 		worksheet.conditional_format('A1:BA1', {'type': 'cell', 'criteria': '!=', 'value': 'NA', 'format': header_format})
-
 
 		max_values = defaultdict(lambda: 0.0)
 		with open(og_context_info_file) as ocif:
@@ -2018,7 +2147,7 @@ def createFinalReport(bofasa_prep_dir, og_context_info_file, final_result_file, 
 		# median OG length
 		worksheet.conditional_format('B2:B' + str(num_rows), {'type': '2_color_scale', 'min_color': "#a9cafc", 'max_color': "#736991", "min_value": 0, "max_value": 2500, 'min_type': 'num', 'max_type': 'num'})
 
-		# proportion instances near scaffold edge
+		# percentage instances near scaffold edge
 		worksheet.conditional_format('C2:C' + str(num_rows), {'type': '2_color_scale', 'min_color': "#ffffff", 'max_color': "#ed9393", "min_value": 0.0, "max_value": 1.0, 'min_type': 'num', 'max_type': 'num'})
 
 		# num genomes with OG
@@ -2040,13 +2169,13 @@ def createFinalReport(bofasa_prep_dir, og_context_info_file, final_result_file, 
 		worksheet.conditional_format('I2:I' + str(num_rows), {'type': '2_color_scale', 'min_color': "#b3e3d6", 'max_color': "#6aa192", "min_value": 0.0, "max_value": max_values['context_ent_score_comp'], 'min_type': 'num', 'max_type': 'num'})
 
 		if genomad_flag:
-			# proportion on plasmid
+			# percentage on plasmid
 			worksheet.conditional_format('N2:N' + str(num_rows), {'type': '2_color_scale', 'min_color': "#ffffff", 'max_color': "#ed9393", "min_value": 0.0, "max_value": 1.0, 'min_type': 'num', 'max_type': 'num'})
 			
-			# proportion on phage
+			# percentage on phage
 			worksheet.conditional_format('O2:O' + str(num_rows), {'type': '2_color_scale', 'min_color': "#ffffff", 'max_color': "#ed9393", "min_value": 0.0, "max_value": 1.0, 'min_type': 'num', 'max_type': 'num'})
 
-		# proportion homologous to IS-elements
+		# percentage homologous to IS-elements
 		worksheet.conditional_format('P2:P' + str(num_rows), {'type': '2_color_scale', 'min_color': "#ffffff", 'max_color': "#ed9393", "min_value": 0.0, "max_value": 1.0, 'min_type': 'num', 'max_type': 'num'})
 
 		worksheet.autofilter('A1:BA' + str(num_rows))
