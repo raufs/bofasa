@@ -933,16 +933,16 @@ def resolveOrthogroupsUsingPhylogenetics(orthofinder_fasta_dir, orthofinder_tsv_
 			heavy_job = assess_job_intensity(in_faa)
 
 			if heavy_job:
-				msa_cmd = ['muscle', '-super5', in_faa, '-output', msa_file, '-threads', str(threads)]
+				msa_cmd = ['muscle', '-super5', in_faa, '-output', msa_file, '-threads', str(threads), '-perturb', '12345']
 				if not use_super5:
-					msa_cmd = ['muscle', '-align', in_faa, '-output', msa_file, '-threads', str(threads)]
+					msa_cmd = ['muscle', '-align', in_faa, '-output', msa_file, '-threads', str(threads), '-perturb', '12345']
 				trim_cmd = ['trimal', '-in', msa_file, '-out', trim_file, trimal_options, logObject]
 				trimal_cmds.append(trim_cmd)
 				runCmd(msa_cmd, logObject)
 			else:
-				msa_cmd = ['muscle', '-super5', in_faa, '-output', msa_file, '-threads', '1', logObject]
+				msa_cmd = ['muscle', '-super5', in_faa, '-output', msa_file, '-threads', '1', '-perturb', '12345', logObject]
 				if not use_super5:
-					msa_cmd = ['muscle', '-align', in_faa, '-output', msa_file, '-threads', '1', logObject]
+					msa_cmd = ['muscle', '-align', in_faa, '-output', msa_file, '-threads', '1', '-perturb', '12345', logObject]
 				trim_cmd = ['trimal', '-in', msa_file, '-out', trim_file, trimal_options, logObject]
 				trimal_cmds.append(trim_cmd)
 				muscle_cmds.append(msa_cmd)
@@ -1852,14 +1852,14 @@ def createProteinAlignments(bofasa_prep_dir, resulting_ogs_file, prot_dir, prot_
 			heavy_job = assess_job_intensity(prot_file)
 
 			if heavy_job:
-				msa_cmd = ['muscle', '-super5', prot_file, '-output', prot_algn_file, '-threads', str(threads)]
+				msa_cmd = ['muscle', '-super5', prot_file, '-output', prot_algn_file, '-threads', str(threads), '-perturb', '12345']
 				if not use_super5:
-					msa_cmd = ['muscle', '-align', prot_file, '-output', prot_algn_file, '-threads', str(threads)]
+					msa_cmd = ['muscle', '-align', prot_file, '-output', prot_algn_file, '-threads', str(threads), '-perturb', '12345']
 				runCmd(msa_cmd, logObject)
 			else:
-				msa_cmd = ['muscle', '-super5', prot_file, '-output', prot_algn_file, '-threads', '1', logObject]
+				msa_cmd = ['muscle', '-super5', prot_file, '-output', prot_algn_file, '-threads', '1', '-perturb', '12345', logObject]
 				if not use_super5:
-					msa_cmd = ['muscle', '-align', prot_file, '-output', prot_algn_file, '-threads', '1', logObject]
+					msa_cmd = ['muscle', '-align', prot_file, '-output', prot_algn_file, '-threads', '1', '-perturb', '12345', logObject]
 				msa_cmds.append(msa_cmd)
 
 		p = multiprocessing.Pool(threads)
@@ -2022,16 +2022,16 @@ def createNearSCCResolvedDomainProteinAlignments(bofasa_prep_dir, resulting_dogs
 			heavy_job = assess_job_intensity(prot_file)
 
 			if heavy_job:
-				msa_cmd = ['muscle', '-super5', prot_file, '-output', prot_algn_file, '-threads', str(threads)]
+				msa_cmd = ['muscle', '-super5', prot_file, '-output', prot_algn_file, '-threads', str(threads), '-perturb', '12345']
 				if not use_super5:
-					msa_cmd = ['muscle', '-align', prot_file, '-output', prot_algn_file, '-threads', str(threads)]
+					msa_cmd = ['muscle', '-align', prot_file, '-output', prot_algn_file, '-threads', str(threads), '-perturb', '12345']
 				runCmd(msa_cmd, logObject)
 				trimal_cmd = ['trimal', '-in', prot_algn_file, '-out', prot_algn_trim_file, trimal_options, logObject]
 				msa_trim_cmds.append(trimal_cmd)
 			else:
-				msa_cmd = ['muscle', '-super5', prot_file, '-output', prot_algn_file, '-threads', '1']
+				msa_cmd = ['muscle', '-super5', prot_file, '-output', prot_algn_file, '-threads', '1', '-perturb', '12345']
 				if not use_super5:
-					msa_cmd = ['muscle', '-align', prot_file, '-output', prot_algn_file, '-threads', '1']
+					msa_cmd = ['muscle', '-align', prot_file, '-output', prot_algn_file, '-threads', '1', '-perturb', '12345']
 				trimal_cmd = ['trimal', '-in', prot_algn_file, '-out', prot_algn_trim_file, trimal_options, logObject]
 				msa_trim_cmd = msa_cmd + [';'] + trimal_cmd 
 				msa_trim_cmds.append(msa_trim_cmd)
