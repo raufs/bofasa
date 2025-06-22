@@ -1,6 +1,6 @@
 #!/workspace/local/rauf/bofasa/conda_env/bin/python3.11
 
-### Program: extract_og_pairs
+### Program: print_og_itol_matrix
 ### Author: Rauf Salamzade
 ### Kalan Lab
 ### UW Madison & McMaster University
@@ -45,7 +45,7 @@ from rich_argparse import RawTextRichHelpFormatter
 def create_parser():
     """ Parse arguments """
     parser = argparse.ArgumentParser(description="""
-    Program: extract_og_pairs
+    Program: print_og_itol_matrix
     Authors: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan 
     Affiliation: University of Wisconsin - Madsion, McMaster University                               
                                   

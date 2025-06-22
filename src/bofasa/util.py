@@ -915,7 +915,7 @@ def splitDOGs(inputs):
 		sys.stderr.write(traceback.format_exc() + '\n')
 		logObject.error(msg)
 
-def resolveOrthogroupsUsingPhylogenetics(orthofinder_fasta_dir, orthofinder_tsv_file, orthofinder_tsv_singletons_file, resdog_dir, result_file, logObject, use_super5=True, exhaustive_rooting=False, skip_merge_back_flag=False, fixation_index_cutoff=0.25, rooting_seeds=100, trimal_options='-gt 0.9', threads=1):
+def resolveOrthogroupsUsingPhylogenetics(orthofinder_fasta_dir, orthofinder_tsv_file, orthofinder_tsv_singletons_file, resdog_dir, result_file, logObject, use_super5=True, exhaustive_rooting=False, skip_merge_back_flag=False, fixation_index_cutoff=0.25, rooting_seeds=100, trimal_options='-strict -keepseqs', threads=1):
 	try:
 		msa_dir = resdog_dir + 'Protein_MSAs/'
 		trim_dir = resdog_dir + 'Protein_MSAs_Trimmed/'
@@ -1936,7 +1936,7 @@ def concatenateConsensusAlignment(og_cons_dir, concatenated_consensus_seqs_file,
 def createNearSCCResolvedDomainProteinAlignments(bofasa_prep_dir, resulting_dogs_file, rdog_seqs_dir, 
 												 rdog_algn_dir, rdog_trim_dir, merged_core_genome_file, 
 												 logObject, use_super5=True, near_scc_prop=0.80, threads=1, 
-												 trimal_options='-strict', allow_mge=False):
+												 trimal_options='-strict -keepseqs', allow_mge=False):
 	try:
 		isfinder_file = bofasa_prep_dir + 'Sample_IS_Element_Proteins.txt'
 		plasmid_file = bofasa_prep_dir + 'Sample_Plasmid_Proteins.txt'
@@ -2293,42 +2293,6 @@ def loadTableInPandaDataFrame(input_file, numeric_columns, cut_last_columns=None
 		sys.stderr.write(traceback.format_exc())
 		sys.exit(1)
 	return panda_df
-
-
-def trimAlignments(prot_algn_dir, codo_algn_dir, prot_algn_trim_dir, codo_algn_trim_dir, logObject, threads=1):
-	"""
-	Description:
-	This function trims protein and codon alignments using TrimAl.
-	*******************************************************************************************************************
-	Parameters:
-	- prot_algn_dir: The directory containing the protein alignments.
-	- codo_algn_dir: The directory containing the codon alignments.
-	- prot_algn_trim_dir: The directory where the trimmed protein alignments will be saved.
-	- codo_algn_trim_dir: The directory where the trimmed codon alignments will be saved.
-	- logObject: A logging object.
-	- threads: The number of threads to use for trimming the alignments.
-	*******************************************************************************************************************
-	"""
-	try:
-		trim_cmds = []
-		for paf in os.listdir(prot_algn_dir):
-			prefix = '.msa.faa'.join(paf.split('.msa.faa')[:-1])
-			prot_algn_file = prot_algn_dir + paf
-			prot_algn_trim_file = prot_algn_trim_dir + paf
-			codo_algn_file = codo_algn_dir + prefix + '.msa.fna'
-			codo_algn_trim_file = codo_algn_trim_dir + prefix + '.msa.fna'
-			trim_cmds.append(['trimal', '-in', prot_algn_file, '-out', prot_algn_trim_file, '-keepseqs', '-gt', '0.9', logObject])
-			trim_cmds.append(['trimal', '-in', codo_algn_file, '-out', codo_algn_trim_file, '-keepseqs', '-gt', '0.9', logObject])
-		p = multiprocessing.Pool(threads)
-		p.map(util.multiProcess, trim_cmds)
-		p.close()
-	except Exception as e:
-		sys.stderr.write('Issues with trimming protein/codon alignments.\n')
-		logObject.error('Issues with trimming protein/codon alignments.')
-		sys.stderr.write(str(e) + '\n')
-		sys.stderr.write(traceback.format_exc())
-		sys.exit(1)
-
 
 def determinePhagesAndPlasmids(sample_wgs, sample_beds, genomad_dir, phage_protein_listing_file, plasmid_protein_listing_file, logObject, threads=1, genome_splits=8):
 	"""
