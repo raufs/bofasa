@@ -55,6 +55,7 @@ def create_parser():
     Options for software supported include:
     ===================================================================
     - bofasa 
+	- panx
     - sonicparanoid
     - panaroo
     - scarap
@@ -78,7 +79,7 @@ def create_parser():
 	args = parser.parse_args()
 	return args
 
-valid_software = set(['bofasa', 'sonicparanoid', 'pirate', 'panaroo', 'scarap', 'orthofinder_hog', 'orthofinder_og'])
+valid_software = set(['bofasa', 'panx', 'sonicparanoid', 'pirate', 'panaroo', 'scarap', 'orthofinder_hog', 'orthofinder_og'])
 
 def extract_og_pairs():
 	"""
@@ -151,6 +152,29 @@ def extract_og_pairs():
 						if j >= k: continue
 						outf_handle.write('\t'.join(sorted([lt1, lt2])) + '\n')
 	
+	elif method == 'panx':
+		result_file = input_dir + '/allclusters_final.tsv'
+		try:
+			assert(os.path.isfile(result_file))
+		except:
+			msg = 'Error: Issue validating the existence of file: %s' % result_file
+			sys.stderr.write(msg)
+			sys.exit(1)
+
+		with open(result_file) as orf:
+			for i, line in enumerate(orf):
+				line = line.rstrip('\n')
+				ls = line.split('\t')
+				og_lts = set([])
+				for lts in ls:
+					for lt in lts.split(','):
+						if lt.split('|')[1].strip() == '': continue
+						og_lts.add(lt.strip())
+				for j, lt1 in enumerate(sorted(og_lts)):
+					for k, lt2 in enumerate(sorted(og_lts)):
+						if j >= k: continue
+						outf_handle.write('\t'.join(sorted([lt1, lt2])) + '\n')
+
 	elif method == 'sonicparanoid':
 		info_file = input_dir + 'last_run_info.txt'
 		try:

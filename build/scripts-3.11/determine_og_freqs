@@ -1,9 +1,8 @@
-#!/workspace/local/rauf/bofasa/conda_env/bin/python3.11
+#!python
 
-### Program: extract_scc_og_pairs
-### Author: Rauf Salamzade
-### Kalan Lab
-### UW Madison & McMaster University
+### Program: determine_og_freqs
+### Author: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan	
+### Affiliation: University of Wisconsin - Madison, McMaster University
 
 # BSD 3-Clause License
 #
@@ -41,22 +40,22 @@ import argparse
 from collections import defaultdict
 from bofasa import util
 from rich_argparse import RawTextRichHelpFormatter
+import statistics
 
 def create_parser():
 	""" Parse arguments """
 	parser = argparse.ArgumentParser(description="""
-	Program: extract_scc_og_pairs
+	Program: extract_og_pairs
 	Authors: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan 
 	Affiliation: University of Wisconsin - Madsion, McMaster University								  
 								  
     extract_og_pairs: a simple script to list pairs of proteins in the 
-    same ortholog group for method comparison. Only ortholog groups 
-	which are scc are regarded.
+    same ortholog group for method comparison. Takes in the results 
+    folder for the program and outputs.
 
     Options for software supported include:
     ===================================================================
     - bofasa 
-	- panx
     - sonicparanoid
     - panaroo
     - scarap
@@ -71,16 +70,15 @@ def create_parser():
 
 	parser.add_argument('-i', '--results-dir', help='Resulting directory produced by orthology prection software.', required=True)
 	parser.add_argument('-m', '--method', help='The name of the orthology prediction software - see help function for supported methods.', required=True)
+	parser.add_argument('-t', '--total-proteins', type=int, help='Total number of proteins in the input file. This is used to calculate the single copy core gene fraction.', required=True)
 	parser.add_argument('-o', '--output-file', help='Output file - default is standard output.', required=False, default=None)
-	parser.add_argument('-pi', '--pirate-input-dir', help='Input directory with GFFs for PIRATE - needed because PIRATE renames genes.', required=False, default=None)
-	parser.add_argument('-pgi', '--pirate-gff-identifier', help='The identifier for CDS feautres in GFFs in the input directory for PIRATE. [Default is "ID"]', required=False, default="ID")
 	parser.add_argument('-mm', '--max_memory', type=int, help='Uses resource module to set soft memory limit. Provide in Giga-bytes.\nGenerally memory shouldn\'t be a major concern unless working\nwith hundreds of large metagenomes. [currently\nexperimental; default is None].', default=None, required=False)
 	parser.add_argument('-v', '--version', action='store_true', help="Get version and exit.", required=False, default=False)
 
 	args = parser.parse_args()
 	return args
 
-valid_software = set(['bofasa', 'panx', 'sonicparanoid', 'pirate', 'panaroo', 'scarap', 'orthofinder_hog', 'orthofinder_og'])
+valid_software = set(['bofasa', 'sonicparanoid', 'pirate', 'panaroo', 'scarap', 'orthofinder_hog', 'orthofinder_og'])
 
 def extract_og_pairs():
 	"""
@@ -103,8 +101,7 @@ def extract_og_pairs():
 	outfile = myargs.output_file
 	method = myargs.method
 	max_memory = myargs.max_memory
-	pirate_input_dir = myargs.pirate_input_dir
-	pirate_gff_identifier = myargs.pirate_gff_identifier
+	total_input_proteins = myargs.total_proteins
 
 	"""
 	START WORKFLOW
@@ -138,56 +135,41 @@ def extract_og_pairs():
 			sys.stderr.write(msg)
 			sys.exit(1)
 
+		tot_samples = None
+		proteins_in_ogs = 0
 		with open(result_file) as orf:
 			for i, line in enumerate(orf):
 				if i == 0: continue
 				line = line.rstrip('\n')
 				ls = line.split('\t')
-				og_lts = set([])
-				scc_flag = True
+				og = ls[0]
+				og_samples = 0
+				tot_samples = 0
+				sc_flag = True
+				og_copy_counts = []
 				for lts in ls[1:]:
-					lts = lts.strip()
-					if lts == '' or ',' in lts:
-						scc_flag = False 
-					for lt in lts.split(','):
-						if lt.strip() == '': continue
-						og_lts.add(lt.strip())
-				if scc_flag:
-					outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
-
-	elif method == 'panx':
-		result_file = input_dir + '/allclusters_final.tsv'
-		try:
-			assert(os.path.isfile(result_file))
-		except:
-			msg = 'Error: Issue validating the existence of file: %s' % result_file
-			sys.stderr.write(msg)
-			sys.exit(1)
-	
-		gbk_dir = input_dir + '/input_GenBank/'
+					tot_samples += 1
+					if lts.strip() != '':
+						og_samples += 1
+					if ',' in lts:
+						sc_flag = False
+						og_copy_counts.append(len(lts.split(',')))
+					elif lts.strip() != '':
+						og_copy_counts.append(1)
+				tot_proteins = sum(og_copy_counts)
+				proteins_in_ogs +=  tot_proteins
+				median_proteins = statistics.median(og_copy_counts)
+				scc_flag = False
+				if sc_flag == True and og_samples/tot_samples == 1.0:
+					scc_flag = True
+				outf_handle.write(og + '\t' + str(tot_proteins) + '\t' + str(median_proteins) + '\t' +
+					              str(og_samples) + '\t' + str(tot_samples) + '\t' + str(sc_flag) + '\t' +
+								  str(scc_flag) + '\n')
 		
-		all_genomes = set([])
-		for f in os.listdir(gbk_dir):
-			genome = '.'.join(f.split('.')[:-1])
-			all_genomes.add(genome)
-
-		with open(result_file) as orf:
-			for i, line in enumerate(orf):
-				line = line.rstrip('\n')
-				ls = line.split('\t')
-				genome_counts = defaultdict(int)
-				og_lts = set([])
-				for lts in ls:
-					lts = lts.strip()
-					genome, lt = lts.split('|')
-					genome_counts[genome] += 1
-					og_lts.add(lt)
-
-				scc_flag = True
-				for g in all_genomes:
-					if genome_counts[g] != 1:
-						scc_flag = False
-				if scc_flag: outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
+		if proteins_in_ogs < total_input_proteins:
+			diff = total_input_proteins - proteins_in_ogs
+			for i in range(1, diff + 1):
+				outf_handle.write('SOG_%d\t1\t1\t1\t%d\tTrue\tFalse\n' % (i, tot_samples))
 
 	elif method == 'sonicparanoid':
 		info_file = input_dir + 'last_run_info.txt'
@@ -212,25 +194,41 @@ def extract_og_pairs():
 			msg = 'Error: Issue validating the existence of file: %s' % result_file
 			sys.stderr.write(msg)
 			sys.exit(1)
-		 
+		
+		tot_samples = None
+		proteins_in_ogs = 0
 		with open(result_file) as orf:
 			for i, line in enumerate(orf):
 				if i == 0: continue
 				line = line.rstrip('\n')
 				ls = line.split('\t')
-				og_lts = set([])
-				scc_flag = True
+				og = ls[0]
+				og_samples = 0
+				tot_samples = 0
+				sc_flag = True
+				og_copy_counts = []
 				for lts in ls[1:]:
-					lts = lts.strip()
-					if lts == '*' or ',' in lts:
-						scc_flag = False
-					if lts == '*': continue
-					for lt in lts.split(','):
-						if lt.strip() == '': continue
-						og_lts.add(lt.strip())
-				if scc_flag:
-					outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
-
+					tot_samples += 1
+					if lts.strip() != '*':
+						og_samples += 1
+					if ',' in lts:
+						sc_flag = False
+						og_copy_counts.append(len(lts.split(',')))
+					elif lts.strip() != '*':
+						og_copy_counts.append(1)
+				tot_proteins = sum(og_copy_counts)
+				proteins_in_ogs +=  tot_proteins
+				median_proteins = statistics.median(og_copy_counts)
+				scc_flag = False
+				if sc_flag == True and og_samples/tot_samples == 1.0:
+					scc_flag = True
+				outf_handle.write(og + '\t' + str(tot_proteins) + '\t' + str(median_proteins) + '\t' +
+					              str(og_samples) + '\t' + str(tot_samples) + '\t' + str(sc_flag) + '\t' +
+								  str(scc_flag) + '\n')
+		if proteins_in_ogs < total_input_proteins:
+			diff = total_input_proteins - proteins_in_ogs
+			for i in range(1, diff + 1):
+				outf_handle.write('SOG_%d\t1\t1\t1\t%d\tTrue\tFalse\n' % (i, tot_samples))
 
 	elif method == 'panaroo':
 		result_file = input_dir + 'gene_presence_absence.csv'
@@ -242,62 +240,43 @@ def extract_og_pairs():
 			sys.stderr.write(msg)
 			sys.exit(1)
 		 
+		proteins_in_ogs = 0 
+		tot_samples = None
 		with open(result_file) as orf:
 			for i, line in enumerate(orf):
 				if i == 0: continue
 				line = line.rstrip('\n')
 				ls = line.split(',')
-				og_lts = set([])
-				scc_flag = True
+				og = ls[0]
+				og_samples = 0
+				tot_samples = 0
+				sc_flag = True
+				og_copy_counts = []
 				for lts in ls[3:]:
-					lts = lts.strip()
-					if lts == '' or ';' in lts:
-						scc_flag = False
-					for lt in lts.split(';'):
-						if lt.strip() == '': continue
-						og_lts.add(lt)
-				if scc_flag:
-					outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
+					tot_samples += 1
+					if lts.strip() != '':
+						og_samples += 1
+					if ',' in lts:
+						sc_flag = False
+						og_copy_counts.append(len(lts.split(';')))
+					elif lts.strip() != '':
+						og_copy_counts.append(1)
+				tot_proteins = sum(og_copy_counts)
+				proteins_in_ogs +=  tot_proteins
+				median_proteins = statistics.median(og_copy_counts)
+				scc_flag = False
+				if sc_flag == True and og_samples/tot_samples == 1.0:
+					scc_flag = True
+				outf_handle.write(og + '\t' + str(tot_proteins) + '\t' + str(median_proteins) + '\t' +
+					              str(og_samples) + '\t' + str(tot_samples) + '\t' + str(sc_flag) + '\t' +
+								  str(scc_flag) + '\n')
 
-	elif method == 'pirate':	
-		try:
-			assert(os.path.isdir(pirate_input_dir))
-		except:
-			msg = 'PIRATE input directory with GFFs was not found!'
-			sys.stderr.write(msg + '\n')
-			sys.exit(1)
+		if proteins_in_ogs < total_input_proteins:
+			diff = total_input_proteins - proteins_in_ogs
+			for i in range(1, diff + 1):
+				outf_handle.write('SOG_%d\t1\t1\t1\t%d\tTrue\tFalse\n' % (i, tot_samples))
 
-		sample_ids_in_order = defaultdict(list)
-		for f in os.listdir(pirate_input_dir):
-			s = '_'.join(f.split('.')[:-1])
-			with open(pirate_input_dir + f) as ogff:
-				for line in ogff:
-					if line.startswith('#'): continue
-					line = line.strip()
-					ls = line.split('\t')
-					if len(ls) < 6: continue
-					if ls[2] != 'CDS': continue
-					gid = ls[-1].split(pirate_gff_identifier + '=')[1].split(';')[0]
-					sample_ids_in_order[s].append(gid)
-
-		g2l_file = input_dir + 'genome2loci.tab'		
-		try:
-			assert(os.path.isfile(g2l_file))
-		except:
-			msg = 'File not found %s' % g2l_file
-			sys.stderr.write(msg + '\n')
-			sys.exit(1)
-
-		gid_to_gname = {}
-		with open(g2l_file) as og2f:
-			for line in og2f:
-				line = line.strip()
-				ls = line.split()
-				s = ls[1]
-				gid = int(ls[0].split('_')[-1])-1
-				gname = sample_ids_in_order[s][gid]
-				gid_to_gname[ls[0]] = gname
-
+	elif method == 'pirate':
 		result_file = input_dir + 'PIRATE.gene_families.ordered.tsv'		
 		try:
 			assert(os.path.isfile(result_file))
@@ -306,28 +285,40 @@ def extract_og_pairs():
 			sys.stderr.write(msg + '\n')
 			sys.exit(1)
 
+		tot_samples = None
+		proteins_in_ogs = 0
 		with open(result_file) as orf:
 			for i, line in enumerate(orf):
 				if i == 0: continue
 				line = line.rstrip('\n')
 				ls = line.split('\t')
-				og_lts = set([])
-				scc_flag = True
+				og = ls[0]
+				og_samples = 0
+				tot_samples = 0
+				sc_flag = True
+				og_copy_counts = []
 				for lts in ls[22:]:
-					lts = lts.strip()
-					if lts == '' or ';' in lts:
-						scc_flag = False
-					for lt in lts.split(';'):
-						if lt.strip() == '': continue
-						if lt.startswith('('):
-							lt = lt[1:-1]
-							for slt in lt.split(':'):
-								og_lts.add(gid_to_gname[slt.strip()])
-						else:
-							og_lts.add(gid_to_gname[lt.strip()])
-				if scc_flag:
-					outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
+					tot_samples += 1
+					if lts.strip() != '':
+						og_samples += 1
+					if ',' in lts or ':' in lts:
+						sc_flag = False
+						og_copy_counts.append(len(lts.replace('(', '').replace(')', '').replace(':', ';').split(';')))
+					elif lts.strip() != '':
+						og_copy_counts.append(1)
+				tot_proteins = sum(og_copy_counts)
+				median_proteins = statistics.median(og_copy_counts)
+				scc_flag = False
+				if sc_flag == True and og_samples/tot_samples == 1.0:
+					scc_flag = True
+				outf_handle.write(og + '\t' + str(tot_proteins) + '\t' + str(median_proteins) + '\t' +
+					              str(og_samples) + '\t' + str(tot_samples) + '\t' + str(sc_flag) + '\t' +
+								  str(scc_flag) + '\n')
 
+		if proteins_in_ogs < total_input_proteins:
+			diff = total_input_proteins - proteins_in_ogs
+			for i in range(1, diff + 1):
+				outf_handle.write('SOG_%d\t1\t1\t1\t%d\tTrue\tFalse\n' % (i, tot_samples))
 
 	elif method == 'scarap':
 		result_file = input_dir + 'pangenome.tsv'		
@@ -338,31 +329,45 @@ def extract_og_pairs():
 			sys.stderr.write(msg + '\n')
 			sys.exit(1)
 
-		og_lts = defaultdict(set)
-		all_samples = set([])
-		og_sample_counts = defaultdict(lambda: defaultdict(int))
+		samples = set([])
+		og_sample_lts = defaultdict(lambda: defaultdict(set))
 		with open(result_file) as orf:
 			for i, line in enumerate(orf):
 				line = line.rstrip('\n')
 				lt, g, og = line.split('\t')
-				og_lts[og].add(lt)
-				og_sample_counts[og][g] += 1
-				all_samples.add(g)
-		
-		scc_ogs = set([])
-		for og in og_sample_counts:
-			scc_flag = True
-			for s in all_samples:
-				if og_sample_counts[og][s] != 1:
-					scc_flag = False
-			if scc_flag:
-				scc_ogs.add(og)
-				
-		for og in og_lts:
-			if og in scc_ogs:
-				outf_handle.write('\t'.join(sorted(og_lts[og])) + '\n')
-		
+				og_sample_lts[og][g].add(lt)
+				samples.add(g)
+	
+		tot_samples = len(samples)
+		proteins_in_ogs = 0
+		for og in og_sample_lts:
+			og_samples = 0
+			sc_flag = True
+			og_copy_counts = []
+			for s in og_sample_lts[og]:
+				og_samples += 1
+				samp_cc = len(og_sample_lts[og][s])
+				og_copy_counts.append(samp_cc)
+				if samp_cc > 1:
+					sc_flag = False
+
+			tot_proteins = sum(og_copy_counts)
+			proteins_in_ogs	+=  tot_proteins
+			median_proteins = statistics.median(og_copy_counts)
+			scc_flag = False
+			if sc_flag == True and og_samples/tot_samples == 1.0:
+				scc_flag = True
+			outf_handle.write(og + '\t' + str(tot_proteins) + '\t' + str(median_proteins) + '\t' +
+					              str(og_samples) + '\t' + str(tot_samples) + '\t' + str(sc_flag) + '\t' +
+								  str(scc_flag) + '\n')
+
+		if proteins_in_ogs < total_input_proteins:
+			diff = total_input_proteins - proteins_in_ogs
+			for i in range(1, diff + 1):
+				outf_handle.write('SOG_%d\t1\t1\t1\t%d\tTrue\tFalse\n' % (i, tot_samples))
+
 	elif method == 'orthofinder_og':
+
 		subdirs = []
 		for sd in os.listdir(input_dir):
 			subdirs.append(sd)
@@ -383,22 +388,41 @@ def extract_og_pairs():
 			sys.stderr.write(msg + '\n')
 			sys.exit(1)
 
+		tot_samples = None
+		proteins_in_ogs = 0
 		with open(result_file) as orf:
 			for i, line in enumerate(orf):
 				if i == 0: continue
 				line = line.rstrip('\n')
 				ls = line.split('\t')
-				og_lts = set([])
-				scc_flag = True
+				og = ls[0]
+				og_samples = 0
+				tot_samples = 0
+				sc_flag = True
+				og_copy_counts = []
 				for lts in ls[1:]:
-					lts = lts.strip()
-					if lts == '' or ',' in lts:
-						scc_flag = False
-					for lt in lts.split(','):
-						if lt.strip() == '': continue 
-						og_lts.add(lt.strip())
-				if scc_flag:
-					outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
+					tot_samples += 1
+					if lts.strip() != '':
+						og_samples += 1
+					if ',' in lts:
+						sc_flag = False
+						og_copy_counts.append(len(lts.split(',')))
+					elif lts.strip() != '':
+						og_copy_counts.append(1)
+				tot_proteins = sum(og_copy_counts)
+				proteins_in_ogs +=  tot_proteins
+				median_proteins = statistics.median(og_copy_counts)
+				scc_flag = False
+				if sc_flag == True and og_samples/tot_samples == 1.0:
+					scc_flag = True
+				outf_handle.write(og + '\t' + str(tot_proteins) + '\t' + str(median_proteins) + '\t' +
+					              str(og_samples) + '\t' + str(tot_samples) + '\t' + str(sc_flag) + '\t' +
+								  str(scc_flag) + '\n')
+		
+		if proteins_in_ogs < total_input_proteins:
+			diff = total_input_proteins - proteins_in_ogs
+			for i in range(1, diff + 1):
+				outf_handle.write('SOG_%d\t1\t1\t1\t%d\tTrue\tFalse\n' % (i, tot_samples))
 
 	elif method == 'orthofinder_hog':
 		
@@ -422,22 +446,41 @@ def extract_og_pairs():
 			sys.stderr.write(msg + '\n')
 			sys.exit(1)
 
+		tot_samples = None
+		proteins_in_ogs = 0
 		with open(result_file) as orf:
 			for i, line in enumerate(orf):
 				if i == 0: continue
 				line = line.rstrip('\n')
 				ls = line.split('\t')
-				og_lts = set([])
-				scc_flag = True
+				og = ls[0]
+				og_samples = 0
+				tot_samples = 0
+				sc_flag = True
+				og_copy_counts = []
 				for lts in ls[3:]:
-					lts = lts.strip()
-					if lts == '' or ',' in lts:
-						scc_flag = False
-					for lt in lts.split(','):
-						if lt.strip() == '': continue 
-						og_lts.add(lt.strip())
-				if scc_flag:
-					outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
+					tot_samples += 1
+					if lts.strip() != '':
+						og_samples += 1
+					if ',' in lts:
+						sc_flag = False
+						og_copy_counts.append(len(lts.split(',')))
+					elif lts.strip() != '':
+						og_copy_counts.append(1)
+				tot_proteins = sum(og_copy_counts)
+				proteins_in_ogs +=  tot_proteins
+				median_proteins = statistics.median(og_copy_counts)
+				scc_flag = False
+				if sc_flag == True and og_samples/tot_samples == 1.0:
+					scc_flag = True
+				outf_handle.write(og + '\t' + str(tot_proteins) + '\t' + str(median_proteins) + '\t' +
+					              str(og_samples) + '\t' + str(tot_samples) + '\t' + str(sc_flag) + '\t' +
+								  str(scc_flag) + '\n')
+		
+		if proteins_in_ogs < total_input_proteins:
+			diff = total_input_proteins - proteins_in_ogs
+			for i in range(1, diff + 1):
+				outf_handle.write('SOG_%d\t1\t1\t1\t%d\tTrue\tFalse\n' % (i, tot_samples))
 
 	if outfile != None:
 		outf_handle.close()

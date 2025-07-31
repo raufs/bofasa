@@ -1,6 +1,6 @@
-#!/workspace/local/rauf/bofasa/conda_env/bin/python3.11
+#!python
 
-### Program: extract_scc_og_pairs
+### Program: extract_og_pairs
 ### Author: Rauf Salamzade
 ### Kalan Lab
 ### UW Madison & McMaster University
@@ -45,13 +45,12 @@ from rich_argparse import RawTextRichHelpFormatter
 def create_parser():
 	""" Parse arguments """
 	parser = argparse.ArgumentParser(description="""
-	Program: extract_scc_og_pairs
+	Program: extract_og_pairs
 	Authors: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan 
 	Affiliation: University of Wisconsin - Madsion, McMaster University								  
 								  
     extract_og_pairs: a simple script to list pairs of proteins in the 
-    same ortholog group for method comparison. Only ortholog groups 
-	which are scc are regarded.
+    same ortholog group for method comparison. 
 
     Options for software supported include:
     ===================================================================
@@ -144,17 +143,15 @@ def extract_og_pairs():
 				line = line.rstrip('\n')
 				ls = line.split('\t')
 				og_lts = set([])
-				scc_flag = True
 				for lts in ls[1:]:
-					lts = lts.strip()
-					if lts == '' or ',' in lts:
-						scc_flag = False 
 					for lt in lts.split(','):
 						if lt.strip() == '': continue
 						og_lts.add(lt.strip())
-				if scc_flag:
-					outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
-
+				for j, lt1 in enumerate(sorted(og_lts)):
+					for k, lt2 in enumerate(sorted(og_lts)):
+						if j >= k: continue
+						outf_handle.write('\t'.join(sorted([lt1, lt2])) + '\n')
+	
 	elif method == 'panx':
 		result_file = input_dir + '/allclusters_final.tsv'
 		try:
@@ -163,31 +160,20 @@ def extract_og_pairs():
 			msg = 'Error: Issue validating the existence of file: %s' % result_file
 			sys.stderr.write(msg)
 			sys.exit(1)
-	
-		gbk_dir = input_dir + '/input_GenBank/'
-		
-		all_genomes = set([])
-		for f in os.listdir(gbk_dir):
-			genome = '.'.join(f.split('.')[:-1])
-			all_genomes.add(genome)
 
 		with open(result_file) as orf:
 			for i, line in enumerate(orf):
 				line = line.rstrip('\n')
 				ls = line.split('\t')
-				genome_counts = defaultdict(int)
 				og_lts = set([])
 				for lts in ls:
-					lts = lts.strip()
-					genome, lt = lts.split('|')
-					genome_counts[genome] += 1
-					og_lts.add(lt)
-
-				scc_flag = True
-				for g in all_genomes:
-					if genome_counts[g] != 1:
-						scc_flag = False
-				if scc_flag: outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
+					for lt in lts.split(','):
+						if lt.split('|')[1].strip() == '': continue
+						og_lts.add(lt.strip())
+				for j, lt1 in enumerate(sorted(og_lts)):
+					for k, lt2 in enumerate(sorted(og_lts)):
+						if j >= k: continue
+						outf_handle.write('\t'.join(sorted([lt1, lt2])) + '\n')
 
 	elif method == 'sonicparanoid':
 		info_file = input_dir + 'last_run_info.txt'
@@ -219,18 +205,15 @@ def extract_og_pairs():
 				line = line.rstrip('\n')
 				ls = line.split('\t')
 				og_lts = set([])
-				scc_flag = True
 				for lts in ls[1:]:
-					lts = lts.strip()
-					if lts == '*' or ',' in lts:
-						scc_flag = False
 					if lts == '*': continue
 					for lt in lts.split(','):
 						if lt.strip() == '': continue
 						og_lts.add(lt.strip())
-				if scc_flag:
-					outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
-
+				for j, lt1 in enumerate(sorted(og_lts)):
+					for k, lt2 in enumerate(sorted(og_lts)):
+						if j >= k: continue
+						outf_handle.write('\t'.join(sorted([lt1, lt2])) + '\n')
 
 	elif method == 'panaroo':
 		result_file = input_dir + 'gene_presence_absence.csv'
@@ -248,16 +231,14 @@ def extract_og_pairs():
 				line = line.rstrip('\n')
 				ls = line.split(',')
 				og_lts = set([])
-				scc_flag = True
 				for lts in ls[3:]:
-					lts = lts.strip()
-					if lts == '' or ';' in lts:
-						scc_flag = False
 					for lt in lts.split(';'):
 						if lt.strip() == '': continue
 						og_lts.add(lt)
-				if scc_flag:
-					outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
+				for j, lt1 in enumerate(sorted(og_lts)):
+					for k, lt2 in enumerate(sorted(og_lts)):
+						if j >= k: continue
+						outf_handle.write('\t'.join(sorted([lt1, lt2])) + '\n')
 
 	elif method == 'pirate':	
 		try:
@@ -312,11 +293,7 @@ def extract_og_pairs():
 				line = line.rstrip('\n')
 				ls = line.split('\t')
 				og_lts = set([])
-				scc_flag = True
 				for lts in ls[22:]:
-					lts = lts.strip()
-					if lts == '' or ';' in lts:
-						scc_flag = False
 					for lt in lts.split(';'):
 						if lt.strip() == '': continue
 						if lt.startswith('('):
@@ -325,9 +302,10 @@ def extract_og_pairs():
 								og_lts.add(gid_to_gname[slt.strip()])
 						else:
 							og_lts.add(gid_to_gname[lt.strip()])
-				if scc_flag:
-					outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
-
+				for j, lt1 in enumerate(sorted(og_lts)):
+					for k, lt2 in enumerate(sorted(og_lts)):
+						if j >= k: continue
+						outf_handle.write('\t'.join(sorted([lt1, lt2])) + '\n')
 
 	elif method == 'scarap':
 		result_file = input_dir + 'pangenome.tsv'		
@@ -339,30 +317,20 @@ def extract_og_pairs():
 			sys.exit(1)
 
 		og_lts = defaultdict(set)
-		all_samples = set([])
-		og_sample_counts = defaultdict(lambda: defaultdict(int))
 		with open(result_file) as orf:
 			for i, line in enumerate(orf):
 				line = line.rstrip('\n')
 				lt, g, og = line.split('\t')
 				og_lts[og].add(lt)
-				og_sample_counts[og][g] += 1
-				all_samples.add(g)
-		
-		scc_ogs = set([])
-		for og in og_sample_counts:
-			scc_flag = True
-			for s in all_samples:
-				if og_sample_counts[og][s] != 1:
-					scc_flag = False
-			if scc_flag:
-				scc_ogs.add(og)
 				
 		for og in og_lts:
-			if og in scc_ogs:
-				outf_handle.write('\t'.join(sorted(og_lts[og])) + '\n')
+			for j, lt1 in enumerate(sorted(og_lts[og])):
+				for k, lt2 in enumerate(sorted(og_lts[og])):
+					if j >= k: continue
+					outf_handle.write('\t'.join(sorted([lt1, lt2])) + '\n')
 		
 	elif method == 'orthofinder_og':
+
 		subdirs = []
 		for sd in os.listdir(input_dir):
 			subdirs.append(sd)
@@ -389,16 +357,14 @@ def extract_og_pairs():
 				line = line.rstrip('\n')
 				ls = line.split('\t')
 				og_lts = set([])
-				scc_flag = True
 				for lts in ls[1:]:
-					lts = lts.strip()
-					if lts == '' or ',' in lts:
-						scc_flag = False
 					for lt in lts.split(','):
 						if lt.strip() == '': continue 
 						og_lts.add(lt.strip())
-				if scc_flag:
-					outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
+				for j, lt1 in enumerate(sorted(og_lts)):
+					for k, lt2 in enumerate(sorted(og_lts)):
+						if j >= k: continue
+						outf_handle.write('\t'.join(sorted([lt1, lt2])) + '\n')
 
 	elif method == 'orthofinder_hog':
 		
@@ -428,16 +394,14 @@ def extract_og_pairs():
 				line = line.rstrip('\n')
 				ls = line.split('\t')
 				og_lts = set([])
-				scc_flag = True
 				for lts in ls[3:]:
-					lts = lts.strip()
-					if lts == '' or ',' in lts:
-						scc_flag = False
 					for lt in lts.split(','):
 						if lt.strip() == '': continue 
 						og_lts.add(lt.strip())
-				if scc_flag:
-					outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
+				for j, lt1 in enumerate(sorted(og_lts)):
+					for k, lt2 in enumerate(sorted(og_lts)):
+						if j >= k: continue
+						outf_handle.write('\t'.join(sorted([lt1, lt2])) + '\n')
 
 	if outfile != None:
 		outf_handle.close()
