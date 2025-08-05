@@ -1,24 +1,35 @@
 [project]
 name = "bofasa"
 authors = [{name="Rauf Salamzade", email="salamzader@gmail.com"}]
-version = "1.1.1"
+version = "1.2.0"
 description = "Bacterial multi-species orthology inference and analysis."
+dependencies = [
+    "pyfamsa>=0.5.0",
+    "biopython>=1.79",
+    "scipy>=1.7.0",
+    "pandas>=1.3.0",
+    "tqdm>=4.62.0",
+    "rich-argparse>=1.0.0",
+    "plotly>=5.0.0",
+    "xlsxwriter>=3.0.0",
+    "pyhmmer>=0.10.0",
+    "ete3>=3.1.0",
+    "pyrodigal>=2.0.0",
+]
+
+[project.scripts]
+bofasa = "bofasa.main:main"
+extract_og_pairs = "bofasa.scripts.extract_og_pairs:extract_og_pairs"
 
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-script-files=["bin/bofasa", 
-              "bin/bofasa_prep", 
-              "scripts/extract_og_pairs",
-              "scripts/extract_scc_og_pairs",
-              "scripts/print_og_itol_matrix",
-              "scripts/compare_og_pairs",
-              "scripts/determine_og_freqs",
-              "scripts/setup_annotation_dbs.py",
-              "scripts/processNCBIGenBankAndCreateInputs.py", 
-              "scripts/runProdigalAndMakeInputsForBofasa.py"]
+script-files=["src/bofasa/scripts/extract_scc_og_pairs.py",
+              "src/bofasa/scripts/print_og_itol_matrix.py",
+              "src/bofasa/scripts/compare_og_pairs.py",
+              "src/bofasa/scripts/determine_og_freqs.py"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
