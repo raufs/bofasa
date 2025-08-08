@@ -18,7 +18,7 @@ bofasa provides a unified command-line interface with two main subcommands:
 
 ### 1. Prepare Input Data
 ```bash
-bofasa prep -i genome1.fasta genome2.gbk genome3.fasta -o prep_output
+bofasa prep -i genome1.fasta genome2.fasta genome3.fasta genome4.fasta -o prep_output
 ```
 
 ### 2. Run Analysis
@@ -53,7 +53,7 @@ pip install -e .
 
 bofasa provides a single entry point with intuitive subcommands:
 
-```bash
+```
 
 ██████╗  ██████╗ ███████╗ █████╗ ███████╗ █████╗
 ██╔══██╗██╔═══██╗██╔════╝██╔══██╗██╔════╝██╔══██╗
