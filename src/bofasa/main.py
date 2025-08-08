@@ -1079,155 +1079,155 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
         else:
             print(msg)
         
-        if not os.path.isfile(step1_checkpoint_file):
-            gp_dir = os.path.join(args.output_dir, "Genome_Processing/")
-            faa_dir = os.path.join(gp_dir, "Proteomes/")
-            bed_dir = os.path.join(gp_dir, "BEDs/")
+        gp_dir = os.path.join(args.output_dir, "Genome_Processing/")
+        faa_dir = os.path.join(gp_dir, "Proteomes/")
+        bed_dir = os.path.join(gp_dir, "BEDs/")
 
-            setup_ready_directory([gp_dir, faa_dir, bed_dir], overwrite_mode="overwrite")
 
         # Initialize sample mappings
         sample_wgs = {}
         sample_proteomes = {}
         sample_beds = {}
 
-        # Process input genomes if provided
-        if input_genomes:
-            # Determine file types and process accordingly
-            fasta_files = []
-            genbank_files = []
+        if not os.path.isfile(step1_checkpoint_file):
+            setup_ready_directory([gp_dir, faa_dir, bed_dir], overwrite_mode="overwrite")
 
-            for genome_file in input_genomes:
-                if os.path.splitext(genome_file)[1].lower() in [".gbk", ".gb", ".genbank", ".gbff"]:
-                    genbank_files.append(genome_file)
-                elif os.path.splitext(genome_file)[1].lower() in [".fasta", ".fa", ".fna"]:
-                    fasta_files.append(genome_file)
-                else:
-                    if logger:
-                        logger.warning(f"{genome_file} is not a valid genome file. Skipping...")
+            # Process input genomes if provided
+            if input_genomes:
+                # Determine file types and process accordingly
+                fasta_files = []
+                genbank_files = []
+
+                for genome_file in input_genomes:
+                    if os.path.splitext(genome_file)[1].lower() in [".gbk", ".gb", ".genbank", ".gbff"]:
+                        genbank_files.append(genome_file)
+                    elif os.path.splitext(genome_file)[1].lower() in [".fasta", ".fa", ".fna"]:
+                        fasta_files.append(genome_file)
                     else:
-                        print(f"Warning: {genome_file} is not a valid genome file. Skipping...")
-
-            # Process FASTA files with Prodigal
-            if fasta_files:
-                if logger:
-                    logger.info(f"Processing {len(fasta_files)} FASTA files with {args.gene_calling_method}...")
-                else:
-                    print(f"Processing {len(fasta_files)} FASTA files with {args.gene_calling_method}...")
-                
-                # Convert list of fasta files to dictionary with sample names
-                fasta_dict = {}
-                for fasta_file in fasta_files:
-                    # Use the original filename without extension as sample name
-                    sample_name = os.path.splitext(os.path.basename(fasta_file))[0]
-                    fasta_dict[sample_name] = fasta_file
-                    sample_wgs[sample_name] = fasta_file
-                
-                run_gene_calling(
-                    fasta_dict,
-                    gp_dir,
-                    logger,
-                    threads=args.threads,
-                    locus_tag_length=args.locus_tag_length,
-                    gene_calling_method=args.gene_calling_method,
-                    meta_mode=getattr(args, 'meta_mode', False),
-                )
-
-                # Move files to proper locations
-                for sample in fasta_dict:
-                    faa = os.path.join(gp_dir, f"{sample}.faa")
-                    bed = os.path.join(gp_dir, f"{sample}.coords.bed")
-                    try:
-                        assert os.path.isfile(faa) and os.path.isfile(bed)
-                        renamed_faa = os.path.join(faa_dir, f"{sample}.faa")
-                        renamed_bed = os.path.join(bed_dir, f"{sample}.bed")
-                        shutil.move(faa, renamed_faa)
-                        shutil.move(bed, renamed_bed)
-                        sample_proteomes[sample] = renamed_faa
-                        sample_beds[sample] = renamed_bed
-                    except Exception as e:
-                        msg = f'Unable to validate proper processing for sample {sample}, skipping it'
                         if logger:
-                            logger.info(msg)
+                            logger.warning(f"{genome_file} is not a valid genome file. Skipping...")
                         else:
-                            print(msg)
-                        if sample in sample_wgs:
-                            del sample_wgs[sample]
+                            print(f"Warning: {genome_file} is not a valid genome file. Skipping...")
 
-            # Process GenBank files
-            if genbank_files:
+                # Process FASTA files with Prodigal
+                if fasta_files:
+                    if logger:
+                        logger.info(f"Processing {len(fasta_files)} FASTA files with {args.gene_calling_method}...")
+                    else:
+                        print(f"Processing {len(fasta_files)} FASTA files with {args.gene_calling_method}...")
+                    
+                    # Convert list of fasta files to dictionary with sample names
+                    fasta_dict = {}
+                    for fasta_file in fasta_files:
+                        # Use the original filename without extension as sample name
+                        sample_name = os.path.splitext(os.path.basename(fasta_file))[0]
+                        fasta_dict[sample_name] = fasta_file
+                        sample_wgs[sample_name] = fasta_file
+                    
+                    run_gene_calling(
+                        fasta_dict,
+                        gp_dir,
+                        logger,
+                        threads=args.threads,
+                        locus_tag_length=args.locus_tag_length,
+                        gene_calling_method=args.gene_calling_method,
+                        meta_mode=getattr(args, 'meta_mode', False),
+                    )
+
+                    # Move files to proper locations
+                    for sample in fasta_dict:
+                        faa = os.path.join(gp_dir, f"{sample}.faa")
+                        bed = os.path.join(gp_dir, f"{sample}.coords.bed")
+                        try:
+                            assert os.path.isfile(faa) and os.path.isfile(bed)
+                            renamed_faa = os.path.join(faa_dir, f"{sample}.faa")
+                            renamed_bed = os.path.join(bed_dir, f"{sample}.bed")
+                            shutil.move(faa, renamed_faa)
+                            shutil.move(bed, renamed_bed)
+                            sample_proteomes[sample] = renamed_faa
+                            sample_beds[sample] = renamed_bed
+                        except Exception as e:
+                            msg = f'Unable to validate proper processing for sample {sample}, skipping it'
+                            if logger:
+                                logger.info(msg)
+                            else:
+                                print(msg)
+                            if sample in sample_wgs:
+                                del sample_wgs[sample]
+
+                # Process GenBank files
+                if genbank_files:
+                    if logger:
+                        logger.info(f"Processing {len(genbank_files)} GenBank files...")
+                    else:
+                        print(f"Processing {len(genbank_files)} GenBank files...")
+                    
+                    # Convert list of genbank files to dictionary with sample names
+                    genbank_dict = {}
+                    for genbank_file in genbank_files:
+                        # Use the original filename without extension as sample name
+                        sample_name = os.path.splitext(os.path.basename(genbank_file))[0]
+                        genbank_dict[sample_name] = genbank_file
+                    
+                    process_genomes_as_genbanks(
+                        genbank_dict,
+                        gp_dir,
+                        logger,
+                        threads=args.threads,
+                        locus_tag_length=args.locus_tag_length,
+                        rename_locus_tags=getattr(args, 'rename_locus_tags', False),
+                    )
+
+                    # Move files to proper locations
+                    for sample in genbank_dict:
+                        faa = os.path.join(gp_dir, f"{sample}.faa")
+                        bed = os.path.join(gp_dir, f"{sample}.coords.bed")
+                        fna = os.path.join(gp_dir, f"{sample}.fna")
+                        try:
+                            assert os.path.isfile(faa) and os.path.isfile(bed) and os.path.isfile(fna)
+                            assert os.path.getsize(faa) > 0 and os.path.getsize(bed) > 0 and os.path.getsize(fna) > 0
+                            renamed_faa = os.path.join(faa_dir, f"{sample}.faa")
+                            renamed_bed = os.path.join(bed_dir, f"{sample}.bed")
+                            shutil.move(faa, renamed_faa)
+                            shutil.move(bed, renamed_bed)
+                            sample_proteomes[sample] = renamed_faa
+                            sample_beds[sample] = renamed_bed
+                            sample_wgs[sample] = fna
+                        except Exception as e:
+                            msg = f'Unable to validate proper processing for sample {sample}, skipping it'
+                            if logger:
+                                logger.info(msg)
+                            else:
+                                print(msg)
+                            if sample in sample_wgs:
+                                del sample_wgs[sample]
+
+            # Process annotation directories (Prokka/Bakta)
+            if annotation_dirs:
                 if logger:
-                    logger.info(f"Processing {len(genbank_files)} GenBank files...")
+                    logger.info(f"Processing {len(annotation_dirs)} annotation directories...")
                 else:
-                    print(f"Processing {len(genbank_files)} GenBank files...")
+                    print(f"Processing {len(annotation_dirs)} annotation directories...")
                 
-                # Convert list of genbank files to dictionary with sample names
-                genbank_dict = {}
-                for genbank_file in genbank_files:
-                    # Use the original filename without extension as sample name
-                    sample_name = os.path.splitext(os.path.basename(genbank_file))[0]
-                    genbank_dict[sample_name] = genbank_file
-                
-                process_genomes_as_genbanks(
-                    genbank_dict,
+                # Process annotation directories and get sample mappings
+                annotation_results = process_annotation_directories(
+                    annotation_dirs,
                     gp_dir,
                     logger,
-                    threads=args.threads,
                     locus_tag_length=args.locus_tag_length,
                     rename_locus_tags=getattr(args, 'rename_locus_tags', False),
+                    threads=args.threads,
                 )
+                
+                # Update sample mappings
+                sample_wgs.update(annotation_results.get('sample_wgs', {}))
+                sample_proteomes.update(annotation_results.get('sample_proteomes', {}))
+                sample_beds.update(annotation_results.get('sample_beds', {}))
 
-                # Move files to proper locations
-                for sample in genbank_dict:
-                    faa = os.path.join(gp_dir, f"{sample}.faa")
-                    bed = os.path.join(gp_dir, f"{sample}.coords.bed")
-                    fna = os.path.join(gp_dir, f"{sample}.fna")
-                    try:
-                        assert os.path.isfile(faa) and os.path.isfile(bed) and os.path.isfile(fna)
-                        assert os.path.getsize(faa) > 0 and os.path.getsize(bed) > 0 and os.path.getsize(fna) > 0
-                        renamed_faa = os.path.join(faa_dir, f"{sample}.faa")
-                        renamed_bed = os.path.join(bed_dir, f"{sample}.bed")
-                        shutil.move(faa, renamed_faa)
-                        shutil.move(bed, renamed_bed)
-                        sample_proteomes[sample] = renamed_faa
-                        sample_beds[sample] = renamed_bed
-                        sample_wgs[sample] = fna
-                    except Exception as e:
-                        msg = f'Unable to validate proper processing for sample {sample}, skipping it'
-                        if logger:
-                            logger.info(msg)
-                        else:
-                            print(msg)
-                        if sample in sample_wgs:
-                            del sample_wgs[sample]
-
-        # Process annotation directories (Prokka/Bakta)
-        if annotation_dirs:
-            if logger:
-                logger.info(f"Processing {len(annotation_dirs)} annotation directories...")
-            else:
-                print(f"Processing {len(annotation_dirs)} annotation directories...")
-            
-            # Process annotation directories and get sample mappings
-            annotation_results = process_annotation_directories(
-                annotation_dirs,
-                gp_dir,
-                logger,
-                locus_tag_length=args.locus_tag_length,
-                rename_locus_tags=getattr(args, 'rename_locus_tags', False),
-                threads=args.threads,
-            )
-            
-            # Update sample mappings
-            sample_wgs.update(annotation_results.get('sample_wgs', {}))
-            sample_proteomes.update(annotation_results.get('sample_proteomes', {}))
-            sample_beds.update(annotation_results.get('sample_beds', {}))
-
-        # Create Step 1 checkpoint only after all processing is complete
-        if not os.path.isfile(step1_checkpoint_file):
-            # Create Step 1 checkpoint
-            with open(step1_checkpoint_file, 'w') as f:
-                f.write("DONE")
+       
+                # Create Step 1 checkpoint
+                with open(step1_checkpoint_file, 'w') as f:
+                    f.write("DONE")
         else:
             msg = "Step 1 checkpoint found - skipping genome processing"
             if logger:
@@ -1239,11 +1239,6 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
             gp_dir = os.path.join(args.output_dir, "Genome_Processing/")
             faa_dir = os.path.join(gp_dir, "Proteomes/")
             bed_dir = os.path.join(gp_dir, "BEDs/")
-            
-            # Reconstruct sample mappings from existing files
-            sample_wgs = {}
-            sample_proteomes = {}
-            sample_beds = {}
             
             # Load from existing proteome files
             if os.path.exists(faa_dir):
