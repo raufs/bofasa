@@ -9,7 +9,6 @@ import os
 import sys
 import subprocess
 import resource
-import pkg_resources
 import logging
 import traceback
 import shutil
@@ -17,7 +16,13 @@ import itertools
 from typing import Any, List, Optional, Set, Tuple
 import pandas as pd
 from . import config
+import importlib.metadata
 
+try:
+    package_name = "bofasa"
+    package_version = str(importlib.metadata.version(package_name))
+except importlib.metadata.PackageNotFoundError:
+    package_version = "NA"
 
 def load_table_in_pandas_dataframe(
     input_file: str, 
@@ -289,7 +294,6 @@ def run_cmd(
         raise
 
 
-
 def multi_process(input_data: List[Any]) -> None:
     """
     Execute a command in a multiprocessing context.
@@ -330,10 +334,7 @@ def get_version() -> str:
     str
         Version string from package metadata, or "unknown" if not available
     """
-    try:
-        return pkg_resources.require("bofasa")[0].version
-    except Exception:
-        return "unknown"
+    return package_version 
 
 
 def single_linkage_cluster(
