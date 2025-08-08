@@ -7,12 +7,13 @@ the bofasa package.
 
 import random
 from typing import Set, Dict, Any, Optional
+from .utils import get_version
 
 # Set random seed for reproducibility
 random.seed(12345)
 
-# Version information
-VERSION: str = "1.2.0"  # Keep in sync with pyproject.toml
+# Version information - dynamically retrieved from package metadata
+VERSION: str = get_version()
 
 # Global variables for orthology analysis
 single_copy_dogs: Set[str] = set([])
@@ -28,7 +29,7 @@ DEFAULT_ROOTING_SEEDS: int = 100
 DEFAULT_MCL_INFLATION: float = 1.2
 DEFAULT_NEAR_SCC_PROP: float = 0.95
 DEFAULT_THREADS: int = 4
-DEFAULT_MAX_MEMORY: int = 8
+DEFAULT_MAX_MEMORY: int = 16
 DEFAULT_SURROUNDING_BP: int = 10000
 DEFAULT_TRIMAL_OPTIONS: str = "-strict -keepseqs"
 
@@ -53,14 +54,7 @@ SUPPORTED_SOFTWARE: Set[str] = {
 GENE_CALLING_METHODS: list[str] = ["pyrodigal", "prodigal"]
 
 # Alignment methods
-ALIGNMENT_METHODS: list[str] = ["pyfamsa"]
-
-# PyFAMSA configuration
-PYFAMSA_GUIDE_TREES: list[str] = ["sl", "slink", "upgma", "nj"]
-PYFAMSA_HEURISTICS: list[Optional[str]] = [None, "medoid", "part"]
-DEFAULT_PYFAMSA_GUIDE_TREE: str = "sl"
-DEFAULT_PYFAMSA_HEURISTIC: Optional[str] = None
-DEFAULT_PYFAMSA_REFINEMENTS: int = 100
+ALIGNMENT_METHODS: list[str] = ["muscle"]
 
 # Default locus tag length
 DEFAULT_LOCUS_TAG_LENGTH: int = 3
@@ -84,12 +78,6 @@ SUBCMD_END_COLOR: str = "\033[0m"            # Reset
 
 # Database paths
 DEFAULT_DB_PATH: Optional[str] = None  # Will be set during installation
-
-
-def get_version() -> str:
-    """Get the current version of bofasa."""
-    return VERSION
-
 
 def set_db_path(path: str) -> None:
     """Set the database path."""

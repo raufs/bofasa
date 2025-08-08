@@ -10,6 +10,7 @@ import subprocess
 import gzip
 import shutil
 from . import config
+from .utils import setup_ready_directory
 
 
 def setup_annotation_databases(
@@ -55,7 +56,7 @@ def setup_annotation_databases(
         print("Proceeding with setup...\n")
 
     # Create output directory
-    os.makedirs(output_dir, exist_ok=True)
+    setup_ready_directory([output_dir], overwrite_mode="skip")
 
     print(f"Setting up annotation databases in {output_dir}")
     print(f"Using {threads} threads")
@@ -76,7 +77,7 @@ def setup_annotation_databases(
         print(f"Removing existing geNomad database directory: {genomad_db_dir}")
         shutil.rmtree(genomad_db_dir)
     
-    os.makedirs(genomad_db_dir, exist_ok=True)
+    setup_ready_directory([genomad_db_dir], overwrite_mode="overwrite")
 
     # Download geNomad database
     genomad_cmd = ["genomad", "download-database", genomad_db_dir]
@@ -114,7 +115,7 @@ def setup_annotation_databases(
         print(f"Removing existing ISfinder database directory: {isfinder_dir}")
         shutil.rmtree(isfinder_dir)
     
-    os.makedirs(isfinder_dir, exist_ok=True)
+    setup_ready_directory([isfinder_dir], overwrite_mode="overwrite")
 
     # Download ISfinder database and create DIAMOND database
     isfinder_fasta = os.path.join(isfinder_dir, "ISfinder.faa")
@@ -197,7 +198,7 @@ def setup_annotation_databases(
         print(f"Removing existing Pfam database directory: {pfam_dir}")
         shutil.rmtree(pfam_dir)
     
-    os.makedirs(pfam_dir, exist_ok=True)
+    setup_ready_directory([pfam_dir], overwrite_mode="overwrite")
 
     pfam_hmm = os.path.join(pfam_dir, "Pfam-A.hmm")
     pfam_hmm_gz = os.path.join(pfam_dir, "Pfam-A.hmm.gz")

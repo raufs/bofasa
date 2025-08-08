@@ -13,161 +13,15 @@ import traceback
 from collections import defaultdict
 from operator import itemgetter
 import statistics
-import decimal
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
-
+from typing import Any, Dict, List, Set
 import pandas as pd
-import tqdm
 from Bio import SeqIO
 import plotly.express as px
 import pyhmmer
-
-from .utils import multi_process
-from .processing import create_chopped_proteomes
+from .utils import _iter_progress, multi_process, setup_ready_directory, load_table_in_pandas_dataframe, run_cmd
+from .processing import create_chopped_proteomes, extract_gene_contexts
 from . import config
-
-
-def extract_gene_contexts(
-    inputs: Tuple[str, str, str, Dict[str, str], Dict[str, Set[str]], int, Any]
-) -> None:
-    """
-    Extract gene contexts for a single sample.
-
-    Parameters:
-    -----------
-    inputs : Tuple[str, str, str, Dict[str, str], Dict[str, Set[str]], int, Any]
-        Tuple containing (sample, coords_file, output_file, gene_to_og, og_genes, surrounding_bp, log_object)
-    """
-    sample, coords_file, output_file, gene_to_og, og_genes, surrounding_bp, log_object = inputs
-    try:
-        assert os.path.isfile(coords_file)
-
-        scaffold_features: Dict[str, List[List[Union[int, str]]]] = defaultdict(list)
-        with open(coords_file) as ocf:
-            for line in ocf:
-                line = line.strip()
-                scaffold: str
-                start: str
-                end: str
-                name: str
-                score: str
-                strand: str
-                scaffold, start, end, name, score, strand = line.split('\t')
-                start_int: int = int(start)
-                end_int: int = int(end)
-                scaffold_features[scaffold].append([start_int, end_int, name, score, strand])
-
-        output_handle = open(output_file, 'w')
-        output_handle.write(
-            '\t'.join(
-                [
-                    'Protein',
-                    'OG',
-                    'Near scaffold edge?',
-                    'Length',
-                    'Upstream genes',
-                    'Downstream genes',
-                    'Upstream OGs',
-                    'Downstream OGs',
-                ]
-            )
-            + '\n'
-        )
-        for scaffold in scaffold_features:
-            scaffold_features_sorted: List[List[Union[int, str]]] = sorted(
-                scaffold_features[scaffold], key=itemgetter(0)
-            )
-            max_features: int = len(scaffold_features[scaffold])
-            for cds_index, cds in enumerate(scaffold_features_sorted):
-                cds_start: int = cds[0]
-                cds_end: int = cds[1]
-                cds_name: str = cds[2]
-                if cds_name not in gene_to_og:
-                    continue
-                cds_og: str = gene_to_og[cds_name]
-                left_boundary: int = cds_start - surrounding_bp
-                right_boundary: int = cds_end + surrounding_bp
-                left_side_genes_and_ogs: Set[str] = set([])
-                right_side_genes_and_ogs: Set[str] = set([])
-                near_scaffold_edge: bool = False
-                if cds[3] == '0':
-                    near_scaffold_edge = True
-
-                limit_reached: bool = False
-                cds_iter_index: int = cds_index - 1
-                while not limit_reached:
-                    try:
-                        cds_iter: List[Union[int, str]] = scaffold_features_sorted[cds_iter_index]
-                        cds_iter_start: int = cds_iter[0]
-                        cds_iter_end: int = cds_iter[1]
-                        cds_iter_name: str = cds_iter[2]
-                        if cds_iter_end < left_boundary:
-                            limit_reached = True
-                        else:
-                            if cds_iter_name in gene_to_og:
-                                cds_iter_og: str = gene_to_og[cds_iter_name]
-                                left_side_genes_and_ogs.add(cds_iter_name + "|" + cds_iter_og)
-                        cds_iter_index -= 1
-                    except IndexError:
-                        limit_reached = True
-
-                limit_reached = False
-                cds_iter_index = cds_index + 1
-                while not limit_reached:
-                    try:
-                        cds_iter = scaffold_features_sorted[cds_iter_index]
-                        cds_iter_start = cds_iter[0]
-                        cds_iter_end = cds_iter[1]
-                        cds_iter_name = cds_iter[2]
-                        if cds_iter_start > right_boundary:
-                            limit_reached = True
-                        else:
-                            if cds_iter_name in gene_to_og:
-                                cds_iter_og = gene_to_og[cds_iter_name]
-                                right_side_genes_and_ogs.add(cds_iter_name + "|" + cds_iter_og)
-                        cds_iter_index += 1
-                    except IndexError:
-                        limit_reached = True
-
-                left_side_genes: List[str] = []
-                left_side_ogs: List[str] = []
-                for gene_og in left_side_genes_and_ogs:
-                    gene: str
-                    og: str
-                    gene, og = gene_og.split("|")
-                    left_side_genes.append(gene)
-                    left_side_ogs.append(og)
-
-                right_side_genes: List[str] = []
-                right_side_ogs: List[str] = []
-                for gene_og in right_side_genes_and_ogs:
-                    gene, og = gene_og.split("|")
-                    right_side_genes.append(gene)
-                    right_side_ogs.append(og)
-
-                cds_length: int = cds_end - cds_start
-                output_handle.write(
-                    '\t'.join(
-                        [
-                            cds_name,
-                            cds_og,
-                            str(near_scaffold_edge),
-                            str(cds_length),
-                            '; '.join(left_side_genes),
-                            '; '.join(right_side_genes),
-                            '; '.join(left_side_ogs),
-                            '; '.join(right_side_ogs),
-                        ]
-                    )
-                    + '\n'
-                )
-
-        output_handle.close()
-
-    except Exception as e:
-        log_object.error(f"Error extracting gene contexts for {sample}: {str(e)}")
-        log_object.error(traceback.format_exc())
-
+from scipy import stats 
 
 def determine_ortholog_group_contexts(
     bofasa_prep_dir: str,
@@ -180,6 +34,9 @@ def determine_ortholog_group_contexts(
 ) -> None:
     """
     Determine ortholog group contexts for all samples.
+
+    This function loads coordinate information of CDSs for each input genome into a dictionary and also
+    calculates context entropy scores and MGE annotations.
 
     Parameters:
     -----------
@@ -199,207 +56,244 @@ def determine_ortholog_group_contexts(
         Number of threads to use for parallel processing
     """
     try:
-        # Create output directory
-        os.makedirs(surround_info_dir, exist_ok=True)
+        # Load MGE annotation files
+        isfinder_file = os.path.join(bofasa_prep_dir, 'Sample_IS_Element_Proteins.txt')
+        plasmid_file = os.path.join(bofasa_prep_dir, 'Sample_Plasmid_Proteins.txt')
+        phage_file = os.path.join(bofasa_prep_dir, 'Sample_Phage_Proteins.txt')
+
+        ise_set: Set[str] = set([])
+        plasmid_set: Set[str] = set([])
+        phage_set: Set[str] = set([])
+
+        genomad_flag: bool = False
+        
+        if os.path.isfile(isfinder_file):
+            with open(isfinder_file) as oif:
+                for line in oif:
+                    line = line.strip()
+                    ls = line.split('\t')
+                    ise_set.add(ls[1])
+        
+        if os.path.isfile(plasmid_file):
+            with open(plasmid_file) as opf:
+                for line in opf:
+                    line = line.strip()
+                    ls = line.split('\t')
+                    plasmid_set.add(ls[1])
+            genomad_flag = True
+        
+        if os.path.isfile(phage_file):
+            with open(phage_file) as opf:
+                for line in opf:
+                    line = line.strip()
+                    ls = line.split('\t')
+                    phage_set.add(ls[1])
+            genomad_flag = True
 
         # Load ortholog group information
-        gene_to_og: Dict[str, str] = {}
         og_genes: Dict[str, Set[str]] = defaultdict(set)
+        og_samples: Dict[str, Set[str]] = defaultdict(set)
+        gene_to_og: Dict[str, str] = {}
         samples: List[str] = []
 
-        with open(og_tsv_file) as ogf:
-            for i, line in enumerate(ogf):
-                line = line.strip()
-                ls: List[str] = line.split('\t')
-                if i == 0:
-                    samples = ls[1:]
-                else:
-                    og: str = ls[0]
-                    for j, genes in enumerate(ls[1:]):
-                        sample: str = samples[j]
-                        for gene in genes.split(', '):
-                            if gene != '':
-                                gene_to_og[gene] = og
-                                og_genes[og].add(gene)
+        if os.path.isfile(og_tsv_file):
+            with open(og_tsv_file) as oot:
+                for i, line in enumerate(oot):
+                    line = line.strip('\n')
+                    ls = line.split('\t')
+                    if i == 0:
+                        samples = ls[1:]
+                    else:
+                        og = ls[0]
+                        for j, gs in enumerate(ls[1:]):
+                            sample = samples[j]
+                            for g in gs.split(','):
+                                g = g.strip()
+                                if g != '':
+                                    og_genes[og].add(g)
+                                    og_samples[og].add(sample)
+                                    gene_to_og[g] = og
 
-        # Prepare inputs for parallel processing
-        inputs: List[Tuple[str, str, str, Dict[str, str], Dict[str, Set[str]], int, Any]] = []
+        try:
+            assert(len(og_genes) > 0)
+        except Exception as e:
+            msg = f"Difficulties parsing input orthogroup results in the file: {og_tsv_file}"
+            log_object.error(msg)
+            log_object.error(traceback.format_exc())
+            sys.exit(1)
+
+        # Load genome parameters
+        listing_file = os.path.join(bofasa_prep_dir, 'Info_on_Input_Genome_Files.txt')
+        assert(os.path.isfile(listing_file))
         
-        for sample in samples:
-            coords_file: str = os.path.join(bofasa_prep_dir, "Genome_Processing", "BEDs", f"{sample}.coords.bed")
-            output_file: str = os.path.join(surround_info_dir, f"{sample}_contexts.tsv")
-            
-            if os.path.isfile(coords_file):
-                inputs.append((sample, coords_file, output_file, gene_to_og, og_genes, surrounding_bp, log_object))
+        genome_params: List[List[Any]] = []
+        with open(listing_file) as olf:
+            for i, line in enumerate(olf):
+                if i == 0: 
+                    continue
+                line = line.strip()
+                sample, ccds_proteome_file, proteome_file, coords_file, genome_file = line.split('\t')
+                output_file = os.path.join(surround_info_dir, f"{sample}.tsv")
+                genome_params.append([sample, coords_file, output_file, gene_to_og, og_genes, surrounding_bp, log_object])
 
         # Process in parallel
-        if inputs:
-            with multiprocessing.Pool(threads) as pool:
-                list(tqdm.tqdm(
-                    pool.imap_unordered(extract_gene_contexts, inputs),
-                    total=len(inputs),
-                    desc="Extracting gene contexts"
-                ))
+        with multiprocessing.Pool(threads) as pool:
+            list(
+                _iter_progress(
+                    pool.imap_unordered(extract_gene_contexts, genome_params),
+                    total=len(genome_params),
+                    description="Extracting gene contexts",
+                )
+            )
 
-        # Combine results
-        with open(og_context_info_file, 'w') as outf:
-            outf.write('\t'.join([
-                'OG', 'Sample', 'Protein', 'Near scaffold edge?', 'Length',
-                'Upstream genes', 'Downstream genes', 'Upstream OGs', 'Downstream OGs'
+        # Process results and calculate entropy
+        og_surrounding_nogs: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        og_completed_surrounding_nogs: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        og_contexts: Dict[str, List[str]] = defaultdict(list)
+        og_contexts_nses: Dict[str, int] = defaultdict(int)
+        og_gene_lengths: Dict[str, List[float]] = defaultdict(list)
+        context_nogs: Dict[str, List[int]] = defaultdict(list)
+        context_nogs_complete: Dict[str, List[int]] = defaultdict(list)
+        og_proteins: Dict[str, List[str]] = defaultdict(list)
+
+        for genome_info in genome_params:
+            sample, coords_file, output_file, gene_to_og, og_genes, surrounding_bp, log_object = genome_info
+            with open(output_file) as oof:
+                for i, line in enumerate(oof):
+                    if i == 0: 
+                        continue
+                    line = line.strip('\n')
+                    protein, og, nse, length, upstream_genes, downstream_genes, upstream_ogs, downstream_ogs = line.split('\t')
+                    og_gene_lengths[og].append(float(length))
+                    og_proteins[og].append(protein)
+                    complete_status = 'C:'
+                    if nse == 'True':
+                        og_contexts_nses[og] += 1
+                        complete_status = 'I:'
+                    context = complete_status
+                    if len(upstream_ogs) > 0:
+                        context += upstream_ogs + ', '
+                    context += og
+                    if len(downstream_ogs) > 0:
+                        context += ', ' + downstream_ogs
+                    
+                    og_contexts[og].append(context)
+                    context_ogs = set([])
+                    complete_context_ogs = set([])
+                    for ogc in upstream_ogs.split(', '):
+                        if nse == 'False':
+                            complete_context_ogs.add(ogc)
+                        if not ogc in context_ogs:
+                            og_surrounding_nogs[og][ogc] += 1
+                            if nse == 'False':
+                                og_completed_surrounding_nogs[og][ogc] += 1
+                        context_ogs.add(ogc)
+                    for ogc in downstream_ogs.split(', '):
+                        if nse == 'False':
+                            complete_context_ogs.add(ogc)
+                        if not ogc in context_ogs:
+                            og_surrounding_nogs[og][ogc] += 1
+                            if nse == 'False':
+                                og_completed_surrounding_nogs[og][ogc] += 1
+                        context_ogs.add(ogc)
+                    context_nogs[og].append(len(context_ogs))
+                    context_nogs_complete[og].append(len(context_ogs))
+
+        # Write detailed context information
+        with open(og_context_info_file, 'w') as og_context_info_handle:
+            og_context_info_handle.write('\t'.join([
+                'OG', 'Median OG length (bp)', 'Percentage contexts near scaffold edge', 'Number of genomes with OG', 
+                'Number of protein in OG', 'Context conservation score', 'Context conservation score - complete contexts', 
+                'Context entropy score', 'Context entropy score - complete contexts', 'Number of distinct neighbor OGs', 
+                'Number of distinct OGs from complete contexts', 'Avg. number of distinct neighbor OGs', 
+                'Avg. number of distinct neighbor OGs from complete contexts', 
+                'Percentage instances on plasmid (based on geNomad annotation)', 
+                'Percentage instances on phage (based on geNomad annotation)', 
+                'Percentage homologous to IS-elements (based on ISfinder database)', 'Instances', 'Contexts'
             ]) + '\n')
             
-            for sample in samples:
-                context_file: str = os.path.join(surround_info_dir, f"{sample}_contexts.tsv")
-                if os.path.isfile(context_file):
-                    with open(context_file) as inf:
-                        next(inf)  # Skip header
-                        for line in inf:
-                            line = line.strip()
-                            if line:
-                                ls: List[str] = line.split('\t')
-                                protein: str = ls[0]
-                                og: str = ls[1]
-                                outf.write(f"{og}\t{sample}\t" + '\t'.join(ls[2:]) + '\n')
+            for og in sorted(og_contexts):
+                median_length = og_gene_lengths[og][0]
+                if len(og_gene_lengths[og]) > 1:
+                    median_length = statistics.median(og_gene_lengths[og])
+                num_samples = len(og_samples[og])
+                num_contexts = len(og_contexts[og])
+                nse_perc = round(100.0*(og_contexts_nses[og]/float(num_contexts)), 2)
+                
+                nog_freqs = []
+                total_nog = 0
+                nog_freqs_complete = []
+                total_nog_complete = 0
+                
+                for nog in og_surrounding_nogs[og]:
+                    nog_freqs.append(og_surrounding_nogs[og][nog])
+                    total_nog += 1
+                    if nog in og_completed_surrounding_nogs[og]:
+                        nog_freqs_complete.append(og_completed_surrounding_nogs[og][nog])
+                        total_nog_complete += 1
+                
+                sum_nog_freqs = sum(nog_freqs)
+                sum_nog_freqs_complete = sum(nog_freqs_complete)
 
+                avg_nog = round(statistics.mean(context_nogs[og]), 2)
+                avg_nog_complete = round(statistics.mean(context_nogs_complete[og]), 2)
+                
+                context_entropy = 'NA'
+                context_var_score = 'NA'
+                context_entropy_complete = 'NA'
+                context_var_score_complete = 'NA'
+                
+                if total_nog > 0:
+                    context_var_score = round(avg_nog/total_nog, 2)
+                    if total_nog > 1:
+                        context_entropy = round(stats.entropy([x/sum_nog_freqs for x in nog_freqs]), total_nog)
+                
+                if total_nog_complete > 0:
+                    context_var_score_complete = round(avg_nog_complete/total_nog_complete, 2)
+                    if total_nog_complete > 1:
+                        context_entropy_complete = round(stats.entropy([x/sum_nog_freqs_complete for x in nog_freqs_complete]), total_nog_complete)
+                
+                # Calculate MGE percentages
+                plasmid_count = 0
+                phage_count = 0
+                is_count = 0
+                for p in og_proteins[og]:
+                    if p in phage_set:
+                        phage_count += 1
+                    if p in plasmid_set:
+                        plasmid_count += 1
+                    if p in ise_set:
+                        is_count += 1
+                    
+                plasmid_per = 100.0*(plasmid_count / float(num_contexts))
+                phage_per = 100.0*(phage_count / float(num_contexts))
+                ise_per = 100.0*(is_count / float(num_contexts))
+
+                if not genomad_flag:
+                    plasmid_per = 'NA'
+                    phage_per = 'NA'
+                        
+                og_context_info_handle.write('\t'.join([str(x) for x in [
+                    og, round(median_length, 2), nse_perc, num_samples, num_contexts, context_var_score, 
+                    context_var_score_complete, context_entropy, context_entropy_complete, total_nog, total_nog_complete,
+                    avg_nog, avg_nog_complete, plasmid_per, phage_per, ise_per, '; '.join(og_proteins[og]), '; '.join(og_contexts[og])
+                ]]) + '\n')
+
+        # Create simplified plotting file
         log_object.info("Ortholog group contexts determined successfully")
 
     except Exception as e:
-        log_object.error("Error determining ortholog group contexts")
+        log_object.error("Problem determining contexts of ortholog groups. Exiting now...")
         log_object.error(str(e))
         log_object.error(traceback.format_exc())
         sys.exit(1)
-
-
-def create_protein_alignments(
-    bofasa_prep_dir: str,
-    resulting_ogs_file: str,
-    prot_dir: str,
-    prot_algn_dir: str,
-    log_object: Any,
-    threads: int = config.DEFAULT_THREADS,
-    guide_tree: str = config.DEFAULT_PYFAMSA_GUIDE_TREE,
-    tree_heuristic: Optional[str] = config.DEFAULT_PYFAMSA_HEURISTIC,
-    n_refinements: int = config.DEFAULT_PYFAMSA_REFINEMENTS,
-    refine: bool = False,
-) -> None:
-    """
-    Create protein alignments using PyFAMSA for ortholog groups.
-
-    Parameters:
-    -----------
-    bofasa_prep_dir : str
-        Input directory for bofasa generated by bofasa_prep
-    resulting_ogs_file : str
-        Resulting orthogroups file
-    prot_dir : str
-        Directory containing protein sequences
-    prot_algn_dir : str
-        Directory to write protein alignments
-    log_object : Any
-        Logger object
-    threads : int, default=config.DEFAULT_THREADS
-        Number of threads to use for alignment
-    guide_tree : str, default=config.DEFAULT_PYFAMSA_GUIDE_TREE
-        Guide tree method for PyFAMSA ("sl", "slink", "upgma", "nj")
-    tree_heuristic : Optional[str], default=config.DEFAULT_PYFAMSA_HEURISTIC
-        Tree heuristic for PyFAMSA (None, "medoid", "part")
-    n_refinements : int, default=config.DEFAULT_PYFAMSA_REFINEMENTS
-        Number of refinement iterations for PyFAMSA
-    refine : bool, default=False
-        Whether to enable refinement for higher quality alignments
-    """
-    try:
-        prot_to_og: Dict[str, Dict[str, str]] = defaultdict(dict)
-        samples: List[str] = []
-        with open(resulting_ogs_file) as orof:
-            for i, line in enumerate(orof):
-                line = line.strip("\n")
-                ls: List[str] = line.split("\t")
-                if i == 0:
-                    samples = ls[1:]
-                og: str = ls[0]
-                for j, lts in enumerate(ls[1:]):
-                    s: str = samples[j]
-                    for lt in lts.split(", "):
-                        if lt != "":
-                            prot_to_og[s][lt] = og
-
-        proteome_dir: str = bofasa_prep_dir + "Genome_Processing/Proteomes/"
-        for f in os.listdir(proteome_dir):
-            if not f.endswith(".faa"):
-                continue
-            s: str = ".faa".join(f.split(".faa")[:-1])
-            with open(proteome_dir + f) as opf:
-                for rec in SeqIO.parse(opf, "fasta"):
-                    lt: str = rec.id
-                    if lt in prot_to_og[s]:
-                        og: str = prot_to_og[s][lt]
-                        outf: str = prot_dir + og + ".faa"
-                        outfh = open(outf, "a+")
-                        outfh.write(">" + s + "|" + lt + "\n" + str(rec.seq) + "\n")
-                        outfh.close()
-
-        # Create output directory
-        os.makedirs(prot_algn_dir, exist_ok=True)
-
-        # Process each protein file with job intensity assessment
-        from .utils import assess_job_intensity
-        from .alignment import create_protein_alignments_pyfamsa
-
-        for pf in os.listdir(prot_dir):
-            if not pf.endswith('.faa'):
-                continue
-                
-            prefix: str = '.faa'.join(pf.split('.faa')[:-1])
-            prot_file: str = prot_dir + pf
-            prot_algn_file: str = prot_algn_dir + prefix + '.msa.faa'
-            
-            # Skip if output already exists
-            if os.path.exists(prot_algn_file):
-                log_object.info(f"Skipping {pf} - alignment already exists (checkpoint)")
-                continue
-
-            # Assess job intensity (from previous version)
-            heavy_job: bool = assess_job_intensity(prot_file)
-            
-            if heavy_job:
-                # For heavy jobs, use more resources
-                create_protein_alignments_pyfamsa(
-                    prot_dir=prot_dir,
-                    prot_algn_dir=prot_algn_dir,
-                    log_object=log_object,
-                    threads=threads,
-                    guide_tree=guide_tree,
-                    tree_heuristic=tree_heuristic,
-                    n_refinements=n_refinements,
-                    refine=refine,
-                )
-            else:
-                # For light jobs, use standard processing
-                create_protein_alignments_pyfamsa(
-                    prot_dir=prot_dir,
-                    prot_algn_dir=prot_algn_dir,
-                    log_object=log_object,
-                    threads=threads,
-                    guide_tree=guide_tree,
-                    tree_heuristic=tree_heuristic,
-                    n_refinements=n_refinements,
-                    refine=refine,
-                )
-
-        log_object.info("Protein alignments completed successfully")
-
-    except Exception as e:
-        log_object.error("Error creating protein alignments")
-        log_object.error(str(e))
-        log_object.error(traceback.format_exc())
-        sys.exit(1)
-
+    
 
 def create_profile_hmms_and_consensus_seqs(
     prot_algn_dir: str, 
     phmm_dir: str, 
     cons_dir: str, 
+    concatenate_consensus_faa: str,
     log_object: Any, 
     threads: int = 1
 ) -> None:
@@ -421,85 +315,75 @@ def create_profile_hmms_and_consensus_seqs(
     """
     try:
         # Create output directories
-        os.makedirs(phmm_dir, exist_ok=True)
-        os.makedirs(cons_dir, exist_ok=True)
+        setup_ready_directory([phmm_dir, cons_dir], overwrite_mode="overwrite")
 
         # Process each alignment file
         alignment_files: List[str] = [f for f in os.listdir(prot_algn_dir) if f.endswith('.msa.faa')]
         
-        for algn_file in tqdm.tqdm(alignment_files, desc="Creating HMMs and consensus"):
+        hmmbuild_cmds = []
+        hmmemit_cmds = []
+        for algn_file in _iter_progress(alignment_files, description="Creating HMMs and consensus"):
             prefix: str = algn_file.replace('.msa.faa', '')
             algn_path: str = os.path.join(prot_algn_dir, algn_file)
             hmm_path: str = os.path.join(phmm_dir, f"{prefix}.hmm")
             cons_path: str = os.path.join(cons_dir, f"{prefix}.faa")
 
             # Create HMM using hmmbuild
-            hmm_cmd: List[str] = ['hmmbuild', '--amino', hmm_path, algn_path]
-            run_cmd(hmm_cmd, log_object)
+            hmmbuild_cmd: List[str] = ['hmmbuild', '--amino', hmm_path, algn_path, log_object]
+            hmmemit_cmd: List[str] = ['hmmemit', '-c', '-o', cons_path, hmm_path, log_object]
+            hmmbuild_cmds.append(hmmbuild_cmd)
+            hmmemit_cmds.append(hmmemit_cmd)
 
-            # Create consensus sequence
-            create_consensus_from_alignment(algn_path, cons_path, log_object)
+        # Run hmmbuild commands in parallel
+        if hmmbuild_cmds:
+            msg = f"Running {len(hmmbuild_cmds)} hmmbuild jobs"
+            log_object.info(msg)
+            
+            p = multiprocessing.Pool(threads)
+            try:
+                for _ in _iter_progress(
+                    p.imap_unordered(multi_process, hmmbuild_cmds),
+                    total=len(hmmbuild_cmds),
+                    description="Running hmmbuild",
+                ):
+                    pass
+            except Exception as e:
+                log_object.error("Error in hmmbuild multiprocessing")
+                log_object.error(str(e))
+                log_object.error(traceback.format_exc())
+            finally:
+                p.close()
+
+        # Run hmmemit commands in parallel
+        if hmmemit_cmds:
+            msg = f"Running {len(hmmemit_cmds)} hmmemit jobs"
+            log_object.info(msg)
+            
+            p = multiprocessing.Pool(threads)
+            try:
+                for _ in _iter_progress(
+                    p.imap_unordered(multi_process, hmmemit_cmds),
+                    total=len(hmmemit_cmds),
+                    description="Running hmmemit",
+                ):
+                    pass
+            except Exception as e:
+                log_object.error("Error in hmmemit multiprocessing")
+                log_object.error(str(e))
+                log_object.error(traceback.format_exc())
+            finally:
+                p.close()
 
         log_object.info("Profile HMMs and consensus sequences created successfully")
+
+        concatenate_consensus_sequences(cons_dir, concatenate_consensus_faa, log_object)
 
     except Exception as e:
         log_object.error("Error creating profile HMMs and consensus sequences")
         log_object.error(str(e))
         log_object.error(traceback.format_exc())
 
-
-def create_consensus_from_alignment(algn_path: str, cons_path: str, log_object: Any) -> None:
-    """
-    Create consensus sequence from alignment.
-
-    Parameters:
-    -----------
-    algn_path : str
-        Path to alignment file
-    cons_path : str
-        Path to output consensus file
-    log_object : Any
-        Logger object
-    """
-    try:
-        # Read alignment and calculate consensus
-        sequences: List[str] = []
-        with open(algn_path, 'r') as handle:
-            for record in SeqIO.parse(handle, 'fasta'):
-                sequences.append(str(record.seq))
-
-        if not sequences:
-            return
-
-        # Calculate consensus (simple majority rule)
-        consensus: str = ""
-        alignment_length: int = len(sequences[0])
-        
-        for pos in range(alignment_length):
-            column: List[str] = [seq[pos] for seq in sequences if pos < len(seq)]
-            if column:
-                # Count amino acids at this position
-                aa_counts: Dict[str, int] = defaultdict(int)
-                for aa in column:
-                    if aa != '-':  # Skip gaps
-                        aa_counts[aa] += 1
-                
-                if aa_counts:
-                    # Get most common amino acid
-                    consensus_aa: str = max(aa_counts.items(), key=lambda x: x[1])[0]
-                    consensus += consensus_aa
-                else:
-                    consensus += '-'
-
-        # Write consensus sequence
-        with open(cons_path, 'w') as handle:
-            handle.write(f">consensus\n{consensus}\n")
-
-    except Exception as e:
-        log_object.error(f"Error creating consensus from {algn_path}: {str(e)}")
-
-
-def concatenate_consensus_alignment(
+def concatenate_consensus_sequences(
     og_cons_dir: str, 
     concatenated_consensus_seqs_file: str, 
     log_object: Any
@@ -544,84 +428,7 @@ def concatenate_consensus_alignment(
         log_object.error(traceback.format_exc())
 
 
-def create_near_scc_resolved_domain_protein_alignments(
-    bofasa_prep_dir: str,
-    resulting_dogs_file: str,
-    dogs_seqs_dir: str,
-    dogs_algn_dir: str,
-    dogs_trim_dir: str,
-    merged_core_genome_file: str,
-    log_object: Any,
-    threads: int = config.DEFAULT_THREADS,
-    guide_tree: str = config.DEFAULT_PYFAMSA_GUIDE_TREE,
-    tree_heuristic: Optional[str] = config.DEFAULT_PYFAMSA_HEURISTIC,
-    n_refinements: int = config.DEFAULT_PYFAMSA_REFINEMENTS,
-    near_scc_prop: float = config.DEFAULT_NEAR_SCC_PROP,
-    trimal_options: str = config.DEFAULT_TRIMAL_OPTIONS,
-    allow_mge: bool = False,
-    refine: bool = False,
-) -> None:
-    """
-    Create protein alignments for near single-copy-core resolved domain ortholog groups using PyFAMSA.
 
-    Parameters:
-    -----------
-    bofasa_prep_dir : str
-        Directory containing bofasa prep results
-    resulting_dogs_file : str
-        File containing resulting domain ortholog groups
-    dogs_seqs_dir : str
-        Directory for coarse domain ortholog group sequences
-    dogs_algn_dir : str
-        Directory for alignments
-    dogs_trim_dir : str
-        Directory for trimmed alignments
-    merged_core_genome_file : str
-        Output merged core genome file
-    log_object : Any
-        Logger object
-    threads : int, default=config.DEFAULT_THREADS
-        Number of threads to use
-    guide_tree : str, default=config.DEFAULT_PYFAMSA_GUIDE_TREE
-        Guide tree method for PyFAMSA ("sl", "slink", "upgma", "nj")
-    tree_heuristic : Optional[str], default=config.DEFAULT_PYFAMSA_HEURISTIC
-        Tree heuristic for PyFAMSA (None, "medoid", "part")
-    n_refinements : int, default=config.DEFAULT_PYFAMSA_REFINEMENTS
-        Number of refinement iterations for PyFAMSA
-    near_scc_prop : float, default=config.DEFAULT_NEAR_SCC_PROP
-        Proportion for near single-copy-core
-    trimal_options : str, default=config.DEFAULT_TRIMAL_OPTIONS
-        TrimAl options
-    allow_mge : bool, default=False
-        Whether to allow mobile genetic elements
-    refine : bool, default=False
-        Whether to enable refinement for higher quality alignments
-    """
-    try:
-        # Use PyFAMSA for domain protein alignments
-        from .alignment import create_domain_protein_alignments_pyfamsa
-
-        create_domain_protein_alignments_pyfamsa(
-            dog_seqs_dir=dogs_seqs_dir,
-            dog_algn_dir=dogs_algn_dir,
-            log_object=log_object,
-            threads=threads,
-            guide_tree=guide_tree,
-            tree_heuristic=tree_heuristic,
-            n_refinements=n_refinements,
-            keep_duplicates=False,
-            refine=refine,
-        )
-
-        # Additional processing for trimming and core genome creation
-        # This would be implemented based on the original util.py logic
-        log_object.info("Domain protein alignments completed using PyFAMSA")
-
-    except Exception as e:
-        log_object.error("Issues with creating domain protein alignments using PyFAMSA")
-        log_object.error(str(e))
-        log_object.error(traceback.format_exc())
-        sys.exit(1)
 
 
 def create_final_report(
@@ -631,46 +438,151 @@ def create_final_report(
     log_object: Any,
 ) -> None:
     """
-    Create final report summarizing bofasa results.
+    Create the formatted Excel report summarizing BOFASA results.
 
     Parameters:
-    -----------
-    bofasa_prep_dir : str
-        Directory containing bofasa prep results
-    og_context_info_file : str
-        File containing OG context information
-    final_result_file : str
-        Output final result file
-    log_object : Any
-        Logger object
+    - bofasa_prep_dir: Directory containing bofasa prep results
+    - og_context_info_file: Path to OG context information TSV
+    - final_result_file: Output .xlsx file path
+    - log_object: Logger instance
     """
     try:
-        # Load context information
-        context_data: pd.DataFrame = pd.read_csv(og_context_info_file, sep='\t')
-        
-        # Create summary statistics
-        summary_stats: Dict[str, Any] = {
-            'total_ortholog_groups': context_data['OG'].nunique(),
-            'total_samples': context_data['Sample'].nunique(),
-            'total_proteins': len(context_data),
-            'avg_proteins_per_og': context_data.groupby('OG').size().mean(),
-            'median_proteins_per_og': context_data.groupby('OG').size().median(),
-        }
-        
-        # Write summary report
-        with open(final_result_file, 'w') as handle:
-            handle.write("BOFASA Analysis Summary Report\n")
-            handle.write("=" * 50 + "\n\n")
-            
-            for stat_name, stat_value in summary_stats.items():
-                handle.write(f"{stat_name.replace('_', ' ').title()}: {stat_value}\n")
-        
-        log_object.info("Final report created successfully")
+        # Detect presence of geNomad annotations to decide formatting of certain columns
+        plasmid_file: str = os.path.join(bofasa_prep_dir, "Sample_Plasmid_Proteins.txt")
+        phage_file: str = os.path.join(bofasa_prep_dir, "Sample_Phage_Proteins.txt")
+        genomad_flag: bool = os.path.isfile(plasmid_file) or os.path.isfile(phage_file)
 
+        # Columns to treat as numeric in the context table
+        numeric_columns: List[str] = [
+            "Median OG length (bp)",
+            "Percentage contexts near scaffold edge",
+            "Number of genomes with OG",
+            "Number of protein in OG",
+            "Context conservation score",
+            "Context conservation score - complete contexts",
+            "Context entropy score",
+            "Context entropy score - complete contexts",
+            "Number of distinct neighbor OGs",
+            "Number of distinct OGs from complete contexts",
+            "Avg. number of distinct neighbor OGs",
+            "Avg. number of distinct neighbor OGs from complete contexts",
+            "Percentage instances on plasmid (based on geNomad annotation)",
+            "Percentage instances on phage (based on geNomad annotation)",
+            "Percentage homologous to IS-elements (based on ISfinder database)",
+        ]
+
+        # Load the context table, dropping the last two columns (Instances, Contexts)
+        results_df: pd.DataFrame = load_table_in_pandas_dataframe(
+            og_context_info_file,
+            numeric_columns=numeric_columns,
+            cut_last_columns=2,
+        )
+
+        # Create Excel writer and add data dictionary sheet
+        writer = pd.ExcelWriter(final_result_file, engine="xlsxwriter")
+        workbook = writer.book
+        dd_sheet = workbook.add_worksheet("Data Dictionary")
+        dd_sheet.write(
+            0,
+            0,
+            "Data Dictionary describing columns of \"bofasa Results\" spreadsheet can be found below and on bofasa's Wiki page at:",
+        )
+        dd_sheet.write(1, 0, "https://github.com/raufs/bofasa")
+
+        # Formats
+        na_format = workbook.add_format({"font_color": "#a6a6a6", "bg_color": "#FFFFFF", "italic": True})
+        header_format = workbook.add_format(
+            {"bold": True, "text_wrap": True, "valign": "top", "fg_color": "#D7E4BC", "border": 1}
+        )
+
+        # Write main sheet
+        sheet_name = "bofasa Results"
+        results_df.to_excel(writer, sheet_name=sheet_name, index=False, na_rep="NA")
+        worksheet = writer.sheets[sheet_name]
+        num_rows: int = results_df.shape[0] + 1  # +1 for header row
+
+        # Apply conditional formatting for NA cells and header row
+        worksheet.conditional_format(
+            f"A2:BA{num_rows}", {"type": "cell", "criteria": "==", "value": '"NA"', "format": na_format}
+        )
+        worksheet.conditional_format("A1:BA1", {"type": "cell", "criteria": "!=", "value": "NA", "format": header_format})
+
+        # Compute max values for color scales from numeric columns that exist in the DataFrame
+        def max_or_zero(col: str) -> float:
+            if col in results_df.columns:
+                series = results_df[col]
+                try:
+                    return float(series.max(skipna=True)) if series.size > 0 else 0.0
+                except Exception:
+                    return 0.0
+            return 0.0
+
+        max_num_genomes = max_or_zero("Number of genomes with OG")
+        max_num_proteins = max_or_zero("Number of protein in OG")
+        max_context_var = max_or_zero("Context conservation score")
+        max_context_var_comp = max_or_zero("Context conservation score - complete contexts")
+        max_context_ent = max_or_zero("Context entropy score")
+        max_context_ent_comp = max_or_zero("Context entropy score - complete contexts")
+
+        # Column color scales (ranges mirror v1.1.1)
+        worksheet.conditional_format(
+            f"B2:B{num_rows}",
+            {"type": "2_color_scale", "min_color": "#a9cafc", "max_color": "#736991", "min_value": 0, "max_value": 2500, "min_type": "num", "max_type": "num"},
+        )
+        worksheet.conditional_format(
+            f"C2:C{num_rows}",
+            {"type": "2_color_scale", "min_color": "#ffffff", "max_color": "#ed9393", "min_value": 0.0, "max_value": 1.0, "min_type": "num", "max_type": "num"},
+        )
+        worksheet.conditional_format(
+            f"D2:D{num_rows}",
+            {"type": "2_color_scale", "min_color": "#f2c6f7", "max_color": "#b07fb5", "min_value": 0.0, "max_value": max_num_genomes, "min_type": "num", "max_type": "num"},
+        )
+        worksheet.conditional_format(
+            f"E2:E{num_rows}",
+            {"type": "2_color_scale", "min_color": "#e7cdf7", "max_color": "#a186b3", "min_value": 0.0, "max_value": max_num_proteins, "min_type": "num", "max_type": "num"},
+        )
+        worksheet.conditional_format(
+            f"F2:F{num_rows}",
+            {"type": "2_color_scale", "min_color": "#e6f5ab", "max_color": "#a4b36b", "min_value": 0.0, "max_value": max_context_var, "min_type": "num", "max_type": "num"},
+        )
+        worksheet.conditional_format(
+            f"G2:G{num_rows}",
+            {"type": "2_color_scale", "min_color": "#e6f5ab", "max_color": "#a4b36b", "min_value": 0.0, "max_value": max_context_var_comp, "min_type": "num", "max_type": "num"},
+        )
+        worksheet.conditional_format(
+            f"H2:H{num_rows}",
+            {"type": "2_color_scale", "min_color": "#b3e3d6", "max_color": "#6aa192", "min_value": 0.0, "max_value": max_context_ent, "min_type": "num", "max_type": "num"},
+        )
+        worksheet.conditional_format(
+            f"I2:I{num_rows}",
+            {"type": "2_color_scale", "min_color": "#b3e3d6", "max_color": "#6aa192", "min_value": 0.0, "max_value": max_context_ent_comp, "min_type": "num", "max_type": "num"},
+        )
+
+        if genomad_flag:
+            worksheet.conditional_format(
+                f"N2:N{num_rows}",
+                {"type": "2_color_scale", "min_color": "#ffffff", "max_color": "#ed9393", "min_value": 0.0, "max_value": 1.0, "min_type": "num", "max_type": "num"},
+            )
+            worksheet.conditional_format(
+                f"O2:O{num_rows}",
+                {"type": "2_color_scale", "min_color": "#ffffff", "max_color": "#ed9393", "min_value": 0.0, "max_value": 1.0, "min_type": "num", "max_type": "num"},
+            )
+
+        worksheet.conditional_format(
+            f"P2:P{num_rows}",
+            {"type": "2_color_scale", "min_color": "#ffffff", "max_color": "#ed9393", "min_value": 0.0, "max_value": 1.0, "min_type": "num", "max_type": "num"},
+        )
+
+        # Autofilter and finalize
+        worksheet.autofilter(f"A1:BA{num_rows}")
+        workbook.close()
+        if log_object:
+            log_object.info("Final Excel report created successfully")
     except Exception as e:
-        log_object.error("Error creating final report")
-        log_object.error(str(e))
-        log_object.error(traceback.format_exc())
+        if log_object:
+            log_object.error("Error creating final Excel report")
+            log_object.error(str(e))
+            log_object.error(traceback.format_exc())
 
 
 def create_final_visual(
@@ -697,64 +609,76 @@ def create_final_visual(
         Logger object
     """
     try:
-        # Load context information
-        context_data: pd.DataFrame = pd.read_csv(og_context_info_file, sep='\t')
-        
-        # Create visualization (example: proteins per OG distribution)
-        fig = px.histogram(
-            context_data.groupby('OG').size().reset_index(name='protein_count'),
-            x='protein_count',
-            title='Distribution of Proteins per Ortholog Group',
-            labels={'protein_count': 'Number of Proteins', 'count': 'Number of OGs'}
-        )
-        
-        fig.write_html(final_result_plot)
-        log_object.info("Final visualization created successfully")
+        isfinder_file = os.path.join(bofasa_prep_dir, 'Sample_IS_Element_Proteins.txt')
+        plasmid_file = os.path.join(bofasa_prep_dir, 'Sample_Plasmid_Proteins.txt')
+        phage_file = os.path.join(bofasa_prep_dir, 'Sample_Phage_Proteins.txt')
 
+        mge_set = set([])
+
+        if os.path.isfile(isfinder_file):
+            with open(isfinder_file) as oif:
+                for line in oif:
+                    line = line.strip()
+                    ls = line.split('\t')
+                    mge_set.add(ls[1])
+        
+        if os.path.isfile(plasmid_file):
+            with open(plasmid_file) as opf:
+                for line in opf:
+                    line = line.strip()
+                    ls = line.split('\t')
+                    mge_set.add(ls[1])
+        
+        if os.path.isfile(phage_file):
+            with open(phage_file) as opf:
+                for line in opf:
+                    line = line.strip()
+                    ls = line.split('\t')
+                    mge_set.add(ls[1])
+            
+        tmp_file_header = [
+            'OG', 
+            'Number of protein in OG', 
+            'Context entropy score', 
+            'Majority of protein instances homologous to IS-element or on plasmid or phage'
+        ]
+        outf_handle = open(tmp_result_file, 'w')
+        outf_handle.write('\t'.join(tmp_file_header) + '\n')
+        with open(og_context_info_file) as oocif:
+            for i, line in enumerate(oocif):
+                if i == 0: 
+                    continue
+                line = line.strip()
+                ls = line.split('\t')
+                mge_related = 'No'
+                tot = 0
+                mge = 0
+                for p in ls[-2].split('; '):
+                    tot += 1
+                    if p in mge_set:
+                        mge += 1
+                if mge/tot > 0.5:
+                    mge_related = 'Yes'
+                outf_handle.write('\t'.join([ls[0], ls[4], ls[7], mge_related]) + '\n')
+        outf_handle.close()
+                
+        numeric_columns = set(['Number of protein in OG', 'Context entropy score'])
+        simple_df = load_table_in_pandas_dataframe(tmp_result_file, numeric_columns)
+        fig = px.scatter(
+            simple_df, 
+            x="Number of protein in OG", 
+            y="Context entropy score",
+            color="Majority of protein instances homologous to IS-element or on plasmid or phage", 
+            color_discrete_map={"No": "grey", "Yes": "red"},
+            marginal_x="histogram", 
+            marginal_y="histogram"
+        )
+        fig.write_html(final_result_plot)
     except Exception as e:
-        log_object.error("Error creating final visualization")
+        msg = 'Issues with create final HTML report.'
+        log_object.error(msg)
         log_object.error(str(e))
         log_object.error(traceback.format_exc())
-
-
-def load_table_in_pandas_dataframe(
-    input_file: str, 
-    numeric_columns: List[str], 
-    cut_last_columns: Optional[int] = None
-) -> pd.DataFrame:
-    """
-    Load a table into a pandas DataFrame with proper data types.
-
-    Parameters:
-    -----------
-    input_file : str
-        Path to input file
-    numeric_columns : List[str]
-        List of column names that should be numeric
-    cut_last_columns : Optional[int], default=None
-        Number of columns to cut from the end
-
-    Returns:
-    --------
-    pd.DataFrame
-        Loaded DataFrame with proper data types
-    """
-    try:
-        df: pd.DataFrame = pd.read_csv(input_file, sep='\t')
-        
-        # Convert numeric columns
-        for col in numeric_columns:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-        
-        # Cut last columns if specified
-        if cut_last_columns is not None:
-            df = df.iloc[:, :-cut_last_columns]
-        
-        return df
-        
-    except Exception as e:
-        raise ValueError(f"Error loading table from {input_file}: {str(e)}")
 
 
 def determine_phages_and_plasmids(
@@ -819,7 +743,7 @@ def determine_phages_and_plasmids(
             raise FileNotFoundError(f"geNomad database directory not found: {genomad_db_dir}")
         
         # Create output directory
-        os.makedirs(genomad_dir, exist_ok=True)
+        setup_ready_directory([genomad_dir], overwrite_mode="overwrite")
         
         # Open output files
         with open(phage_protein_listing_file, 'w') as phpf_handle, open(plasmid_protein_listing_file, 'w') as plpf_handle:
@@ -835,7 +759,6 @@ def determine_phages_and_plasmids(
                     '--splits', str(genome_splits), input_genome, genomad_results, genomad_db_dir
                 ]
                 
-                from .utils import run_cmd
                 try:
                     run_cmd(genomad_cmd, log_object)
                 except subprocess.CalledProcessError as e:
@@ -854,6 +777,7 @@ def determine_phages_and_plasmids(
                         log_object.error("The genomad database appears to be incomplete or missing required files")
                         log_object.error("Please run 'bofasa setup' to properly download and set up the genomad database")
                         raise
+                    
                     # Check for specific CPU compatibility errors
                     elif ("Xbyak::Error: x2APIC is not supported" in full_error or 
                           "Abort trap" in full_error or 
@@ -863,7 +787,7 @@ def determine_phages_and_plasmids(
                         log_object.warning("This is a known issue with certain CPU architectures/environments")
                         log_object.warning("Skipping MGE detection for this sample - no phage/plasmid proteins will be identified")
                         # Create empty result files to avoid downstream errors
-                        os.makedirs(genomad_results, exist_ok=True)
+                        setup_ready_directory([genomad_results], overwrite_mode="overwrite")
                         # Create empty summary files that the extract_mge_proteins function expects
                         virus_summary = os.path.join(genomad_results, f"{sample}_virus_summary.tsv")
                         plasmid_summary = os.path.join(genomad_results, f"{sample}_plasmid_summary.tsv")
@@ -1056,7 +980,7 @@ def annotate_is_finder(
             raise FileNotFoundError(f"ISFinder database not found: {isfinder_dmnd_path}")
         
         # Create output directory
-        os.makedirs(annot_dir, exist_ok=True)
+        setup_ready_directory([annot_dir], overwrite_mode="overwrite")
         
         # Prepare DIAMOND commands for each sample
         dmnd_search_cmds = []
@@ -1074,7 +998,11 @@ def annotate_is_finder(
         # Run DIAMOND searches in parallel
         from .utils import multi_process
         p = multiprocessing.Pool(threads)
-        for _ in tqdm.tqdm(p.imap_unordered(multi_process, dmnd_search_cmds), total=len(dmnd_search_cmds)):
+        for _ in _iter_progress(
+            p.imap_unordered(multi_process, dmnd_search_cmds),
+            total=len(dmnd_search_cmds),
+            description="Running DIAMOND blastp",
+        ):
             pass
         p.close()
         
@@ -1185,8 +1113,7 @@ def annotate_and_split_proteins_using_pfam(
             raise FileNotFoundError(f"Pfam HMM file or Z value not found: {pfam_hmm_path}")
         
         # Create output directories
-        os.makedirs(split_proteins_dir, exist_ok=True)
-        os.makedirs(domain_coords_dir, exist_ok=True)
+        setup_ready_directory([split_proteins_dir, domain_coords_dir], overwrite_mode="overwrite")
         
         # Prepare inputs for multiprocessing
         prot_mod_inputs = []
@@ -1203,7 +1130,11 @@ def annotate_and_split_proteins_using_pfam(
         
         # Process samples in parallel
         p = multiprocessing.Pool(threads)
-        for _ in tqdm.tqdm(p.imap_unordered(create_chopped_proteomes, prot_mod_inputs), total=len(prot_mod_inputs)):
+        for _ in _iter_progress(
+            p.imap_unordered(create_chopped_proteomes, prot_mod_inputs),
+            total=len(prot_mod_inputs),
+            description="Creating domain-chopped proteomes",
+        ):
             pass
         p.close()
         
@@ -1237,7 +1168,6 @@ def annotate_and_split_proteins_using_pfam(
         log_object.error(str(e))
         log_object.error(traceback.format_exc())
         return {}
-
 
 
 def process_pfam_domains_with_pyhmmer(
@@ -1471,7 +1401,6 @@ def create_chopped_proteomes(inputs):
                             if len(protein_seq) >= minimal_length:
                                 cpf_handle.write(f">{sample}|{protein_name}|full_protein|1\n{protein_seq}\n")
                                 dcf_handle.write(f"{sample}\t{protein_name}\tfull_protein\t1\t1\t{len(protein_seq)}\n")
-    
     except Exception as e:
         msg = f'An issue occurred with creating chopped up version of proteome file {prot_file}.'
         log_object.error(msg)

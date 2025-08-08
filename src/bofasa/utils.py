@@ -8,15 +8,73 @@ file operations, and other helper functions.
 import os
 import sys
 import subprocess
-import multiprocessing
 import resource
 import pkg_resources
 import logging
 import traceback
-from collections import defaultdict
+import shutil
 import itertools
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, TextIO
+from typing import Any, List, Optional, Set, Tuple
+import pandas as pd
 from . import config
+
+
+def load_table_in_pandas_dataframe(
+    input_file: str, 
+    numeric_columns: List[str], 
+    cut_last_columns: Optional[int] = None
+) -> pd.DataFrame:
+    """
+    Load a table into a pandas DataFrame with proper data types.
+
+    Parameters:
+    -----------
+    input_file : str
+        Path to input file
+    numeric_columns : List[str]
+        List of column names that should be numeric
+    cut_last_columns : Optional[int], default=None
+        Number of columns to cut from the end
+
+    Returns:
+    --------
+    pd.DataFrame
+        Loaded DataFrame with proper data types
+    """
+    try:
+        df: pd.DataFrame = pd.read_csv(input_file, sep='\t')
+        
+        # Convert numeric columns
+        for col in numeric_columns:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        # Cut last columns if specified
+        if cut_last_columns is not None and cut_last_columns > 0:
+            df = df.iloc[:, :-cut_last_columns]
+        
+        return df
+        
+    except Exception as e:
+        raise ValueError(f"Error loading table from {input_file}: {str(e)}")
+
+
+def _iter_progress(iterable, total=None, description: Optional[str] = None):
+    """
+    Iterate with a nice progress display using Rich's track when available,
+    falling back to tqdm otherwise.
+    """
+    try:
+        # Lightweight import so Rich remains optional at runtime
+        from rich.progress import track as _rich_track
+
+        return _rich_track(iterable, total=total, description=description)
+    except Exception:
+        # Fallback to tqdm if Rich isn't available
+        import tqdm  # type: ignore
+
+        # tqdm uses desc instead of description
+        return tqdm.tqdm(iterable, total=total, desc=description)
 
 
 class Colors:
@@ -149,7 +207,7 @@ Affiliation: University of Wisconsin - Madison, McMaster University
 
 Commands:
   {config.SUBCMD_SETUP_COLOR}setup{config.SUBCMD_END_COLOR}    Set up annotation databases
-  {config.SUBCMD_PREP_COLOR}prep{config.SUBCMD_END_COLOR}     Prepare genome data for analysis
+  {config.SUBCMD_PREP_COLOR}prep{config.SUBCMD_END_COLOR}     Prepare genomic data for analysis
   {config.SUBCMD_RUN_COLOR}run{config.SUBCMD_END_COLOR}      Run the main BOFASA analysis pipeline
 
 For detailed help on any command, use: bofasa <command> --help
@@ -231,6 +289,7 @@ def run_cmd(
         raise
 
 
+
 def multi_process(input_data: List[Any]) -> None:
     """
     Execute a command in a multiprocessing context.
@@ -276,6 +335,45 @@ def get_version() -> str:
     except Exception:
         return "unknown"
 
+
+def single_linkage_cluster(
+    pairs: List[Tuple[str, str, float]], all_lts: Set[str], paired_lts: Set[str]
+) -> List[Set[str]]:
+    """
+    Perform single-linkage clustering on pairs.
+
+    Solution adapted from a common approach to merge lists with shared elements.
+
+    Parameters:
+    - pairs: list of 2-tuples (or lists) representing links to cluster
+    - all_lts: set of all labels
+    - paired_lts: set of labels that appear in any pair
+
+    Returns:
+    - List of clustered groups (each group is a list of merged labels)
+    """
+    try:
+        merged_groups: List[List[str]] = [list(p[:2]) for p in pairs]
+        flat_items: Set[str] = set(itertools.chain.from_iterable(merged_groups))
+
+        for item in flat_items:
+            components = [grp for grp in merged_groups if item in grp]
+            for comp in components:
+                merged_groups.remove(comp)
+            merged_groups.append(list(set(itertools.chain.from_iterable(components))))
+
+        # Add singleton groups for any unpaired labels
+        for label in all_lts:
+            if label not in paired_lts:
+                merged_groups.append([label])
+
+        # Convert inner lists to sets for compatibility with callers
+        return [set(group) for group in merged_groups]
+    except Exception:
+        msg = 'Issue running single linkage clustering!'
+        sys.stderr.write(msg + '\n')
+        sys.stderr.write(traceback.format_exc() + '\n')
+        raise
 
 def create_logger_object(log_file: str) -> Optional[logging.Logger]:
     """
@@ -398,29 +496,71 @@ def memory_limit(mem: int) -> None:
         Sets the memory limit for the current process
     """
     try:
+        # Import config here to avoid circular imports
+        from .config import MIN_MEMORY_LIMIT, MAX_MEMORY_LIMIT
+        
+        # Validate memory limit is within reasonable bounds
+        if mem < MIN_MEMORY_LIMIT:
+            print(f"Warning: Requested memory limit ({mem}GB) is below minimum ({MIN_MEMORY_LIMIT}GB)")
+            print(f"Using minimum limit of {MIN_MEMORY_LIMIT}GB")
+            mem = MIN_MEMORY_LIMIT
+        elif mem > MAX_MEMORY_LIMIT:
+            print(f"Warning: Requested memory limit ({mem}GB) is above maximum ({MAX_MEMORY_LIMIT}GB)")
+            print(f"Using maximum limit of {MAX_MEMORY_LIMIT}GB")
+            mem = MAX_MEMORY_LIMIT
+        
         max_virtual_memory: int = mem * 1000000000
         soft, hard = resource.getrlimit(resource.RLIMIT_AS)
         
+        # Handle RLIM_INFINITY (unlimited) values
+        soft_gb = "unlimited" if soft == resource.RLIM_INFINITY else f"{soft // 1000000000}GB"
+        hard_gb = "unlimited" if hard == resource.RLIM_INFINITY else f"{hard // 1000000000}GB"
+        
         # Check if the requested limit exceeds the system's hard limit
-        if max_virtual_memory > hard:
-            print(f"Warning: Requested memory limit ({mem}GB) exceeds system maximum ({hard // 1000000000}GB)")
+        if hard != resource.RLIM_INFINITY and max_virtual_memory > hard:
+            print(f"Warning: Requested memory limit ({mem}GB) exceeds system maximum ({hard_gb})")
             print(f"Using system maximum instead")
             max_virtual_memory = hard
         
-        resource.setrlimit(resource.RLIMIT_AS, (max_virtual_memory, hard))
-        print(resource.getrlimit(resource.RLIMIT_AS))
+        # Check if the requested limit is lower than the current soft limit
+        if soft != resource.RLIM_INFINITY and max_virtual_memory < soft:
+            print(f"Reducing memory limit from {soft_gb} to {mem}GB")
+        elif soft == resource.RLIM_INFINITY:
+            print(f"Setting memory limit from unlimited to {mem}GB")
+        
+        # When setting a lower limit, we need to set both soft and hard limits
+        # to the same value to ensure the limit is enforced
+        try:
+            if soft == resource.RLIM_INFINITY or max_virtual_memory < soft:
+                resource.setrlimit(resource.RLIMIT_AS, (max_virtual_memory, max_virtual_memory))
+            else:
+                resource.setrlimit(resource.RLIMIT_AS, (max_virtual_memory, hard))
+            
+            print(f"Memory limit set to: {mem}GB")
+        except ValueError as e:
+            if "current limit exceeds maximum limit" in str(e):
+                print(f"Warning: Unable to set memory limit to {mem}GB on this system")
+                print("This may be due to system restrictions (common on macOS)")
+                print("Memory usage will not be limited by this process")
+            else:
+                raise
     except Exception as e:
         sys.stderr.write(f"Error setting memory limit: {str(e)}\n")
 
 
-def setup_ready_directory(directories: List[str]) -> None:
+def setup_ready_directory(directories: List[str], overwrite_mode: str = "skip") -> None:
     """
-    Create directories if they don't exist.
-
+    Create directories with optional overwrite behavior.
+    
     Parameters:
     -----------
     directories : List[str]
         List of directory paths to create
+    overwrite_mode : str, optional
+        How to handle existing directories:
+        - "skip": Skip existing directories (default)
+        - "overwrite": Delete and recreate existing directories
+        - "ask": Ask user for each existing directory
 
     Returns:
     --------
@@ -429,7 +569,23 @@ def setup_ready_directory(directories: List[str]) -> None:
     """
     try:
         for directory in directories:
-            os.makedirs(directory, exist_ok=True)
+            if os.path.exists(directory):
+                if overwrite_mode == "skip":
+                    continue
+                elif overwrite_mode == "overwrite":
+                    shutil.rmtree(directory)
+                    os.makedirs(directory, exist_ok=True)
+                elif overwrite_mode == "ask":
+                    response = input(f"Directory '{directory}' already exists. Delete it? (y/n): ").strip().lower()
+                    if response in ['y', 'yes']:
+                        shutil.rmtree(directory)
+                        os.makedirs(directory, exist_ok=True)
+                    else:
+                        print(f"Skipping directory '{directory}'")
+                else:
+                    raise ValueError(f"Invalid overwrite_mode: {overwrite_mode}. Must be 'skip', 'overwrite', or 'ask'")
+            else:
+                os.makedirs(directory, exist_ok=True)
     except Exception as e:
         sys.stderr.write(f"Error creating directories: {str(e)}\n")
         raise
@@ -485,14 +641,10 @@ def assess_job_intensity(faa_file: str) -> bool:
                     total_length += len(line.strip())
         
         # Consider job intense if:
-        # - More than 100 sequences, or
-        # - Average sequence length > 500 amino acids, or
-        # - Total alignment size > 50,000 amino acids
+        # >200 sequences or the average sequence length >2,000 sequences
         avg_length: float = total_length / sequence_count if sequence_count > 0 else 0
         
-        return (sequence_count > 100 or 
-                avg_length > 500 or 
-                total_length > 50000)
+        return (sequence_count > 200 or avg_length > 2000)
                 
     except Exception:
         # Default to simple job if assessment fails

@@ -6,26 +6,22 @@ data files, including file format validation and data loading.
 """
 
 import gzip
-import itertools
 import logging
 import multiprocessing
 import os
 import subprocess
 import sys
 import traceback
-import tempfile
 import time
 from collections import defaultdict
 from operator import itemgetter
 from typing import Dict, List, Any, Optional
-
-import tqdm
 from Bio import SeqIO
-
-from .utils import multi_process, create_locus_tag_options
+from .utils import create_locus_tag_options, _iter_progress, setup_ready_directory
 from . import config
 
 # No global variables needed for per-sample logging
+
 
 def _get_cds_log_file(outdir: str, sample_name: str) -> str:
     """
@@ -39,6 +35,7 @@ def _get_cds_log_file(outdir: str, sample_name: str) -> str:
         Path to the CDS log file for the sample
     """
     return os.path.join(outdir, f"cds_processing_issues_{sample_name}.log")
+
 
 def _log_cds_issue(outdir: str, sample_name: str, scaffold: str, feature_info: str, issue_type: str, details: str = ""):
     """
@@ -639,7 +636,7 @@ def run_gene_calling(
         possible_locus_tags = create_locus_tag_options(locus_tag_length)
 
         # Create output directory if it doesn't exist
-        os.makedirs(prodigal_outdir, exist_ok=True)
+        setup_ready_directory([prodigal_outdir], overwrite_mode="overwrite")
 
         # Prepare arguments for multiprocessing
         process_args = []
@@ -654,15 +651,17 @@ def run_gene_calling(
         # Process genomes in parallel
         if threads > 1 and len(sample_genomes) > 1:
             with multiprocessing.Pool(processes=threads) as pool:
-                results = list(tqdm.tqdm(
-                    pool.imap(_process_single_genome, process_args),
-                    total=len(process_args),
-                    desc="Processing genomes"
-                ))
+                results = list(
+                    _iter_progress(
+                        pool.imap(_process_single_genome, process_args),
+                        total=len(process_args),
+                        description="Processing genomes",
+                    )
+                )
         else:
             # Process sequentially if single thread or single genome
             results = []
-            for args in tqdm.tqdm(process_args, desc="Processing genomes"):
+            for args in _iter_progress(process_args, description="Processing genomes"):
                 results.append(_process_single_genome(args))
 
         # Check results and report
@@ -762,7 +761,7 @@ def process_genomes_as_genbanks(
 
     try:
         # Create output directory if it doesn't exist
-        os.makedirs(gp_dir, exist_ok=True)
+        setup_ready_directory([gp_dir], overwrite_mode="overwrite")
 
         # Generate locus tags if needed
         locus_tags = None
@@ -782,15 +781,17 @@ def process_genomes_as_genbanks(
         # Process genomes in parallel
         if threads > 1 and len(sample_genomes) > 1:
             with multiprocessing.Pool(processes=threads) as pool:
-                results = list(tqdm.tqdm(
-                    pool.imap(_process_single_genbank, process_args),
-                    total=len(process_args),
-                    desc="Processing GenBank files"
-                ))
+                results = list(
+                    _iter_progress(
+                        pool.imap(_process_single_genbank, process_args),
+                        total=len(process_args),
+                        description="Processing GenBank files",
+                    )
+                )
         else:
             # Process sequentially if single thread or single genome
             results = []
-            for args in tqdm.tqdm(process_args, desc="Processing GenBank files"):
+            for args in _iter_progress(process_args, description="Processing GenBank files"):
                 results.append(_process_single_genbank(args))
 
         # Check results and report
@@ -944,9 +945,7 @@ def extract_gene_contexts(inputs: List[Any]) -> None:
                             limit_reached = True
                         else:
                             right_side_genes_and_ogs.add(
-                                tuple(
-                                    [cds_iter[2], gene_to_og[cds_iter[2]], cds_iter[0]]
-                                )
+                                tuple([cds_iter[2], gene_to_og[cds_iter[2]], cds_iter[0]])
                             )
                     except Exception:
                         near_scaffold_edge = True
@@ -1299,41 +1298,6 @@ def split_by_idx(S: List[Any], list_of_indices: List[int]) -> List[List[Any]]:
         yield S[left:right]
         left = right
     yield S[left:]
-
-
-def load_table_in_pandas_dataframe(
-    input_file: str, numeric_columns: List[str], cut_last_columns: Optional[int] = None
-) -> Any:
-    """
-    Load a table into a pandas DataFrame with numeric column handling.
-
-    Args:
-        input_file: Path to the input table file
-        numeric_columns: List of column names to treat as numeric
-        cut_last_columns: Number of columns to remove from the end (default: None)
-
-    Returns:
-        pandas.DataFrame: Loaded data with proper numeric column types, or None if loading fails
-    """
-    try:
-        import pandas as pd
-
-        df = pd.read_csv(input_file, sep="\t")
-
-        if cut_last_columns:
-            df = df.iloc[:, :-cut_last_columns]
-
-        for col in numeric_columns:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        return df
-
-    except Exception as e:
-        # Note: This function doesn't have access to log_object, so we keep stderr for this case
-        sys.stderr.write(f"Error loading table: {str(e)}\n")
-        return None
-
 
 def process_prokka_directory(
     prokka_dir: str,
@@ -1779,11 +1743,13 @@ def process_annotation_directories(
     # Use multiprocessing if multiple directories
     if len(annotation_dirs) > 1 and threads > 1:
         with multiprocessing.Pool(threads) as pool:
-            results = list(tqdm.tqdm(
-                pool.imap(_process_single_annotation_dir, process_args),
-                total=len(process_args),
-                desc="Processing annotation directories"
-            ))
+            results = list(
+                _iter_progress(
+                    pool.imap(_process_single_annotation_dir, process_args),
+                    total=len(process_args),
+                    description="Processing annotation directories",
+                )
+            )
     else:
         results = []
         for args in process_args:

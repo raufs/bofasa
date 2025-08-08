@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
-### Program: extract_og_pairs
-### Author: Rauf Salamzade
-### Kalan Lab
-### UW Madison & McMaster University
+"""
+Program: extract_og_pairs.py
+Authors: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan 
+Affiliation: University of Wisconsin - Madison, McMaster University
+"""
 
 # BSD 3-Clause License
 #
@@ -65,8 +66,8 @@ Options for software supported include:
 - scarap
 - pirate
 - orthofinder_hog (OrthoFinder v2.5.4/v2.5.5 results - using 
-                   phylogenetically refined from the N0.tsv 
-                   file)
+                   phylogenetically refined hierarchical 
+                   ortholog groups from the N0.tsv file)
 - orthofinder_og (OrthoFinder v2.5.4/v2.5.5 results - using 
                   coarse ortholog groups from the 
                   Orthogroups.tsv file)
@@ -171,7 +172,7 @@ def extract_og_pairs():
         try:
             utils.memory_limit(max_memory)
         except Exception as e:
-            sys.stdout.write("Error setting memory limit\n")
+            sys.stderr.write(f"Error setting memory limit: {str(e)}\n")
 
     try:
         assert method in valid_software

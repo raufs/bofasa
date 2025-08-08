@@ -4,7 +4,6 @@ authors = [{name="Rauf Salamzade", email="salamzader@gmail.com"}]
 version = "1.2.0"
 description = "Bacterial multi-species orthology inference and analysis."
 dependencies = [
-    "pyfamsa>=0.5.0",
     "biopython>=1.79",
     "scipy>=1.7.0",
     "pandas>=1.3.0",
@@ -26,7 +25,8 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-script-files=["src/bofasa/scripts/extract_scc_og_pairs.py",
+script-files=["src/bofasa/scripts/extract_og_pairs.py",
+              "src/bofasa/scripts/extract_scc_og_pairs.py",
               "src/bofasa/scripts/print_og_itol_matrix.py",
               "src/bofasa/scripts/compare_og_pairs.py",
               "src/bofasa/scripts/determine_og_freqs.py"]

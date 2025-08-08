@@ -205,19 +205,7 @@ def create_main_parser() -> BofasaArgumentParser:
         "  bofasa setup --threads 8 --force"
     )
 
-    # Add test subcommand
-    test_parser = subparsers.add_parser(
-        "test", 
-        help="Run bofasa prep and run on test genomes",
-        description="Run bofasa prep and run on test genomes to verify installation and functionality.",
-        formatter_class=BofasaHelpFormatter,
-    )
-    add_test_arguments(test_parser)
-    test_parser.epilog = (
-        "Examples:\n"
-        "  bofasa test -o test_results\n"
-        "  bofasa test -o test_results --threads 8 --cleanup"
-    )
+
 
     # Add prep subcommand
     prep_parser = subparsers.add_parser(
@@ -334,13 +322,6 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
         "performed [Default is 1; uses midpoint rooting].",
     )
     parser.add_argument(
-        "-qa",
-        "--quality-alignments",
-        action="store_true",
-        help="Prioritize quality over speed for constructing domain-resolution\n"
-        "ortholog group protein alignments. Uses MUSCLE align mode instead of super5 mode.",
-    )
-    parser.add_argument(
         "-us",
         "--ultra-sens",
         action="store_true",
@@ -382,9 +363,15 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
         "-mm",
         "--max-memory",
         type=int,
-        default=32,
-        help="Uses resource module to set soft memory limit. Provide in Giga-bytes\n"
-        "[Default is 32].",
+        default=config.DEFAULT_MAX_MEMORY,
+        help=f"Uses resource module to set soft memory limit. Provide in Giga-bytes\n"
+        f"[Default is {config.DEFAULT_MAX_MEMORY}].",
+    )
+    parser.add_argument(
+        "--more-deterministic",
+        action="store_true",
+        help="Use more deterministic settings for reproducible results.\n"
+        "This may be slower but ensures consistent output across runs.",
     )
 
 
@@ -493,55 +480,6 @@ def add_setup_annotation_dbs_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def add_test_arguments(parser):
-    """Add arguments for the test subcommand."""
-    parser.add_argument(
-        "-o", "--output-dir", required=True, help="Output directory for test results."
-    )
-    parser.add_argument(
-        "-t",
-        "--threads",
-        type=int,
-        default=4,
-        help="Number of threads to use [Default is 4].",
-    )
-    parser.add_argument(
-        "-gcm",
-        "--gene-calling-method",
-        choices=["pyrodigal", "prodigal"],
-        default="pyrodigal",
-        help="Gene calling method [Default is pyrodigal].",
-    )
-    parser.add_argument(
-        "-l",
-        "--locus-tag-length",
-        type=int,
-        default=3,
-        help="Length of locus tags [Default is 3].",
-    )
-    parser.add_argument(
-        "-m", "--meta-mode", action="store_true", help="Use meta mode for gene calling."
-    )
-    parser.add_argument(
-        "-rlt",
-        "--rename-locus-tags",
-        action="store_true",
-        help="Rename locus tags in GenBank files.",
-    )
-    parser.add_argument(
-        "-mm",
-        "--max-memory",
-        type=int,
-        default=32,
-        help="Memory limit in GB [Default is 32].",
-    )
-    parser.add_argument(
-        "--cleanup",
-        action="store_true",
-        help="Clean up temporary files after test completion.",
-    )
-
-
 def run_bofasa_analysis(args: argparse.Namespace) -> None:
     """Run the main bofasa analysis."""
     # Import here to avoid circular imports and heavy dependencies
@@ -557,13 +495,11 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
     )
     from .analysis import (
         determine_ortholog_group_contexts,
-        create_protein_alignments,
         create_profile_hmms_and_consensus_seqs,
-        concatenate_consensus_alignment,
-        create_near_scc_resolved_domain_protein_alignments,
         create_final_report,
         create_final_visual,
     )
+    from .alignment import create_protein_alignments, create_near_scc_resolved_domain_protein_alignments
 
     # Check OrthoFinder setup early in the workflow
     print("Checking OrthoFinder setup...")
@@ -590,7 +526,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             else:
                 print("Please enter 'y' for yes or 'n' for no.")
 
-    print(args.threads)
+    # Debug: print(args.threads)  # Removed debug print
 
     # Set recursion limit
     max_recursion_depth = getattr(args, 'max_recursion_depth', 5000)
@@ -601,7 +537,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
         memory_limit(args.max_memory)
 
     # Create output directory first
-    os.makedirs(args.output_dir, exist_ok=True)
+    setup_ready_directory([args.output_dir], overwrite_mode="skip")
 
     # Create logger
     log_file = os.path.join(args.output_dir, "bofasa.log")
@@ -618,13 +554,13 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             logger.info(f"Input directory: {args.bofasa_prep_dir}")
             logger.info(f"Output directory: {args.output_dir}")
             logger.info(f"Threads: {args.threads}")
-            logger.info(f"Memory limit: {args.max_memory}GB")
+            logger.info(f"Memory limit requested: {args.max_memory}GB")
         else:
             print("Starting bofasa analysis")
             print(f"Input directory: {args.bofasa_prep_dir}")
             print(f"Output directory: {args.output_dir}")
             print(f"Threads: {args.threads}")
-            print(f"Memory limit: {args.max_memory}GB")
+            print(f"Memory limit requested: {args.max_memory}GB")
 
         # Log parameters
         if logger:
@@ -635,20 +571,32 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
                 getattr(args, 'mcl_inflation', 1.2), getattr(args, 'ultra_sens', False),
                 getattr(args, 'fixation_index_cutoff', 0.25), getattr(args, 'dog_jaccard', 0.25),
                 getattr(args, 'skip_phylo_refine', False), getattr(args, 'rooting_seeds', 1),
-                getattr(args, 'skip_merge_back', False), getattr(args, 'quality_alignments', False),
+                getattr(args, 'skip_merge_back', False), 
                 getattr(args, 'og_consensus', False), getattr(args, 'core_genome', False),
                 getattr(args, 'near_scc_prop', 0.95), args.threads, args.max_memory
             ]
             parameter_names = [
-                "bofasa_prep directory", "Output directory", "Surrounding BP for syntenic conservation assessment",
-                "MCL inflation", "Use ultra-sensitivity mode for DIAMOND searching in OrthoFinder?",
-                "Fixation index cutoff for domain ortholog group re-merging following phylogenetic splitting",
-                "Jaccard index cutoff for domain ortholog groups shared between full protein pairs",
-                "Skip phylogenetic refinement of domain ortholog groups?", "Maximum number of nodes to try for rooting",
+                "bofasa_prep directory",
+                "Output directory",
+                "Surrounding BP for syntenic conservation assessment",
+                "MCL inflation",
+                "Use ultra-sensitivity mode for DIAMOND searching in OrthoFinder?",
+                (
+                    "Fixation index cutoff for domain ortholog group re-merging "
+                    "following phylogenetic splitting"
+                ),
+                (
+                    "Jaccard index cutoff for domain ortholog groups shared between "
+                    "full protein pairs"
+                ),
+                "Skip phylogenetic refinement of domain ortholog groups?",
+                "Maximum number of nodes to try for rooting",
                 "Skip fixation index-based re-mergining of split ortholog partitions?",
-                "High-quality alignment method?", "Determine consensus sequences for ortholog groups?",
-                "Create core genome alignment(s) for phylogenomics?", "Near-SCC conservation proportion?",
-                "Number of threads/cores", "Maximum memory in GB"
+                "Determine consensus sequences for ortholog groups?",
+                "Create core genome alignment(s) for phylogenomics?",
+                "Near-SCC conservation proportion?",
+                "Number of threads/cores",
+                "Maximum memory in GB",
             ]
             log_parameters_to_file(parameters_file, parameter_names, parameter_values)
             logger.info("Done saving parameters!")
@@ -679,7 +627,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
         # Create checkpoint and final results directories
         checkdir = os.path.join(args.output_dir, "Checkpoint_Files/")
         findir = os.path.join(args.output_dir, "Final_Results/")
-        setup_ready_directory([checkdir, findir])
+        setup_ready_directory([checkdir, findir], overwrite_mode="skip")
 
         # Step 1: Run OrthoFinder
         step1_checkpoint_file = os.path.join(checkdir, "Step1.txt")
@@ -745,9 +693,17 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             assert os.path.isfile(orthofinder_graph_file) and os.path.isfile(orthofinder_seqid_file)
         except AssertionError:
             if logger:
-                logger.error('Could not validate OrthoFinder results exist. Perhaps investigate the OrthoFinder log files for further logging information.')
+                logger.error(
+                    'Could not validate OrthoFinder results exist. '
+                    'Perhaps investigate the OrthoFinder log files for further '
+                    'logging information.'
+                )
             else:
-                print('Could not validate Orthofinder results exist. Perhaps investigate the OrthoFinder log files for further logging information.')
+                print(
+                    'Could not validate Orthofinder results exist. '
+                    'Perhaps investigate the OrthoFinder log files for further '
+                    'logging information.'
+                )
             sys.exit(1)
 
         # Step 2: Process OrthoFinder results and determine more coarse domain ortholog groups
@@ -768,14 +724,15 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
                     resulting_dogs_file, logger
                 )
             else:
-                setup_ready_directory([resdog_dir])
+                setup_ready_directory([resdog_dir], overwrite_mode="overwrite")
                 resolve_orthogroups_using_phylogenetics(
                     orthofinder_fasta_dir, orthofinder_tsv_file, orthofinder_tsv_singletons_file,
                     resdog_dir, resulting_dogs_file, logger,
                     skip_merge_back_flag=getattr(args, 'skip_merge_back', False),
                     rooting_seeds=getattr(args, 'rooting_seeds', 1),
                     fixation_index_cutoff=getattr(args, 'fixation_index_cutoff', 0.25),
-                    threads=args.threads
+                    threads=args.threads, 
+                    more_deterministic=getattr(args, 'more_deterministic', False)
                 )
             
             with open(step2_checkpoint_file, 'w') as f:
@@ -799,7 +756,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
         resulting_ogs_file = os.path.join(findir, "Protein_Ortholog_Groups.tsv")
         
         if not os.path.isfile(step3_checkpoint_file):
-            setup_ready_directory([protein_cluster_dir])
+            setup_ready_directory([protein_cluster_dir], overwrite_mode="overwrite")
             determine_protein_orthogroups(
                 resulting_dogs_file, protein_cluster_dir, resulting_ogs_file, 
                 logger, dj=getattr(args, 'dog_jaccard', 0.25), threads=args.threads
@@ -826,7 +783,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
         og_context_info_file = os.path.join(surround_info_dir, "OrthoGroup_Contexts.tsv")
         
         if not os.path.isfile(step4_checkpoint_file):
-            setup_ready_directory([surround_info_dir])
+            setup_ready_directory([surround_info_dir], overwrite_mode="overwrite")
             determine_ortholog_group_contexts(
                 args.bofasa_prep_dir, og_context_info_file, surround_info_dir, 
                 resulting_ogs_file, logger, 
@@ -869,7 +826,11 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
 
         # Step 6: Create final visuals
         step6_checkpoint_file = os.path.join(checkdir, "Step6.txt")
-        msg = '\n--------------------\nStep 6\n--------------------\nCreating final summary visualization of conservation vs. neighborhood syntenic conservation.'
+        msg = (
+            '\n--------------------\nStep 6\n--------------------\n'
+            'Creating final summary visualization of conservation vs. '
+            'neighborhood syntenic conservation.'
+        )
         if logger:
             logger.info(msg)
         else:
@@ -909,16 +870,13 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             concatenated_consensus_seqs_file = os.path.join(findir, "Orthogroup_Consensus_Sequences.faa")
             
             if not os.path.isfile(step7_checkpoint_file):
-                setup_ready_directory([og_seqs_dir, og_algn_dir, og_hmms_dir, og_cons_dir])
+                setup_ready_directory([og_seqs_dir, og_algn_dir, og_hmms_dir, og_cons_dir], overwrite_mode="overwrite")
                 create_protein_alignments(
                     args.bofasa_prep_dir, resulting_ogs_file, og_seqs_dir, og_algn_dir,
-                    logger, threads=args.threads
+                    logger, threads=args.threads, more_deterministic=getattr(args, 'more_deterministic', False)
                 )
                 create_profile_hmms_and_consensus_seqs(
-                    og_algn_dir, og_hmms_dir, og_cons_dir, logger, threads=args.threads
-                )
-                concatenate_consensus_alignment(
-                    og_cons_dir, concatenated_consensus_seqs_file, logger
+                    og_algn_dir, og_hmms_dir, og_cons_dir, concatenated_consensus_seqs_file, logger, threads=args.threads
                 )
                 
                 with open(step7_checkpoint_file, 'w') as f:
@@ -945,12 +903,12 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             merged_core_genome_file = os.path.join(findir, "Core_Genome_Alignment.faa")
             
             if not os.path.isfile(step8_checkpoint_file):
-                setup_ready_directory([dogs_seqs_dir, dogs_algn_dir, dogs_trim_dir])
+                setup_ready_directory([dogs_seqs_dir, dogs_algn_dir, dogs_trim_dir], overwrite_mode="overwrite")
                 create_near_scc_resolved_domain_protein_alignments(
                     args.bofasa_prep_dir, resulting_dogs_file, dogs_seqs_dir,
                     dogs_algn_dir, dogs_trim_dir, merged_core_genome_file,
                     logger, near_scc_prop=getattr(args, 'near_scc_prop', 0.95), 
-                    threads=args.threads
+                    threads=args.threads, more_deterministic=getattr(args, 'more_deterministic', False)
                 )
                 
                 with open(step8_checkpoint_file, 'w') as f:
@@ -1043,11 +1001,11 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
         memory_limit(args.max_memory)
 
     # Create output directory first
-    os.makedirs(args.output_dir, exist_ok=True)
+    setup_ready_directory([args.output_dir], overwrite_mode="skip")
 
     # Create checkpoint directory
     checkdir = os.path.join(args.output_dir, "Checkpoint_Files/")
-    setup_ready_directory([checkdir])
+    setup_ready_directory([checkdir], overwrite_mode="skip")
 
     # Create logger
     log_file = os.path.join(args.output_dir, "bofasa_prep.log")
@@ -1126,7 +1084,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
             faa_dir = os.path.join(gp_dir, "Proteomes/")
             bed_dir = os.path.join(gp_dir, "BEDs/")
 
-            setup_ready_directory([gp_dir, faa_dir, bed_dir])
+            setup_ready_directory([gp_dir, faa_dir, bed_dir], overwrite_mode="overwrite")
 
         # Initialize sample mappings
         sample_wgs = {}
@@ -1340,7 +1298,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                     print(msg)
 
                 genomad_dir = os.path.join(args.output_dir, "geNomad_Annotations/")
-                setup_ready_directory([genomad_dir])
+                setup_ready_directory([genomad_dir], overwrite_mode="overwrite")
 
                 phage_protein_listing_file = os.path.join(args.output_dir, "Sample_Phage_Proteins.txt")
                 plasmid_protein_listing_file = os.path.join(args.output_dir, "Sample_Plasmid_Proteins.txt")
@@ -1361,7 +1319,10 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                 else:
                     print(msg)
         elif getattr(args, 'run_genomad', False) and not sample_wgs:
-            msg = 'Warning: geNomad requested but no genome files available (only annotation directories provided). Skipping geNomad step.'
+            msg = (
+                'Warning: geNomad requested but no genome files available '
+                '(only annotation directories provided). Skipping geNomad step.'
+            )
             if logger:
                 logger.warning(msg)
             else:
@@ -1377,7 +1338,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                 print(msg)
 
             annot_dir = os.path.join(args.output_dir, "ISFinder_Annotations/")
-            setup_ready_directory([annot_dir])
+            setup_ready_directory([annot_dir], overwrite_mode="overwrite")
 
             isfinder_protein_listing_file = os.path.join(args.output_dir, "Sample_IS_Element_Proteins.txt")
             annotate_is_finder(
@@ -1407,7 +1368,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
             split_proteins_dir = os.path.join(args.output_dir, "Domain_and_Interdomain_FASTAs/")
             domain_coords_dir = os.path.join(args.output_dir, "Domain_and_Interdomain_Coordinates/")
             domain_coord_info_file = os.path.join(args.output_dir, "Sample_Domain_and_InterDomain_Information.txt")
-            setup_ready_directory([split_proteins_dir, domain_coords_dir])
+            setup_ready_directory([split_proteins_dir, domain_coords_dir], overwrite_mode="overwrite")
             
             sample_ccds_proteomes = annotate_and_split_proteins_using_pfam(
                 sample_proteomes, split_proteins_dir, domain_coords_dir, 
@@ -1515,159 +1476,6 @@ def run_setup_annotation_dbs(args: argparse.Namespace) -> None:
         raise
 
 
-def run_bofasa_test(args):
-    """Run the bofasa test workflow."""
-    # Import here to avoid circular imports and heavy dependencies
-    import os
-    import tempfile
-    import shutil
-    from .utils import create_logger_object, close_logger_object, memory_limit
-    
-    # Set memory limit
-    if args.max_memory:
-        memory_limit(args.max_memory)
-
-    # Create output directory first
-    os.makedirs(args.output_dir, exist_ok=True)
-
-    # Create logger
-    log_file = os.path.join(args.output_dir, "bofasa_test.log")
-    logger = create_logger_object(log_file)
-    
-    # Check if logger was created successfully
-    if logger is None:
-        print("Warning: Failed to create logger. Continuing without logging.")
-        logger = None
-
-    try:
-        if logger:
-            logger.info("Starting bofasa test workflow")
-            logger.info(f"Output directory: {args.output_dir}")
-            logger.info(f"Threads: {args.threads}")
-            logger.info(f"Gene calling method: {args.gene_calling_method}")
-        else:
-            print("Starting bofasa test workflow")
-            print(f"Output directory: {args.output_dir}")
-            print(f"Threads: {args.threads}")
-            print(f"Gene calling method: {args.gene_calling_method}")
-
-        # Create temporary directory for test data
-        with tempfile.TemporaryDirectory() as temp_dir:
-            if logger:
-                logger.info(f"Created temporary directory: {temp_dir}")
-            else:
-                print(f"Created temporary directory: {temp_dir}")
-            
-            # Generate test genomes
-            test_genomes = create_test_genomes(temp_dir, logger)
-            if logger:
-                logger.info(f"Created {len(test_genomes)} test genomes")
-            else:
-                print(f"Created {len(test_genomes)} test genomes")
-            
-            # Step 1: Run bofasa prep
-            prep_dir = os.path.join(args.output_dir, "prep_output")
-            if logger:
-                logger.info("Running bofasa prep...")
-            else:
-                print("Running bofasa prep...")
-            
-            # Create prep args
-            prep_args = type('Args', (), {
-                'input_genomes': test_genomes,
-                'output_dir': prep_dir,
-                'threads': args.threads,
-                'gene_calling_method': args.gene_calling_method,
-                'locus_tag_length': args.locus_tag_length,
-                'meta_mode': args.meta_mode,
-                'rename_locus_tags': args.rename_locus_tags,
-                'max_memory': args.max_memory
-            })()
-            
-            run_bofasa_prep(prep_args)
-            if logger:
-                logger.info("bofasa prep completed successfully")
-            else:
-                print("bofasa prep completed successfully")
-            
-            # Step 2: Run bofasa run
-            run_dir = os.path.join(args.output_dir, "run_output")
-            if logger:
-                logger.info("Running bofasa run...")
-            else:
-                print("Running bofasa run...")
-            
-            # Create run args
-            run_args = type('Args', (), {
-                'bofasa_prep_dir': prep_dir,
-                'output_dir': run_dir,
-                'surrounding_bp': 10000,
-                'og_consensus': True,
-                'core_genome': True,
-                'dog_jaccard': 0.25,
-                'fixation_index_cutoff': 0.25,
-                'skip_merge_back': False,
-                'skip_phylo_refine': False,
-                'rooting_seeds': 1,
-                'refine': False,
-                'n_refinements': 100,
-                'ultra_sens': False,
-                'mcl_inflation': 1.2,
-                'near_scc_prop': 0.80,
-                'threads': args.threads,
-                'max_recursion_depth': 5000,
-                'max_memory': args.max_memory
-            })()
-            
-            run_bofasa_analysis(run_args)
-            logger.info("bofasa run completed successfully")
-            
-            # Cleanup if requested
-            if args.cleanup:
-                logger.info("Cleaning up temporary files...")
-                if os.path.exists(prep_dir):
-                    shutil.rmtree(prep_dir)
-                logger.info("Cleanup completed")
-            
-            logger.info("bofasa test workflow completed successfully")
-            logger.info(f"Results available in: {args.output_dir}")
-
-    except Exception as e:
-        logger.error(f"Error during bofasa test workflow: {str(e)}")
-        raise
-    finally:
-        close_logger_object(logger)
-
-
-def create_test_genomes(temp_dir, logger):
-    """Create test genome files for testing."""
-    import random
-    import os
-    
-    test_genomes = []
-    
-    # Create 3 test genomes with different characteristics
-    for i in range(3):
-        genome_file = os.path.join(temp_dir, f"test_genome_{i+1}.fasta")
-        
-        # Generate random DNA sequence (simplified for testing)
-        # In a real implementation, you might want more realistic sequences
-        dna_length = random.randint(100000, 200000)  # 100-200 kb for faster testing
-        dna_sequence = ''.join(random.choices(['A', 'T', 'G', 'C'], k=dna_length))
-        
-        # Write FASTA file directly
-        with open(genome_file, 'w') as f:
-            f.write(f">test_genome_{i+1} Test genome {i+1} for bofasa testing\n")
-            # Write sequence in chunks of 80 characters (standard FASTA format)
-            for j in range(0, len(dna_sequence), 80):
-                f.write(dna_sequence[j:j+80] + '\n')
-        
-        test_genomes.append(genome_file)
-        logger.info(f"Created test genome: {genome_file}")
-    
-    return test_genomes
-
-
 def main() -> None:
     """Main entry point for the bofasa command."""
     # Create parser and parse arguments
@@ -1693,8 +1501,6 @@ def main() -> None:
         run_bofasa_prep(args)
     elif args.command == "setup":
         run_setup_annotation_dbs(args)
-    elif args.command == "test":
-        run_bofasa_test(args)
     else:
         print(f"Unknown command: {args.command}")
         print_bofasa_help()

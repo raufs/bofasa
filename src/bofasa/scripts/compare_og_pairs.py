@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
-### Program: compare_og_pairs
-### Author: Rauf Salamzade
-### Kalan Lab
-### UW Madison & McMaster University
+"""
+Program: compare_og_pairs.py
+Authors: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan 
+Affiliation: University of Wisconsin - Madison, McMaster University
+"""
 
 # BSD 3-Clause License
 #

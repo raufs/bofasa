@@ -5,43 +5,35 @@ This module contains the main analysis functions for ortholog group determinatio
 phylogenetic refinement, and result processing.
 """
 
-import logging
+import copy
 import multiprocessing
 import os
 import random
+import statistics   
 import subprocess
 import sys
 import traceback
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
-
+from operator import itemgetter
+from typing import Any, Dict, List, Set, Tuple, Union
+import concurrent.futures
 import numpy as np
-import tqdm
+from Bio import SeqIO
 from ete3 import Tree
 from scipy.spatial import distance
-
 from . import config
-from .utils import get_version, multi_process
-from .alignment import create_domain_protein_alignments_pyfamsa
+from .utils import get_version, setup_ready_directory, run_cmd, _iter_progress
+from .alignment import create_domain_alignments
 
 # Set random seed for reproducibility
 random.seed(12345)
 
-# Global variables for protein ortholog group determination
-protein_dogs = defaultdict(lambda: defaultdict(int))
-single_copy_dogs = set()
-largely_idr_dogs = set()
-dog_conservation = {}
-
-# Global variables (consider moving to a config module)
 single_copy_dogs: Set[str] = set([])
 largely_idr_dogs: Set[str] = set([])
 protein_dogs: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
 dog_conservation: Dict[str, Any] = {}
-tree_obj: Optional[Any] = None
 
 version: str = get_version()
-
 
 def cast_to_numeric(x: Any) -> Union[float, str]:
     """
@@ -98,58 +90,81 @@ def generate_og_name(i: int) -> str:
         sys.stderr.write(traceback.format_exc() + "\n")
 
 
-def run_set_of_protein_comparisons(inputs: Tuple[str, str, float]) -> None:
+def run_set_of_protein_comparisons(inputs: Tuple[str, str, float, Dict[str, Dict[str, int]], Set[str], Set[str], Dict[str, float]]) -> str:
     """
-    Run protein comparisons for a set of protein pairs using domain overlap analysis.
-
+    Run pairwise protein comparisons based on domain ortholog groups.
+    
     Args:
-        inputs: Tuple containing (input_listing_file, result_file, dj)
-
+        inputs: Tuple containing (input_listing_file, result_file, dj, protein_dogs, single_copy_dogs, 
+        largely_idr_dogs, dog_conservation)
+    
     Returns:
-        None: Writes comparison results to the specified output file
-
-    Raises:
-        Exception: If protein comparison processing fails
+        str: Path to the result file
     """
     try:
         input_listing_file, result_file, dj = inputs
-
         outf_handle = open(result_file, "w")
 
         with open(input_listing_file) as oilf:
             for line in oilf:
                 line = line.strip()
-                p1, p2 = line.split("\t")
+                p1, p2 = line.split('\t')
 
-                p1dogs = protein_dogs[p1]
-                p2dogs = protein_dogs[p2]
-                intersect_dogs = (set(p1dogs.keys())).intersection(set(p2dogs.keys()))
-                union_dogs = (set(p1dogs.keys())).union(set(p2dogs.keys()))
+                p1dogs = {}
+                for dog, count in protein_dogs[p1].items():
+                    if count != 0:
+                        p1dogs[dog] = count
+
+                p2dogs = {}
+                for dog, count in protein_dogs[p2].items():
+                    if count != 0:
+                        p2dogs[dog] = count
+
+                p1dogs_keys = set(p1dogs.keys())
+                p2dogs_keys = set(p2dogs.keys())
+                
+                intersect_dogs = p1dogs_keys.intersection(p2dogs_keys)
+                union_dogs = p1dogs_keys.union(p2dogs_keys)
                 sc_dogs = single_copy_dogs.intersection(intersect_dogs)
 
                 threshold = dj
                 if len(sc_dogs) >= 1:
-                    union_count = 0
-                    intersect_count = 0
-                    for d in union_dogs:
-                        if d in largely_idr_dogs:
-                            continue
-                        union_count += (
-                            p1dogs[d] + p2dogs[d] - min([p1dogs[d], p2dogs[d]])
-                        )
-                        intersect_count += min([p1dogs[d], p2dogs[d]])
+                    for sd in sc_dogs:
+                        sd_conservation = dog_conservation[sd]
+                        updated_threshold = dj - (dj*sd_conservation)
+                        if updated_threshold < threshold:
+                            threshold = updated_threshold
 
-                    if union_count > 0:
-                        jaccard_index = intersect_count / union_count
-                        if jaccard_index >= threshold:
-                            outf_handle.write(
-                                p1 + "\t" + p2 + "\t" + str(jaccard_index) + "\n"
-                            )
+                union_count = 0
+                intersect_count = 0
+                for d in union_dogs:
+                    if d in largely_idr_dogs: continue
+                    p1dc = 0
+                    p2dc = 0
+                    if d in p1dogs:
+                        p1dc = p1dogs[d]
+                    if d in p2dogs:
+                        p2dc = p2dogs[d]
+
+                    union_count += p1dc + p2dc - min([p1dc, p2dc])
+                    intersect_count += min([p1dc, p2dc])
+
+                if union_count > 0:
+                    jaccard_index = intersect_count/float(union_count)
+                    if jaccard_index >= threshold:
+                        outf_handle.write(p1 + '\t' + p2 + '\t' + str(jaccard_index*100.0) + '\n')
 
         outf_handle.close()
+        return result_file
     except Exception as e:
-        sys.stderr.write(f"Error in runSetOfProteinComparisons: {str(e)}\n")
-        sys.stderr.write(traceback.format_exc() + "\n")
+        msg = (
+            'Issue performing pairwise assessment between proteins based on DOGs '
+            'to determine protein-resolution ortholog groups.'
+            f'Error: {e}'
+        )
+        sys.stderr.write(msg + '\n')
+        sys.stderr.write(traceback.format_exc() + '\n')
+        return None
 
 
 def determine_protein_orthogroups(
@@ -172,7 +187,6 @@ def determine_protein_orthogroups(
         threads: Number of threads to use for parallel processing
     """
     try:
-        # Create directories
         input_dir = protein_clustering_dir + 'Comparison_Listings/'
         pairwise_dir = protein_clustering_dir + 'Protein_Pairs_Based_on_DOGs/'
         p_clust_list_dir = protein_clustering_dir + 'Protein_Coarse_Cluster_Listings/'
@@ -180,25 +194,16 @@ def determine_protein_orthogroups(
         p_tre_dir = protein_clustering_dir + 'Protein_DOG_Distance_Trees/'
         p_split_dir = protein_clustering_dir + 'Protein_Splitting/'
 
-        os.makedirs(input_dir, exist_ok=True)
-        os.makedirs(pairwise_dir, exist_ok=True)
-        os.makedirs(p_clust_list_dir, exist_ok=True)
-        os.makedirs(p_dist_dir, exist_ok=True)
-        os.makedirs(p_tre_dir, exist_ok=True)
-        os.makedirs(p_split_dir, exist_ok=True)
-
+        from .utils import setup_ready_directory
+        setup_ready_directory([input_dir, pairwise_dir, p_clust_list_dir, p_dist_dir, p_tre_dir, p_split_dir])
+        
         pairwise_file = protein_clustering_dir + 'Protein_Pairs_Based_on_DOGs.txt'
         clusters_file = protein_clustering_dir + 'Protein_Clusters_Based_on_DOGs.txt'
         outf_handle = open(ogs_file, 'w')
 
-        # Initialize global variables
+        # Initialize local variables instead of using globals
         global protein_dogs, single_copy_dogs, largely_idr_dogs, dog_conservation
-        protein_dogs = defaultdict(lambda: defaultdict(int))
-        single_copy_dogs = set()
-        largely_idr_dogs = set()
-        dog_conservation = {}
-
-        # Create batch files for parallel processing
+                
         num_batches = threads
         batch_handles = {}
         for batch in range(0, num_batches):
@@ -210,7 +215,6 @@ def determine_protein_orthogroups(
         samples = []
         pair_count = 0
 
-        # Read domain ortholog groups file
         with open(dogs_file) as odf:
             for i, line in enumerate(odf):
                 line = line.strip('\n')
@@ -236,31 +240,34 @@ def determine_protein_orthogroups(
                             sample_with += 1
                             prot_id = '|'.join(lt.split('|')[:2])
                             all_proteins.add(prot_id)
+                            if prot_id not in protein_dogs:
+                                protein_dogs[prot_id] = {}
+                            if dog not in protein_dogs[prot_id]:
+                                protein_dogs[prot_id][dog] = 0
                             protein_dogs[prot_id][dog] += 1
+
                             dog_lts.add(prot_id)
                             tot += 1
                             if lt.split('|')[2] == 'inter-domain_region':
                                 idr += 1
-                    idr_prop = idr / float(tot)
+                    idr_prop = idr/float(tot)
                     if idr_prop >= 0.8:
                         largely_idr_dogs.add(dog)
 
                     if sample_with == 1:
                         sc_flag = False
-
-                    dog_conservation[dog] = sample_with / float(sample_count)
+                    
+                    dog_conservation[dog] = sample_with/float(sample_count)
                     if sc_flag:
                         single_copy_dogs.add(dog)
                     for j, p1 in enumerate(sorted(dog_lts)):
                         for k, p2 in enumerate(sorted(dog_lts)):
-                            if j >= k:
-                                continue
+                            if j >= k: continue
                             batch = pair_count % num_batches
                             batch_input_handle = batch_handles[batch]
                             batch_input_handle.write(p1 + '\t' + p2 + '\n')
                             pair_count += 1
 
-        # Close batch files and prepare for parallel processing
         pairwise_assessment_inputs = []
         for batch in range(0, threads):
             batch_handle = batch_handles[batch]
@@ -269,30 +276,63 @@ def determine_protein_orthogroups(
             input_listing_file = input_dir + str(batch) + '.txt'
             result_file = pairwise_dir + str(batch) + '.txt'
             pairwise_assessment_inputs.append([input_listing_file, result_file, dj])
-
-        # Run pairwise comparisons in parallel
-        p = multiprocessing.Pool(num_batches)
-        for _ in tqdm.tqdm(p.imap_unordered(run_set_of_protein_comparisons, pairwise_assessment_inputs), total=num_batches):
-            pass
-        p.close()
-
-        # Combine results
-        os.system('find %s -maxdepth 1 -type f | xargs cat >> %s' % (pairwise_dir, pairwise_file))
-
-        # Run MCL clustering
-        clust_cmd = ['mcl', pairwise_file, '--abc', '-I', '1.2', '-o', clusters_file, '-te', str(threads)]
-
+        
+        # Configure threading for protein comparisons
         try:
-            subprocess.call(' '.join(clust_cmd), shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, executable='/bin/bash')
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=num_batches
+            ) as executor:
+                results = []
+                future_to_input = {
+                    executor.submit(run_set_of_protein_comparisons, input_data): input_data
+                    for input_data in pairwise_assessment_inputs
+                }
+                
+                for future in _iter_progress(
+                    concurrent.futures.as_completed(future_to_input),
+                    total=num_batches,
+                    description="Protein comparisons",
+                ):
+                    try:
+                        result = future.result()
+                        if result is not None:
+                            results.append(result)
+                    except Exception as e:
+                        input_data = future_to_input[future]
+                        msg = f'Failed during protein comparison job: {e}'
+                        log_object.error(msg)
+                        sys.stderr.write(msg + '\n')
+                        sys.stderr.write(traceback.format_exc() + '\n')
+                        # Continue with other jobs instead of exiting
+                
+                # Write results in sorted order
+                for result in results:
+                    if result is not None:
+                        with open(result, 'r') as f:
+                            content = f.read()
+                            with open(pairwise_file, 'a') as out_f:
+                                out_f.write(content)
+        except Exception as e:
+            msg = 'Failed during threading protein comparisons'
+            log_object.error(msg)
+            sys.stderr.write(msg + '\n')
+            sys.stderr.write(traceback.format_exc() + '\n')
+            sys.exit(1)
+
+        clust_cmd = ['mcl', pairwise_file, '--abc', '-I', '1.2', '-o', clusters_file, '-te', str(threads)]
+            
+        try:
+            subprocess.call(' '.join(clust_cmd), shell=True, stdout=subprocess.DEVNULL, 
+                            stderr=subprocess.DEVNULL, executable='/bin/bash')
             assert (os.path.isfile(clusters_file))
             log_object.info('Successfully ran: %s' % ' '.join(clust_cmd))
         except Exception as e:
-            log_object.error('Had an issue running concatenation: %s' % ' '.join(clust_cmd))
-            sys.stderr.write('Had an issue running concatenation: %s\n' % ' '.join(clust_cmd))
-            log_object.error(e)
+            msg = 'Had an issue running concatenation: %s' % ' '.join(clust_cmd)
+            log_object.error(msg)
+            sys.stderr.write(msg + '\n')
+            sys.stderr.write(traceback.format_exc() + '\n')
             sys.exit(1)
-
-        # Process MCL clusters
+        
         mcl_lists = []
         with open(clusters_file) as ocf:
             for line in ocf:
@@ -305,7 +345,6 @@ def determine_protein_orthogroups(
         paired_proteins = set([])
         split_nj_trees_input = []
         large_split_nj_trees_input = []
-
         for i, ls in enumerate(sorted(mcl_lists)):
             for p in ls:
                 paired_proteins.add(p)
@@ -328,28 +367,68 @@ def determine_protein_orthogroups(
                     cl_handle.write(p + '\n')
                 cl_handle.close()
                 if len(ls) > 400:
-                    large_split_nj_trees_input.append([og_uniq_id, cog_list_file, cog_dist_file, og_tre_file,
+                    large_split_nj_trees_input.append([og_uniq_id, cog_list_file, cog_dist_file, og_tre_file, 
                                                      og_split_file, log_object, threads])
                 else:
-                    split_nj_trees_input.append([og_uniq_id, cog_list_file, cog_dist_file, og_tre_file,
+                    split_nj_trees_input.append([og_uniq_id, cog_list_file, cog_dist_file, og_tre_file, 
                                                 og_split_file, log_object, 1])
                 large_protein_og_clusters.append(ls)
             else:
                 protein_og_clusters.append(ls)
 
-        # Process large clusters with single thread
-        p = multiprocessing.Pool(1)
-        for _ in tqdm.tqdm(p.imap_unordered(split_njt, large_split_nj_trees_input), total=len(large_split_nj_trees_input)):
-            pass
-        p.close()
+        # Run splitting of large protein coarse ortholog groups one at a time
+        try:
+            for input_data in _iter_progress(
+                large_split_nj_trees_input,
+                total=len(large_split_nj_trees_input),
+                description="Large OG splits",
+            ):
+                try:
+                    split_njt(input_data)
+                except Exception as e:
+                    msg = f'Failed during large protein ortholog group processing: {e}'
+                    log_object.error(msg)
+                    sys.stderr.write(msg + '\n')
+                    sys.stderr.write(traceback.format_exc() + '\n')
+                    # Continue with other jobs instead of exiting
+        except Exception as e:
+            msg = 'Failed during large protein ortholog group processing'
+            log_object.error(msg)
+            sys.stderr.write(msg + '\n')
+            sys.stderr.write(traceback.format_exc() + '\n')
+            sys.exit(1)
 
-        # Process smaller clusters with multiple threads
-        p = multiprocessing.Pool(threads)
-        for _ in tqdm.tqdm(p.imap_unordered(split_njt, split_nj_trees_input), total=len(split_nj_trees_input)):
-            pass
-        p.close()
+        # Run splitting of regular-sized caorse protein ortholog groups in parallel
+        try:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=threads
+            ) as executor:
+                future_to_input = {
+                    executor.submit(split_njt, input_data): input_data
+                    for input_data in split_nj_trees_input
+                }
+                
+                for future in _iter_progress(
+                    concurrent.futures.as_completed(future_to_input),
+                    total=len(split_nj_trees_input),
+                    description="Regular OG splits",
+                ):
+                    try:
+                        future.result()
+                    except Exception as e:
+                        input_data = future_to_input[future]
+                        msg = f'Failed during regular protein ortholog group job: {e}'
+                        log_object.error(msg)
+                        sys.stderr.write(msg + '\n')
+                        sys.stderr.write(traceback.format_exc() + '\n')
+                        # Continue with other jobs instead of exiting
+        except Exception as e:
+            msg = 'Failed during threading regular protein ortholog groups'
+            log_object.error(msg)
+            sys.stderr.write(msg + '\n')
+            sys.stderr.write(traceback.format_exc() + '\n')
+            sys.exit(1)
 
-        # Collect split results
         accounted_for_in_splitting = set([])
         for f in os.listdir(p_split_dir):
             split_listing_file = p_split_dir + f
@@ -361,7 +440,6 @@ def determine_protein_orthogroups(
                         accounted_for_in_splitting.add(p)
                     protein_og_clusters.append(ls)
 
-        # Handle proteins not accounted for in splitting
         for pog_full in large_protein_og_clusters:
             missing = []
             for p in pog_full:
@@ -370,15 +448,13 @@ def determine_protein_orthogroups(
             if len(missing) > 0:
                 protein_og_clusters.append(missing)
 
-        # Add singletons
         for prot in all_proteins:
             if not prot in paired_proteins:
                 protein_og_clusters.append([prot])
 
-        # Write final results
         for i, c in enumerate(sorted(protein_og_clusters)):
             samp_lts = defaultdict(list)
-            for p in c:
+            for p in c: 
                 s = p.split('|')[0]
                 samp_lts[s].append(p.split('|')[1])
             og_id = generate_og_name(i)
@@ -388,7 +464,6 @@ def determine_protein_orthogroups(
             outf_handle.write('\t'.join(printlist) + '\n')
 
         outf_handle.close()
-
     except Exception as e:
         msg = 'Issues splitting domain ortholog groups from OrthoFinder using phylogenetic processing.'
         log_object.error(msg)
@@ -409,7 +484,7 @@ def resolve_orthogroups_using_phylogenetics(
     rooting_seeds: int = config.DEFAULT_ROOTING_SEEDS,
     trimal_options: str = config.DEFAULT_TRIMAL_OPTIONS,
     threads: int = config.DEFAULT_THREADS,
-    n_refinements: int = config.DEFAULT_PYFAMSA_REFINEMENTS,
+    more_deterministic: bool = False,
 ) -> None:
     """
     Resolve orthogroups using phylogenetic analysis.
@@ -427,7 +502,6 @@ def resolve_orthogroups_using_phylogenetics(
         rooting_seeds: Number of rooting seeds
         trimal_options: TrimAl options
         threads: Number of threads to use
-        n_refinements: Number of refinement iterations for PyFAMSA alignments
 
     Returns:
         None: Writes results to result_file
@@ -438,49 +512,69 @@ def resolve_orthogroups_using_phylogenetics(
         trim_dir = resdog_dir + 'Coarse_DOG_Trimmed_MSAs/'
         tre_dir = resdog_dir + 'Coarse_DOG_Phylogenies/'
         spl_full_dir = resdog_dir + 'Split_DOG_Listings/'
-        os.makedirs(msa_dir, exist_ok=True)
-        os.makedirs(trim_dir, exist_ok=True)
-        os.makedirs(tre_dir, exist_ok=True)
-        os.makedirs(spl_full_dir, exist_ok=True)
+        setup_ready_directory([msa_dir, trim_dir, tre_dir, spl_full_dir], overwrite_mode="overwrite")
 
-        # Create protein alignments using PyFAMSA
-        msg = 'Running multiple-sequence alignments using PyFAMSA.'
+        # Create protein alignments using MUSCLE super5
+        msg = 'Running multiple-sequence alignments using MUSCLE super5.'
         sys.stderr.write(msg + '\n')
         log_object.info(msg)
 
-        # Use PyFAMSA for alignments
-        create_domain_protein_alignments_pyfamsa(
+        # Use MUSCLE super5 for alignments
+        create_domain_alignments(
             dog_seqs_dir=orthofinder_fasta_dir,
             dog_algn_dir=msa_dir,
             log_object=log_object,
             threads=threads,
-            guide_tree="sl",
-            n_refinements=n_refinements,
-            keep_duplicates=False,
-            refine=True,
+            more_deterministic=more_deterministic,
         )
 
         # Prepare TrimAl commands for trimming
         trimal_cmds = []
         for f in os.listdir(orthofinder_fasta_dir):
-            if not f.endswith('.faa'):
+            if not f.endswith('.fa'):
                 continue
             dog = '.'.join(f.split('.')[:-1])
             msa_file = msa_dir + dog + '.msa.faa'
             trim_file = trim_dir + dog + '.msa.trimmed.faa'
-            trimal_cmd = ['trimal', '-in', msa_file, '-out', trim_file, trimal_options]
-            trimal_cmds.append(trimal_cmd + [log_object])
+            
+            # Check if MSA file exists and is not empty
+            if not os.path.isfile(msa_file) or os.path.getsize(msa_file) == 0:
+                continue
+                
+            # Split trimal_options into individual arguments
+            trimal_args = trimal_options.split()
+            trimal_cmd = ['trimal', '-in', msa_file, '-out', trim_file] + trimal_args
+            trimal_cmds.append(trimal_cmd)
 
         # Run TrimAl
         msg = 'Running alignment trimming using trimal.'
         sys.stderr.write(msg + '\n')
         log_object.info(msg)
-        p = multiprocessing.Pool(threads)
-        for _ in tqdm.tqdm(
-            p.imap_unordered(multi_process, trimal_cmds), total=len(trimal_cmds)
-        ):
-            pass
-        p.close()
+        
+        if not trimal_cmds:
+            log_object.warning("No TrimAl commands to run - no valid MSA files found")
+            return
+            
+        log_object.info(f"Running {len(trimal_cmds)} TrimAl commands with {threads} processes")
+        
+        # Run trimal commands with reduced logging
+        successful_trimal = 0
+        failed_trimal = 0
+        for cmd in _iter_progress(trimal_cmds, description="Running TrimAl"):
+            try:
+                run_cmd(cmd, None)
+                successful_trimal += 1
+            except Exception as e:
+                failed_trimal += 1
+                cmd_str = ' '.join(cmd)
+                log_object.error(f"TrimAl command failed: {cmd_str}")
+                continue
+        
+        # Log summary of trimal execution
+        log_object.info(
+            f"TrimAl summary: {successful_trimal} successful, "
+            f"{failed_trimal} failed out of {len(trimal_cmds)} total commands"
+        )
 
         # Create phylogenetic trees
         fasttree_cmds = []
@@ -510,19 +604,139 @@ def resolve_orthogroups_using_phylogenetics(
                 with open(warning_file, 'a') as wf:
                     wf.write(f"Using full alignment for {dog} because trimmed alignment has fewer than 10 sites\n")
                 tre_cmd = ['fasttree', '-out', tre_file, msa_file]
-            fasttree_cmds.append(tre_cmd + [log_object])
+            fasttree_cmds.append(tre_cmd)
 
         # Run FastTree
         msg = 'Running phylogeny constructions using FastTree 2.'
         log_object.info(msg)
-        p = multiprocessing.Pool(threads)
-        for _ in tqdm.tqdm(
-            p.imap_unordered(multi_process, fasttree_cmds), total=len(fasttree_cmds)
-        ):
-            pass
-        p.close()
+        
+        if not fasttree_cmds:
+            log_object.warning("No FastTree commands to run - no valid alignment files found")
+            return
+            
+        log_object.info(f"Running {len(fasttree_cmds)} FastTree commands")
+        
+        # Run FastTree commands with reduced logging
+        successful_fasttree = 0
+        failed_fasttree = 0
+        for cmd in _iter_progress(fasttree_cmds, description="Running FastTree"):
+            try:
+                run_cmd(cmd, None)
+                successful_fasttree += 1
+            except Exception as e:
+                failed_fasttree += 1
+                cmd_str = ' '.join(cmd)
+                log_object.error(f"FastTree command failed: {cmd_str}")
+                continue
+        
+        # Log summary of FastTree execution
+        log_object.info(
+            f"FastTree summary: {successful_fasttree} successful, "
+            f"{failed_fasttree} failed out of {len(fasttree_cmds)} total commands"
+        )
 
-        # Process results and create final output
+        # Read samples from OrthoFinder TSV file
+        samples = []
+        with open(orthofinder_tsv_file) as otf:
+            for i, line in enumerate(otf):
+                line = line.strip('\n')
+                ls = line.split('\t')
+                if i == 0:
+                    samples = ['.ccds'.join(x.split('.ccds')[:-1]) for x in ls[1:]]
+                    break
+
+        # Set up inputs for splitting DOGs using phylogenetics
+        split_inputs = []
+        for f in os.listdir(tre_dir):
+            dog = '.tre'.join(f.split('.tre')[:-1])
+            tre_file = tre_dir + f
+            spl_full_file = spl_full_dir + dog + '.txt'
+            t = Tree(tre_file)
+            if len(t.get_leaves()) < 500:
+                split_inputs.append([dog, tre_file, spl_full_file, skip_merge_back_flag, rooting_seeds, fixation_index_cutoff, 1, log_object])
+            else:
+                # Handle large trees directly (no global tree object needed)
+                split_dogs([dog, tre_file, spl_full_file, skip_merge_back_flag, rooting_seeds, fixation_index_cutoff, threads, log_object])
+
+        # Run phylogenetic splitting of orthogroups
+        msg = 'Using phylogenetics to split coarse domain resolution ortholog groups.'
+        sys.stderr.write(msg + '\n')
+        log_object.info(msg)
+        
+        # Configure threading for domain ortholog group splitting
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
+                future_to_input = {executor.submit(split_dogs, input_data): input_data 
+                                 for input_data in split_inputs}
+                
+                for future in _iter_progress(
+                    concurrent.futures.as_completed(future_to_input),
+                    total=len(split_inputs),
+                    description="Domain OG splits",
+                ):
+                    try:
+                        future.result()
+                    except Exception as e:
+                        input_data = future_to_input[future]
+                        msg = f'Failed during domain ortholog group splitting job: {e}'
+                        log_object.error(msg)
+                        sys.stderr.write(msg + '\n')
+                        sys.stderr.write(traceback.format_exc() + '\n')
+                        # Continue with other jobs instead of exiting
+        except Exception as e:
+            msg = 'Failed during threading domain ortholog group splitting'
+            log_object.error(msg)
+            sys.stderr.write(msg + '\n')
+            sys.stderr.write(traceback.format_exc() + '\n')
+            sys.exit(1)
+
+        # Write final results file
+        with open(result_file, 'w') as outf_handle:
+            # Write header
+            outf_handle.write('OG/Sample\t' + '\t'.join(samples) + '\n')
+            
+            # Process main orthogroups
+            with open(orthofinder_tsv_file) as otf:
+                for i, line in enumerate(otf):
+                    if i == 0:  # Skip header
+                        continue
+                    line = line.strip('\n')
+                    ls = line.split('\t')
+                    dog = ls[0]
+                    dog_spl_file = spl_full_dir + dog + '.txt'
+                    
+                    if os.path.isfile(dog_spl_file):
+                        # Read split clusters
+                        cluster_prots = defaultdict(set)
+                        with open(dog_spl_file) as odsf:
+                            for split_line in odsf:
+                                split_line = split_line.strip()
+                                cluster_id, prot = split_line.split('\t')
+                                cluster_prots[cluster_id].add(prot)
+                        
+                        # Write each cluster as separate orthogroup
+                        for cid in cluster_prots:
+                            printlist = [cid]
+                            for lts in ls[1:]:
+                                lts_retained = []
+                                for lt in lts.split(','):
+                                    lt = lt.strip()
+                                    if lt in cluster_prots[cid]:
+                                        lts_retained.append(lt)
+                                printlist.append(', '.join(lts_retained))
+                            outf_handle.write('\t'.join(printlist) + '\n')
+                    else:
+                        # Write original orthogroup if no splitting occurred
+                        outf_handle.write(line + '\n')
+            
+            # Add singletons
+            with open(orthofinder_tsv_singletons_file) as ootsf:
+                for i, line in enumerate(ootsf):
+                    if i == 0:  # Skip header
+                        continue
+                    line = line.strip('\n')
+                    outf_handle.write(line + '\n')
+
         log_object.info("Phylogenetic resolution of orthogroups completed successfully")
 
     except Exception as e:
@@ -717,51 +931,43 @@ def recursive_splitting(
         sys.stderr.write(msg + "\n")
         sys.stderr.write(traceback.format_exc() + "\n")
         sys.exit(1)
-
+        
 
 def split_njt(input: List[Any]) -> None:
     """
     Split protein ortholog groups using neighbor-joining trees based on domain ortholog group distances.
     
     Args:
-        input: List containing [og_uniq_id, cog_list_file, cog_dist_file, og_tre_file, og_split_file, log_object, threads]
+        input: List containing [og_uniq_id, cog_list_file, cog_dist_file, og_tre_file, og_split_file, 
+        log_object, threads]
     """
     try:
-        (
-            og_uniq_id,
-            cog_list_file,
-            cog_dist_file,
-            og_tre_file,
-            og_split_file,
-            log_object,
-            threads,
-        ) = input
+        og, cog_list_file, cog_dist_file, tre_file, spl_file, log_object, threads = input
 
-        # Read all proteins in this ortholog group
         all_prots = set([])
         with open(cog_list_file) as oclf:
             for line in oclf:
                 line = line.strip()
                 all_prots.add(line)
 
-        # Get all domain ortholog groups for these proteins
         all_dogs = set([])
         for p in all_prots:
             for d in protein_dogs[p]:
-                all_dogs.add(d)
+                if protein_dogs[p][d] > 0:
+                    all_dogs.add(d)
 
-        # Create protein-domain vectors
         prot_dog_vectors = defaultdict(list)
         for p in all_prots:
             for d in sorted(all_dogs):
-                prot_dog_vectors[p].append(protein_dogs[p][d])
+                if p in protein_dogs and d in protein_dogs[p]:
+                    prot_dog_vectors[p].append(protein_dogs[p][d])
+                else:
+                    prot_dog_vectors[p].append(0)
 
-        # Convert to numpy arrays
         prot_dog_vectors_np = {}
         for p in prot_dog_vectors:
             prot_dog_vectors_np[p] = np.array(prot_dog_vectors[p])
 
-        # Create distance matrix using cosine distances
         naming = {}
         outf = open(cog_dist_file, 'w')
         outf.write(str(len(prot_dog_vectors_np.keys())) + '\n')
@@ -778,27 +984,11 @@ def split_njt(input: List[Any]) -> None:
             outf.write(name + ' '.join(p1_dist) + '\n')
         outf.close()
 
-        # Create tree using FastME
-        fastme_cmd = ['fastme', '-i', cog_dist_file, '-o', og_tre_file, '-T', str(threads)]
-        try:
-            subprocess.call(
-                " ".join(fastme_cmd),
-                shell=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                executable='/bin/bash',
-            )
-            assert os.path.isfile(og_tre_file)
-        except Exception as e:
-            log_object.error("Had an issue running: %s" % " ".join(fastme_cmd))
-            sys.stderr.write("Had an issue running: %s\n" % " ".join(fastme_cmd))
-            log_object.error(e)
-            sys.exit(1)
+        fastme_cmd = ['fastme', '-i', cog_dist_file, '-o', tre_file, '-T', str(threads)]
+        run_cmd(fastme_cmd, None, check_files=[tre_file])
 
-        # Load tree and process
-        t = Tree(og_tre_file)
+        t = Tree(tre_file)
 
-        # Get samples and rename leaves
         samples_with_og = set([])
         leafs = set([])
         for n in t.traverse('postorder'):
@@ -808,50 +998,36 @@ def split_njt(input: List[Any]) -> None:
                 samples_with_og.add(s)
                 leafs.add(n.name)
 
-        # Skip if too few proteins or only one sample
-        if len(leafs) < 3:
+        if len(leafs) < 3: 
             return
-        if len(samples_with_og) == 1:
+        if len(samples_with_og) == 1: 
             return
 
-        # Midpoint root the tree
         R = t.get_midpoint_outgroup()
         t.set_outgroup(R)
-
-        # Perform recursive splitting
         sp = recursive_splitting(t, samples_with_og, are_proteins=True)
-        
-        # Apply refinement steps
         sp_refined = further_split_outlier_artifact_groups(t, sp)
         sp_further_split = further_split_disjoint_dog_partitions(t, sp_refined)
-
-        # Write results
-        spl_outf = open(og_split_file, 'w')
+        spl_outf = open(spl_file, 'w')
         for spi in sp_further_split:
             spl_outf.write(' '.join(sorted(spi)) + '\n')
         spl_outf.close()
-
+        return
     except Exception as e:
-        msg = 'Issue with splitting protein ortholog group %s - based on domain cosine distances neighbor-joining tree.' % og_uniq_id
+        msg = (
+            f'Issue with splitting protein ortholog group {og} - based on domain '
+            'cosine distances neighbor-joining tree.'
+        )
         sys.stderr.write(msg + '\n')
         sys.stderr.write(traceback.format_exc() + '\n')
         log_object.error(msg)
         sys.exit(1)
 
 
-def further_split_outlier_artifact_groups(
-    rooted_t: Tree, sps: Set[str]
-) -> List[Set[str]]:
+def further_split_outlier_artifact_groups(rooted_t: Tree, sps: List[Set[str]]) -> List[Set[str]]:
     """
     Further split ortholog groups that may contain small proteins or be the result
     of outlier sequences being claded together after midpoint rooting of FastME tree.
-
-    Args:
-        rooted_t: Rooted phylogenetic tree
-        sps: List of ortholog group partitions
-
-    Returns:
-        list: Updated ortholog group partitions
     """
     try:
         all_proteins = get_children(rooted_t)
@@ -864,9 +1040,9 @@ def further_split_outlier_artifact_groups(
                 max_jacc_internal = 0.0
                 max_jacc_external = 0.0
                 for p2 in sorted(sp):
-                    if p1 == p2:
+                    if p1 == p2: 
                         continue
-
+                    
                     p2dogs = protein_dogs[p2]
 
                     union_dogs = (set(p1dogs.keys())).union(set(p2dogs.keys()))
@@ -874,18 +1050,16 @@ def further_split_outlier_artifact_groups(
                     union_count = 0
                     intersect_count = 0
                     for d in union_dogs:
-                        union_count += (
-                            p1dogs[d] + p2dogs[d] - min([p1dogs[d], p2dogs[d]])
-                        )
+                        union_count += p1dogs[d] + p2dogs[d] - min([p1dogs[d], p2dogs[d]])
                         intersect_count += min([p1dogs[d], p2dogs[d]])
 
                     if union_count > 0:
-                        jaccard_index = intersect_count / union_count
+                        jaccard_index = intersect_count/union_count
                         if jaccard_index > max_jacc_internal:
                             max_jacc_internal = jaccard_index
 
                 for p2 in sorted(all_proteins):
-                    if p2 in sp:
+                    if p2 in sp: 
                         continue
                     p2dogs = protein_dogs[p2]
 
@@ -894,27 +1068,25 @@ def further_split_outlier_artifact_groups(
                     union_count = 0
                     intersect_count = 0
                     for d in union_dogs:
-                        union_count += (
-                            p1dogs[d] + p2dogs[d] - min([p1dogs[d], p2dogs[d]])
-                        )
+                        union_count += p1dogs[d] + p2dogs[d] - min([p1dogs[d], p2dogs[d]])
                         intersect_count += min([p1dogs[d], p2dogs[d]])
 
                     if union_count > 0:
-                        jaccard_index = intersect_count / union_count
+                        jaccard_index = intersect_count/union_count
                         if jaccard_index > max_jacc_external:
                             max_jacc_external = jaccard_index
-
+    
                 if max_jacc_internal <= max_jacc_external:
                     singletons.add(p1)
                     updated_sp.append(set([p1]))
-
+            
             remaining_sp = set([])
             for p in sp:
-                if p in singletons:
+                if p in singletons: 
                     continue
                 remaining_sp.add(p)
-
-            if len(remaining_sp) == 0:
+            
+            if len(remaining_sp) == 0: 
                 continue
             updated_sp.append(remaining_sp)
 
@@ -926,96 +1098,9 @@ def further_split_outlier_artifact_groups(
         sys.exit(1)
 
 
-def further_split_outlier_artifact_group_burst_approach(
-    rooted_t: Tree, sps: Set[str], dj: float = config.DEFAULT_DOG_JACCARD, bt: float = 0.5
-) -> List[Set[str]]:
-    """
-    Burst clades with very disconnected proteins that might just artificially be produced
-    by FastME into singletons.
-
-    Args:
-        rooted_t: Rooted phylogenetic tree
-        sps: List of ortholog group partitions
-        dj: Jaccard index threshold (default: 0.25)
-        bt: Burst threshold (default: 0.5)
-
-    Returns:
-        list: Updated ortholog group partitions
-    """
-    try:
-        updated_sp = []
-
-        for sp in sps:
-            total_comparisons = 0
-            meet_threshold = 0
-            for i, p1 in enumerate(sorted(sp)):
-                for j, p2 in enumerate(sorted(sp)):
-                    if i >= j:
-                        continue
-                    total_comparisons += 1
-
-                    p1dogs = protein_dogs[p1]
-                    p2dogs = protein_dogs[p2]
-
-                    intersect_dogs = (set(p1dogs.keys())).intersection(
-                        set(p2dogs.keys())
-                    )
-                    union_dogs = (set(p1dogs.keys())).union(set(p2dogs.keys()))
-                    sc_dogs = single_copy_dogs.intersection(intersect_dogs)
-
-                    threshold = dj
-                    if len(sc_dogs) >= 1:
-                        for sd in sc_dogs:
-                            sd_conservation = dog_conservation[sd]
-                            updated_threshold = dj - (dj * sd_conservation)
-                            if updated_threshold < threshold:
-                                threshold = updated_threshold
-
-                    union_count = 0
-                    intersect_count = 0
-                    for d in union_dogs:
-                        if d in largely_idr_dogs:
-                            continue
-                        union_count += (
-                            p1dogs[d] + p2dogs[d] - min([p1dogs[d], p2dogs[d]])
-                        )
-                        intersect_count += min([p1dogs[d], p2dogs[d]])
-
-                    if union_count > 0:
-                        jaccard_index = intersect_count / union_count
-                        if jaccard_index >= threshold:
-                            meet_threshold += 1
-
-            if (
-                total_comparisons > 1
-                and ((total_comparisons - meet_threshold) / float(total_comparisons))
-                >= bt
-            ):
-                for p in sp:
-                    updated_sp.append(set([p]))
-            else:
-                updated_sp.append(sp)
-
-        return updated_sp
-    except Exception as e:
-        msg = 'Issues refining domain ortholog groups based on phylogenetics.'
-        sys.stderr.write(msg + '\n')
-        sys.stderr.write(traceback.format_exc() + '\n')
-        sys.exit(1)
-
-
-def further_split_disjoint_dog_partitions(
-    rooted_t: Tree, sps: Set[str]
-) -> List[Set[str]]:
+def further_split_disjoint_dog_partitions(rooted_t: Tree, sps: List[Set[str]]) -> List[Set[str]]:
     """
     Function to further split disjoint domain ortholog groups based on the phylogenetic tree.
-
-    Args:
-        rooted_t: Rooted phylogenetic tree
-        sps: List of ortholog group partitions
-
-    Returns:
-        list: Updated ortholog group partitions
     """
     try:
         node_id = 1
@@ -1040,18 +1125,122 @@ def further_split_disjoint_dog_partitions(
                 accounted_leafs = set([])
                 for n in sorted(innernode_children, key=itemgetter(2), reverse=True):
                     nc = n[1]
-                    if (
-                        nc.issubset(sp)
-                        and len(nc.difference(sp)) == 0
-                        and len(nc.intersection(accounted_leafs)) == 0
-                    ):
+                    if nc.issubset(sp) and len(nc.difference(sp)) == 0 and len(nc.intersection(accounted_leafs)) == 0:
                         accounted_leafs = accounted_leafs.union(nc)
                         updated_sp.append(nc)
-                assert sp == accounted_leafs
+                assert(sp == accounted_leafs)
         return updated_sp
 
     except Exception as e:
         msg = 'Issues further refining domain ortholog groups based on phylogenetics.'
+        sys.stderr.write(msg + '\n')
+        sys.stderr.write(traceback.format_exc() + '\n')
+        sys.exit(1)
+
+
+def further_split_outlier_artifact_groups(
+    rooted_t: Tree, sps: Set[str]
+) -> List[Set[str]]:
+    """
+    Further split ortholog groups that may contain small proteins or be the result
+    of outlier sequences being claded together after midpoint rooting of FastME tree.
+
+    Args:
+        rooted_t: Rooted phylogenetic tree
+        sps: List of ortholog group partitions
+
+    Returns:
+        list: Updated ortholog group partitions
+    """
+    try:
+        all_proteins = get_children(rooted_t)
+
+        updated_sp = []
+        for sp in sps:
+            singletons = set([])
+            for p1 in sorted(sp):
+                p1dogs = {}
+                for dog, count in protein_dogs[p1].items():
+                    if count != 0:
+                        p1dogs[dog] = count
+                p1dogs_keys = set(p1dogs.keys())
+
+                max_jacc_internal = 0.0
+                max_jacc_external = 0.0
+                for p2 in sorted(sp):
+                    if p1 == p2:
+                        continue
+
+                    p2dogs = {}
+                    for dog, count in protein_dogs[p2].items():
+                        if count != 0:
+                            p2dogs[dog] = count
+
+                    p2dogs_keys = set(p2dogs.keys())
+                    union_dogs = p1dogs_keys.union(p2dogs_keys)
+
+                    union_count = 0
+                    intersect_count = 0
+                    for d in union_dogs:
+                        p1dc = 0
+                        p2dc = 0
+                        if d in p1dogs:
+                            p1dc = p1dogs[d]
+                        if d in p2dogs:
+                            p2dc = p2dogs[d]
+                        union_count += p1dc + p2dc - min([p1dc, p2dc])
+                        intersect_count += min([p1dc, p2dc])
+
+                    if union_count > 0:
+                        jaccard_index = intersect_count / union_count
+                        if jaccard_index > max_jacc_internal:
+                            max_jacc_internal = jaccard_index
+
+                for p2 in sorted(all_proteins):
+                    if p2 in sp:
+                        continue
+                    p2dogs = {}
+                    for dog, count in protein_dogs[p2].items():
+                        if count != 0:
+                            p2dogs[dog] = count
+
+                    p2dogs_keys = set(p2dogs.keys())
+                    union_dogs = p1dogs_keys.union(p2dogs_keys)
+
+                    union_count = 0
+                    intersect_count = 0
+                    for d in union_dogs:
+                        p1dc = 0
+                        p2dc = 0
+                        if d in p1dogs:
+                            p1dc = p1dogs[d]
+                        if d in p2dogs:
+                            p2dc = p2dogs[d]
+                        union_count += p1dc + p2dc - min([p1dc, p2dc])
+                        intersect_count += min([p1dc, p2dc])
+
+                    if union_count > 0:
+                        jaccard_index = intersect_count / union_count
+                        if jaccard_index > max_jacc_external:
+                            max_jacc_external = jaccard_index
+
+                if max_jacc_internal <= max_jacc_external:
+                    singletons.add(p1)
+                    updated_sp.append(set([p1]))
+
+            remaining_sp = set([])
+            for p in sp:
+                if p in singletons:
+                    continue
+                remaining_sp.add(p)
+
+            if len(remaining_sp) == 0:
+                continue
+            updated_sp.append(remaining_sp)
+
+        return updated_sp
+    except Exception as e:
+        msg = 'Issues refining domain ortholog groups based on phylogenetics.'
         sys.stderr.write(msg + '\n')
         sys.stderr.write(traceback.format_exc() + '\n')
         sys.exit(1)
@@ -1145,6 +1334,7 @@ def merge_back_dog_partitions(
                 paired_sps.add(c2)
 
     if len(merge_sps) > 0:
+        from .utils import single_linkage_cluster
         merged_sp_ids = single_linkage_cluster(merge_sps, all_sps, paired_sps)
         merged_sp_listing = []
         for msp in merged_sp_ids:
@@ -1158,56 +1348,20 @@ def merge_back_dog_partitions(
         return split_partitions
 
 
-def single_linkage_cluster(
-    pairs: List[Tuple[str, str, float]], all_lts: Set[str], paired_lts: Set[str]
-) -> List[Set[str]]:
-    """
-    Perform single-linkage clustering on pairs.
-
-    Solution for single-linkage clustering taken from mimomu's response in the stackoverflow page:
-    https://stackoverflow.com/questions/4842613/merge-lists-that-share-common-elements?lq=1
-
-    Args:
-        pairs: List of pairs to cluster
-        all_lts: All leaf types
-        paired_lts: Paired leaf types
-
-    Returns:
-        list: Clustered groups
-    """
-    try:
-        L = pairs
-        LL = set(itertools.chain.from_iterable(L))
-        for each in LL:
-            components = [x for x in L if each in x]
-            for i in components:
-                L.remove(i)
-            L += [list(set(itertools.chain.from_iterable(components)))]
-
-        for lt in all_lts:
-            if not lt in paired_lts:
-                L.append([lt])
-
-        return L
-    except Exception as e:
-        msg = 'Issue running single linkage clustering!'
-        sys.stderr.write(msg + '\n')
-        sys.stderr.write(traceback.format_exc() + '\n')
-        sys.exit(1)
-
-
 def pairwise_dist(inputs: List[Any]) -> None:
     """
     Calculate pairwise distance between two tree leaves.
 
     Args:
-        inputs: List containing [d, l1, l2] where d is distance dict, l1, l2 are leaves
+        inputs: List containing [d, l1, l2, tre_file] where d is distance dict, 
+        l1, l2 are leaves, tre_file is tree file
 
     Returns:
         None: Updates distance dictionary
     """
-    d, l1, l2 = inputs
-    dist = tree_obj.get_distance(l1, l2)
+    d, l1, l2, tre_file = inputs
+    t = Tree(tre_file)
+    dist = t.get_distance(l1, l2)
     key = tuple(sorted([l1, l2]))
     d[key] = dist
 
@@ -1217,7 +1371,8 @@ def split_dogs(inputs: List[Any]) -> None:
     Split domain ortholog groups using phylogenetic approach.
 
     Args:
-        inputs: List containing [og, tre_file, spl_file, skip_merge_back_flag, rooting_seeds, fixation_index_cutoff, threads, log_object]
+        inputs: List containing [og, tre_file, spl_file, skip_merge_back_flag, rooting_seeds, 
+        fixation_index_cutoff, threads, log_object]
 
     Returns:
         None: Creates split files for domain ortholog groups
@@ -1251,7 +1406,7 @@ def split_dogs(inputs: List[Any]) -> None:
                 for i, l1 in enumerate(leafs):
                     for j, l2 in enumerate(leafs):
                         if i < j:
-                            pairs.append([d, l1, l2])
+                            pairs.append([d, l1, l2, tre_file])
 
                 with manager.Pool(threads) as pool:
                     pool.map(pairwise_dist, pairs)
@@ -1356,9 +1511,7 @@ def split_dogs(inputs: List[Any]) -> None:
 
         if len(all_rooting_partitions) > 0:
             spl_outf = open(spl_file, 'w')
-            for i, sp in enumerate(
-                sorted(all_rooting_partitions, key=itemgetter(1, 2, 3))
-            ):
+            for i, sp in enumerate(sorted(all_rooting_partitions, key=itemgetter(1, 2, 3))):
                 if i == 0:
                     for it, spi in enumerate(sp[0]):
                         spog = og + '_' + str(it)

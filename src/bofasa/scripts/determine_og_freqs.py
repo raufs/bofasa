@@ -164,7 +164,7 @@ def extract_og_pairs():
         try:
             utils.memory_limit(max_memory)
         except Exception as e:
-            sys.stdout.write("Error setting memory limit\n")
+            sys.stderr.write(f"Error setting memory limit: {str(e)}\n")
 
     try:
         assert method in valid_software
