@@ -635,9 +635,6 @@ def run_gene_calling(
     try:
         possible_locus_tags = create_locus_tag_options(locus_tag_length)
 
-        # Create output directory if it doesn't exist
-        setup_ready_directory([prodigal_outdir], overwrite_mode="overwrite")
-
         # Prepare arguments for multiprocessing
         process_args = []
         for i, sample in enumerate(sorted(sample_genomes)):
@@ -760,9 +757,6 @@ def process_genomes_as_genbanks(
     """
 
     try:
-        # Create output directory if it doesn't exist
-        setup_ready_directory([gp_dir], overwrite_mode="overwrite")
-
         # Generate locus tags if needed
         locus_tags = None
         if rename_locus_tags:
