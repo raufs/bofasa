@@ -5,6 +5,7 @@ This module contains functions for analyzing ortholog groups, creating alignment
 generating reports, and performing various analyses on the results.
 """
 
+from math import log
 import multiprocessing
 import os
 import subprocess
@@ -762,44 +763,10 @@ def determine_phages_and_plasmids(
                 try:
                     run_cmd(genomad_cmd, log_object)
                 except subprocess.CalledProcessError as e:
-                    # Capture the actual stderr output from genomad to see the real error
-                    try:
-                        debug_result = subprocess.run(genomad_cmd, capture_output=True, text=True)
-                        stderr_output = debug_result.stderr if debug_result.stderr else ""
-                        stdout_output = debug_result.stdout if debug_result.stdout else ""
-                        full_error = f"STDOUT: {stdout_output}\nSTDERR: {stderr_output}"
-                    except Exception as debug_e:
-                        full_error = f"Could not capture output: {str(debug_e)}"
-                    
-                    # Check for specific database setup errors
-                    if ("FileNotFoundError" in full_error and "version.txt" in full_error) or "No such file or directory" in full_error:
-                        log_object.error(f"geNomad database is not properly set up for sample {sample}")
-                        log_object.error("The genomad database appears to be incomplete or missing required files")
-                        log_object.error("Please run 'bofasa setup' to properly download and set up the genomad database")
-                        raise
-                    
-                    # Check for specific CPU compatibility errors
-                    elif ("Xbyak::Error: x2APIC is not supported" in full_error or 
-                          "Abort trap" in full_error or 
-                          "libc++abi: terminating" in full_error or
-                          "SIGABRT" in full_error):
-                        log_object.warning(f"geNomad failed due to CPU compatibility issue for sample {sample}")
-                        log_object.warning("This is a known issue with certain CPU architectures/environments")
-                        log_object.warning("Skipping MGE detection for this sample - no phage/plasmid proteins will be identified")
-                        # Create empty result files to avoid downstream errors
-                        setup_ready_directory([genomad_results], overwrite_mode="overwrite")
-                        # Create empty summary files that the extract_mge_proteins function expects
-                        virus_summary = os.path.join(genomad_results, f"{sample}_virus_summary.tsv")
-                        plasmid_summary = os.path.join(genomad_results, f"{sample}_plasmid_summary.tsv")
-                        with open(virus_summary, 'w') as f:
-                            f.write("sequence_name\tsequence_length\tvirus_score\tvirus_genes\tvirus_proteins\tvirus_regions\n")
-                        with open(plasmid_summary, 'w') as f:
-                            f.write("sequence_name\tsequence_length\tplasmid_score\tplasmid_genes\tplasmid_proteins\tplasmid_regions\n")
-                        continue
-                    else:
-                        log_object.error(f"geNomad failed with unknown error for sample {sample}")
-                        log_object.error(f"Full error output: {full_error}")
-                        raise
+                    log_object.error(f"geNomad failed with unknown error for sample {sample}")
+                    log_object.error(f"Command: {' '.join(genomad_cmd)}")
+                    log_object.error(f"Full error output: {e.output}")
+                    raise
                 
                 # Extract phage and plasmid proteins
                 extract_mge_proteins(
