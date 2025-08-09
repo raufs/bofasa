@@ -557,24 +557,34 @@ def resolve_orthogroups_using_phylogenetics(
             
         log_object.info(f"Running {len(trimal_cmds)} TrimAl commands with {threads} processes")
         
-        # Run trimal commands with reduced logging
+        # Run TrimAl commands using threading with reduced logging
         successful_trimal = 0
         failed_trimal = 0
-        for cmd in _iter_progress(trimal_cmds, description="Running TrimAl"):
-            try:
-                run_cmd(cmd, None)
-                successful_trimal += 1
-            except Exception as e:
-                failed_trimal += 1
-                cmd_str = ' '.join(cmd)
-                log_object.error(f"TrimAl command failed: {cmd_str}")
-                continue
-        
-        # Log summary of trimal execution
-        log_object.info(
-            f"TrimAl summary: {successful_trimal} successful, "
-            f"{failed_trimal} failed out of {len(trimal_cmds)} total commands"
-        )
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
+                future_to_cmd = {
+                    executor.submit(run_cmd, cmd, None): cmd for cmd in trimal_cmds
+                }
+                for future in _iter_progress(
+                    concurrent.futures.as_completed(future_to_cmd),
+                    total=len(trimal_cmds),
+                    description="Running TrimAl",
+                ):
+                    cmd = future_to_cmd[future]
+                    try:
+                        future.result()
+                        successful_trimal += 1
+                    except Exception:
+                        failed_trimal += 1
+                        cmd_str = ' '.join(cmd)
+                        log_object.error(f"TrimAl command failed: {cmd_str}")
+                        continue
+        finally:
+            # Log summary of TrimAl execution
+            log_object.info(
+                f"TrimAl summary: {successful_trimal} successful, "
+                f"{failed_trimal} failed out of {len(trimal_cmds)} total commands"
+            )
 
         # Create phylogenetic trees
         fasttree_cmds = []
@@ -616,24 +626,34 @@ def resolve_orthogroups_using_phylogenetics(
             
         log_object.info(f"Running {len(fasttree_cmds)} FastTree commands")
         
-        # Run FastTree commands with reduced logging
+        # Run FastTree commands using threading with reduced logging
         successful_fasttree = 0
         failed_fasttree = 0
-        for cmd in _iter_progress(fasttree_cmds, description="Running FastTree"):
-            try:
-                run_cmd(cmd, None)
-                successful_fasttree += 1
-            except Exception as e:
-                failed_fasttree += 1
-                cmd_str = ' '.join(cmd)
-                log_object.error(f"FastTree command failed: {cmd_str}")
-                continue
-        
-        # Log summary of FastTree execution
-        log_object.info(
-            f"FastTree summary: {successful_fasttree} successful, "
-            f"{failed_fasttree} failed out of {len(fasttree_cmds)} total commands"
-        )
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
+                future_to_cmd = {
+                    executor.submit(run_cmd, cmd, None): cmd for cmd in fasttree_cmds
+                }
+                for future in _iter_progress(
+                    concurrent.futures.as_completed(future_to_cmd),
+                    total=len(fasttree_cmds),
+                    description="Running FastTree",
+                ):
+                    cmd = future_to_cmd[future]
+                    try:
+                        future.result()
+                        successful_fasttree += 1
+                    except Exception:
+                        failed_fasttree += 1
+                        cmd_str = ' '.join(cmd)
+                        log_object.error(f"FastTree command failed: {cmd_str}")
+                        continue
+        finally:
+            # Log summary of FastTree execution
+            log_object.info(
+                f"FastTree summary: {successful_fasttree} successful, "
+                f"{failed_fasttree} failed out of {len(fasttree_cmds)} total commands"
+            )
 
         # Read samples from OrthoFinder TSV file
         samples = []
