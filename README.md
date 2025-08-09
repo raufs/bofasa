@@ -53,37 +53,7 @@ pip install -e .
 
 bofasa provides a single entry point with intuitive subcommands:
 
-```
-
-██████╗  ██████╗ ███████╗ █████╗ ███████╗ █████╗
-██╔══██╗██╔═══██╗██╔════╝██╔══██╗██╔════╝██╔══██╗
-██████╔╝██║   ██║█████╗  ███████║███████╗███████║
-██╔══██╗██║   ██║██╔══╝  ██╔══██║╚════██║██╔══██║
-██████╔╝╚██████╔╝██║     ██║  ██║███████║██║  ██║
-╚═════╝  ╚═════╝ ╚═╝     ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
-
-BOFASA: Bacterial Ortholog Finder and Synteny Analyzer
-
-A comprehensive tool for identifying ortholog groups and analyzing
-syntenic conservation in bacterial genomes representing multiple
-species.
-
-Authors: Rauf A. Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan
-Affiliation: University of Wisconsin - Madison, McMaster University
-
-Commands:
-  setup    Set up annotation databases
-  prep     Prepare genomic data for analysis
-  run      Run the main BOFASA analysis pipeline
-
-For detailed help on any command, use: bofasa <command> --help
-
-Examples:
-  bofasa prep -i genome1.fna genome2.fna -o prep_output/
-  bofasa run -i prep_output/ -o analysis_results/ -c 8
-
-For more information, visit: https://github.com/raufs/bofasa
-```
+<img width="475" height="407" alt="image" src="https://github.com/user-attachments/assets/8fa3bd8b-b597-4674-a390-35403b298514" />
 
 ### Subcommands
 
