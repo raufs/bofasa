@@ -766,7 +766,7 @@ def determine_phages_and_plasmids(
                     log_object.error(f"geNomad failed with unknown error for sample {sample}")
                     log_object.error(f"Command: {' '.join(genomad_cmd)}")
                     log_object.error(f"Full error output: {e.output}")
-                    raise
+                    raise RuntimeError(f"geNomad failed with unknown error for sample {sample}")
                 
                 # Extract phage and plasmid proteins
                 extract_mge_proteins(
