@@ -764,7 +764,7 @@ def determine_phages_and_plasmids(
                 except subprocess.CalledProcessError as e:
                     # Capture the actual stderr output from genomad to see the real error
                     try:
-                        debug_result = subprocess.run(genomad_cmd, capture_output=True, text=True, timeout=30)
+                        debug_result = subprocess.run(genomad_cmd, capture_output=True, text=True)
                         stderr_output = debug_result.stderr if debug_result.stderr else ""
                         stdout_output = debug_result.stdout if debug_result.stdout else ""
                         full_error = f"STDOUT: {stdout_output}\nSTDERR: {stderr_output}"
