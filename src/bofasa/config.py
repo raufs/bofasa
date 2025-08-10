@@ -24,7 +24,7 @@ tree_obj: Optional[Any] = None
 
 # Default parameters
 DEFAULT_DOG_JACCARD: float = 0.5
-DEFAULT_FIXATION_INDEX_CUTOFF: float = 0.25
+DEFAULT_FIXATION_INDEX_CUTOFF: float = 0.1
 DEFAULT_ROOTING_SEEDS: int = 1
 DEFAULT_MCL_INFLATION: float = 1.2
 DEFAULT_NEAR_SCC_PROP: float = 0.95
