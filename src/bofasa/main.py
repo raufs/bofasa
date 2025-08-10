@@ -33,7 +33,7 @@ class BofasaArgumentParser(argparse.ArgumentParser):
 
     def print_help(self, file: Optional[TextIO] = None) -> None:
         """Override print_help to use our colored help functions."""
-        help_type = getattr(self, 'help_type', None)
+        help_type = self.help_type
         
         # If this is the main parser (no help_type), use the main help function
         if help_type is None:
@@ -229,7 +229,7 @@ def create_main_parser() -> BofasaArgumentParser:
     add_prep_arguments(prep_parser)
     prep_parser.epilog = (
         "Examples:\n"
-        "  bofasa prep -i genome1.fasta genome2.gbk -o prepared_data\n"
+        "  bofasa prep -i genome1.fasta genome2.fasta -o prepared_data\n"
         "  bofasa prep -i *.fasta -o prepared_data -c 8 --gene-calling-method prodigal"
     )
 
@@ -264,9 +264,9 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
         "-sr",
         "--surrounding-bp",
         type=int,
-        default=10000,
-        help="The number of basepairs to look up and downstream for syntenic\n"
-        "analysis [Default is 10000].",
+        default=config.DEFAULT_SURROUNDING_BP,
+        help=f"The number of basepairs to look up and downstream for syntenic\n"
+        f"analysis [Default is {config.DEFAULT_SURROUNDING_BP}].",
     )
     parser.add_argument(
         "-ogc",
@@ -286,19 +286,19 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
         "-dj",
         "--dog-jaccard",
         type=float,
-        default=0.25,
+        default=config.DEFAULT_DOG_JACCARD,
         help="The Jaccard index threshold for domain ortholog group overlap between\n"
         "two pairs of proteins needed to consider them as sharing an edge. Will\n"
         "be automatically lowered for cases where single-copy domain ortholog\n"
-        "groups are observed [Default is 0.25].",
+        f"groups are observed [Default is {config.DEFAULT_DOG_JACCARD}].",
     )
     parser.add_argument(
         "-fic",
         "--fixation-index-cutoff",
         type=float,
-        default=0.25,
+        default=config.DEFAULT_FIXATION_INDEX_CUTOFF,
         help="Fixation index cutoff for domain ortholog group re-merging following\n"
-        "phylogenetic splitting [Default is 0.25].",
+        f"phylogenetic splitting [Default is {config.DEFAULT_FIXATION_INDEX_CUTOFF}].",
     )
     parser.add_argument(
         "-smb",
@@ -317,9 +317,9 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
         "-rs",
         "--rooting-seeds",
         type=int,
-        default=1,
+        default=config.DEFAULT_ROOTING_SEEDS,
         help="The maximum number of nodes to try for rooting. A random sampling is\n"
-        "performed [Default is 1; uses midpoint rooting].",
+        f"performed [Default is {config.DEFAULT_ROOTING_SEEDS}; uses midpoint rooting].",
     )
     parser.add_argument(
         "-us",
@@ -332,32 +332,32 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
         "-mi",
         "--mcl-inflation",
         type=float,
-        default=1.2,
+        default=config.DEFAULT_MCL_INFLATION,
         help="MCL inflation parameter for determining coarse domain-resolution\n"
-        "ortholog groups via OrthoFinder [Default is 1.2].",
+        f"ortholog groups via OrthoFinder [Default is {config.DEFAULT_MCL_INFLATION}].",
     )
     parser.add_argument(
         "-ns",
         "--near-scc-prop",
         type=float,
-        default=0.95,
+        default=config.DEFAULT_NEAR_SCC_PROP,
         help="Proportion of genomes which single-copy coarse domain ortholog\n"
         "groups need to be found in for constructing core genome alignment\n"
-        "for phylogenomics [Default is 0.95].",
+        f"for phylogenomics [Default is {config.DEFAULT_NEAR_SCC_PROP}].",
     )
     parser.add_argument(
         "-c",
         "--threads",
         type=int,
-        default=4,
-        help="Total number of cores/threads to use [Default is 4].",
+        default=config.DEFAULT_THREADS,
+        help=f"Total number of cores/threads to use [Default is {config.DEFAULT_THREADS}].",
     )
     parser.add_argument(
         "-mrd",
         "--max-recursion-depth",
         type=int,
-        default=5000,
-        help="The maximum recursion depth.",
+        default=config.DEFAULT_MAX_RECURSION_DEPTH,
+        help=f"The maximum recursion depth [Default is {config.DEFAULT_MAX_RECURSION_DEPTH}].",
     )
     parser.add_argument(
         "-mm",
@@ -435,8 +435,8 @@ def add_prep_arguments(parser: argparse.ArgumentParser) -> None:
         "-ml",
         "--min-length",
         type=int,
-        default=20,
-        help="Minimum length of domain/inter-domain unit to consider [Default is 20].",
+        default=config.DEFAULT_MIN_LENGTH,
+        help=f"Minimum length of domain/inter-domain unit to consider [Default is {config.DEFAULT_MIN_LENGTH}].",
     )
     parser.add_argument(
         "-sds",
@@ -454,14 +454,14 @@ def add_prep_arguments(parser: argparse.ArgumentParser) -> None:
         "-x",
         "--ignore-upperbound-limit",
         action="store_true",
-        help="Ignore the upper bound limit for the number of genomes to process [Default is 200].",
+        help=f"Ignore the upper bound limit for the number of genomes to process [Default is {config.DEFAULT_MAX_GENOMES}].",
     )
 
 
 def add_setup_annotation_dbs_arguments(parser: argparse.ArgumentParser) -> None:
     """Add arguments for the setup-dbs subcommand."""
     parser.add_argument(
-        "-t",
+        "-c",
         "--threads",
         type=int,
         help=f"Number of threads to use for parallel processing.\n"
@@ -529,7 +529,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
     # Debug: print(args.threads)  # Removed debug print
 
     # Set recursion limit
-    max_recursion_depth = getattr(args, 'max_recursion_depth', 5000)
+    max_recursion_depth = args.max_recursion_depth
     sys.setrecursionlimit(max_recursion_depth)
 
     # Set memory limit
@@ -567,13 +567,12 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             logger.info("Saving parameters for future records.")
             parameters_file = os.path.join(args.output_dir, "Parameter_Inputs.txt")
             parameter_values = [
-                args.bofasa_prep_dir, args.output_dir, getattr(args, 'surrounding_bp', 10000),
-                getattr(args, 'mcl_inflation', 1.2), getattr(args, 'ultra_sens', False),
-                getattr(args, 'fixation_index_cutoff', 0.25), getattr(args, 'dog_jaccard', 0.25),
-                getattr(args, 'skip_phylo_refine', False), getattr(args, 'rooting_seeds', 1),
-                getattr(args, 'skip_merge_back', False), 
-                getattr(args, 'og_consensus', False), getattr(args, 'core_genome', False),
-                getattr(args, 'near_scc_prop', 0.95), args.threads, args.max_memory
+                args.bofasa_prep_dir, args.output_dir, args.surrounding_bp,
+                args.mcl_inflation, args.ultra_sens,
+                args.fixation_index_cutoff, args.dog_jaccard,
+                args.skip_phylo_refine, args.rooting_seeds,
+                args.skip_merge_back, args.og_consensus, args.core_genome,
+                args.near_scc_prop, args.threads, args.max_memory
             ]
             parameter_names = [
                 "bofasa_prep directory",
@@ -643,9 +642,9 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
         if not os.path.isfile(step1_checkpoint_file):
             orthofinder_cmd = [
                 'orthofinder', '-f', orthofinder_input_dir, '-o', orthofinder_results_dir,
-                '-t', str(args.threads), '-og', '-I', str(getattr(args, 'mcl_inflation', 1.2))
+                '-t', str(args.threads), '-og', '-I', str(args.mcl_inflation)
             ]
-            if getattr(args, 'ultra_sens', False):
+            if args.ultra_sens:
                 orthofinder_cmd += ['-S', 'diamond_ultra_sens']
             
             try:
@@ -718,7 +717,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
         resulting_dogs_file = os.path.join(findir, "Domain_Ortholog_Groups.tsv")
         
         if not os.path.isfile(step2_checkpoint_file):
-            if getattr(args, 'skip_phylo_refine', False):
+            if args.skip_phylo_refine:
                 combine_orthofinder_results(
                     orthofinder_tsv_file, orthofinder_tsv_singletons_file, 
                     resulting_dogs_file, logger
@@ -728,11 +727,11 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
                 resolve_orthogroups_using_phylogenetics(
                     orthofinder_fasta_dir, orthofinder_tsv_file, orthofinder_tsv_singletons_file,
                     resdog_dir, resulting_dogs_file, logger,
-                    skip_merge_back_flag=getattr(args, 'skip_merge_back', False),
-                    rooting_seeds=getattr(args, 'rooting_seeds', 1),
-                    fixation_index_cutoff=getattr(args, 'fixation_index_cutoff', 0.25),
+                    skip_merge_back_flag=args.skip_merge_back,
+                    rooting_seeds=args.rooting_seeds,
+                    fixation_index_cutoff=args.fixation_index_cutoff,
                     threads=args.threads, 
-                    more_deterministic=getattr(args, 'more_deterministic', False)
+                    more_deterministic=args.more_deterministic
                 )
             
             with open(step2_checkpoint_file, 'w') as f:
@@ -759,7 +758,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             setup_ready_directory([protein_cluster_dir], overwrite_mode="overwrite")
             determine_protein_orthogroups(
                 resulting_dogs_file, protein_cluster_dir, resulting_ogs_file, 
-                logger, dj=getattr(args, 'dog_jaccard', 0.25), threads=args.threads
+                logger, dj=args.dog_jaccard, threads=args.threads
             )
             
             with open(step3_checkpoint_file, 'w') as f:
@@ -787,7 +786,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             determine_ortholog_group_contexts(
                 args.bofasa_prep_dir, og_context_info_file, surround_info_dir, 
                 resulting_ogs_file, logger, 
-                surrounding_bp=getattr(args, 'surrounding_bp', 10000), 
+                surrounding_bp=args.surrounding_bp, 
                 threads=args.threads
             )
             
@@ -855,7 +854,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
                 print(msg)
 
         # Step 7: (Optional) Create profile-HMM database
-        if getattr(args, 'og_consensus', False):
+        if args.og_consensus:
             step7_checkpoint_file = os.path.join(checkdir, "Step7.txt")
             msg = '\n--------------------\nStep 7\n--------------------\nConstructing ortholog group profile HMMs and consensus sequences.'
             if logger:
@@ -873,7 +872,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
                 setup_ready_directory([og_seqs_dir, og_algn_dir, og_hmms_dir, og_cons_dir], overwrite_mode="overwrite")
                 create_protein_alignments(
                     args.bofasa_prep_dir, resulting_ogs_file, og_seqs_dir, og_algn_dir,
-                    logger, threads=args.threads, more_deterministic=getattr(args, 'more_deterministic', False)
+                    logger, threads=args.threads, more_deterministic=args.more_deterministic
                 )
                 create_profile_hmms_and_consensus_seqs(
                     og_algn_dir, og_hmms_dir, og_cons_dir, concatenated_consensus_seqs_file, logger, threads=args.threads
@@ -889,7 +888,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
                     print(msg)
 
         # Step 8: (Optional) Create core genome alignment
-        if getattr(args, 'core_genome', False):
+        if args.core_genome:
             step8_checkpoint_file = os.path.join(checkdir, "Step8.txt")
             msg = '\n--------------------\nStep 8\n--------------------\nCreating core genome alignment from (near) single-copy-core domain ortholog groups.'
             if logger:
@@ -907,8 +906,8 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
                 create_near_scc_resolved_domain_protein_alignments(
                     args.bofasa_prep_dir, resulting_dogs_file, dogs_seqs_dir,
                     dogs_algn_dir, dogs_trim_dir, merged_core_genome_file,
-                    logger, near_scc_prop=getattr(args, 'near_scc_prop', 0.95), 
-                    threads=args.threads, more_deterministic=getattr(args, 'more_deterministic', False)
+                    logger, near_scc_prop=args.near_scc_prop, 
+                    threads=args.threads, more_deterministic=args.more_deterministic
                 )
                 
                 with open(step8_checkpoint_file, 'w') as f:
@@ -1046,12 +1045,12 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                 input_genomes,
                 annotation_dirs,
                 args.output_dir,
-                getattr(args, 'rename_locus_tags', False),
-                getattr(args, 'meta_mode', False),
-                getattr(args, 'run_genomad', False),
-                getattr(args, 'ignore_upperbound_limit', False),
+                args.rename_locus_tags,
+                args.meta_mode,
+                args.run_genomad,
+                args.ignore_upperbound_limit,
                 args.gene_calling_method,
-                getattr(args, 'min_length', 20),
+                args.min_length,
                 args.threads,
                 args.max_memory
             ]
@@ -1131,7 +1130,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                         threads=args.threads,
                         locus_tag_length=args.locus_tag_length,
                         gene_calling_method=args.gene_calling_method,
-                        meta_mode=getattr(args, 'meta_mode', False),
+                        meta_mode=args.meta_mode,
                     )
 
                     # Move files to proper locations
@@ -1175,7 +1174,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                         logger,
                         threads=args.threads,
                         locus_tag_length=args.locus_tag_length,
-                        rename_locus_tags=getattr(args, 'rename_locus_tags', False),
+                        rename_locus_tags=args.rename_locus_tags,
                     )
 
                     # Move files to proper locations
@@ -1215,7 +1214,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                     gp_dir,
                     logger,
                     locus_tag_length=args.locus_tag_length,
-                    rename_locus_tags=getattr(args, 'rename_locus_tags', False),
+                    rename_locus_tags=args.rename_locus_tags,
                     threads=args.threads,
                 )
                 
@@ -1282,9 +1281,18 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
             print("Please provide at least 4 valid genome files or annotation directories.")
             sys.exit(1)
 
+        if len(sample_proteomes) > config.DEFAULT_MAX_GENOMES and not args.ignore_upperbound_limit:
+            error_msg = f"Error: Upper limit of genomes bofasa (default of {config.DEFAULT_MAX_GENOMES}) is designed to handle was exceeded."
+            if logger:
+                logger.error(error_msg)
+            else:
+                print(error_msg)
+            print(f"Please provide at most {config.DEFAULT_MAX_GENOMES} valid genome files or annotation directories or alternatively issue the --ignore-upperbound-limit flag.")
+            sys.exit(1)
+
         # Step 2a: Running geNomad (if requested and genome files are available)
         step2a_checkpoint_file = os.path.join(checkdir, "Step2a.txt")
-        if getattr(args, 'run_genomad', False) and sample_wgs:
+        if args.run_genomad and sample_wgs:
             if not os.path.isfile(step2a_checkpoint_file):
                 msg = '\n--------------------\nStep 2a\n--------------------\nRunning geNomad for phage and plasmid identification.'
                 if logger:
@@ -1313,7 +1321,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                     logger.info(msg)
                 else:
                     print(msg)
-        elif getattr(args, 'run_genomad', False) and not sample_wgs:
+        elif args.run_genomad and not sample_wgs:
             msg = (
                 'Warning: geNomad requested but no genome files available '
                 '(only annotation directories provided). Skipping geNomad step.'
@@ -1368,9 +1376,9 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
             sample_ccds_proteomes = annotate_and_split_proteins_using_pfam(
                 sample_proteomes, split_proteins_dir, domain_coords_dir, 
                 domain_coord_info_file, logger, 
-                minimal_length=getattr(args, 'min_length', 20), 
+                minimal_length=args.min_length, 
                 threads=args.threads, 
-                skip_domain_splitting=getattr(args, 'skip_domain_splitting', False)
+                skip_domain_splitting=args.skip_domain_splitting
             )
             
             # Create Step 3 checkpoint

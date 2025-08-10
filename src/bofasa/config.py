@@ -23,15 +23,17 @@ dog_conservation: Dict[str, Any] = {}
 tree_obj: Optional[Any] = None
 
 # Default parameters
-DEFAULT_DOG_JACCARD: float = 0.25
+DEFAULT_DOG_JACCARD: float = 0.5
 DEFAULT_FIXATION_INDEX_CUTOFF: float = 0.25
-DEFAULT_ROOTING_SEEDS: int = 100
+DEFAULT_ROOTING_SEEDS: int = 1
 DEFAULT_MCL_INFLATION: float = 1.2
 DEFAULT_NEAR_SCC_PROP: float = 0.95
 DEFAULT_THREADS: int = 4
 DEFAULT_MAX_MEMORY: int = 16
 DEFAULT_SURROUNDING_BP: int = 10000
 DEFAULT_TRIMAL_OPTIONS: str = "-strict -keepseqs"
+DEFAULT_MAX_RECURSION_DEPTH: int = 5000
+DEFAULT_MAX_GENOMES: int = 200
 
 # File extensions and patterns
 FASTA_EXTENSIONS: list[str] = [".fasta", ".fa", ".fna", ".fas"]
@@ -59,6 +61,9 @@ ALIGNMENT_METHODS: list[str] = ["muscle"]
 # Default locus tag length
 DEFAULT_LOCUS_TAG_LENGTH: int = 3
 
+# Default minimum length of domain/inter-domain unit to consider
+DEFAULT_MIN_LENGTH: int = 20
+
 # Memory limits (in GB)
 MIN_MEMORY_LIMIT: int = 4
 MAX_MEMORY_LIMIT: int = 256
@@ -75,20 +80,6 @@ SUBCMD_SETUP_COLOR: str =  "\033[93m\033[1m"  # Yellow
 SUBCMD_PREP_COLOR: str = "\033[95m\033[1m"    # Magenta
 SUBCMD_RUN_COLOR: str = "\033[95m\033[1m"    # Magenta
 SUBCMD_END_COLOR: str = "\033[0m"            # Reset
-
-# Database paths
-DEFAULT_DB_PATH: Optional[str] = None  # Will be set during installation
-
-def set_db_path(path: str) -> None:
-    """Set the database path."""
-    global DEFAULT_DB_PATH
-    DEFAULT_DB_PATH = path
-
-
-def get_db_path() -> Optional[str]:
-    """Get the database path."""
-    return DEFAULT_DB_PATH
-
 
 def reset_global_variables() -> None:
     """Reset global variables to their initial state."""

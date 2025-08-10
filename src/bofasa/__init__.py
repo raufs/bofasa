@@ -20,7 +20,5 @@ from .config import *
 __all__ = [
     # Configuration
     "get_version",
-    "set_db_path",
-    "get_db_path",
     "reset_global_variables",
 ]
