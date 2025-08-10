@@ -9,14 +9,15 @@ dependencies:
   - biopython
   - pip
   - orthofinder=2.5.5
-  - diamond>=2.1.7
+  - diamond
+  - scipy
   - slclust
   - ete3
   - prodigal
   - pyrodigal
   - scipy
   - pyhmmer
-  - genomad>=1.8.1
+  - genomad=1.8.1
   - curl
   - rich-argparse
   - tqdm
@@ -26,5 +27,7 @@ dependencies:
   - xlsxwriter
   - hmmer
   - trimal
-  - muscle
+  - muscle=5.1
   - hmmer
+  - xgboost=2.1.3
+  - fasttree

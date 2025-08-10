@@ -134,8 +134,14 @@ def determine_ortholog_group_contexts(
                     continue
                 line = line.strip()
                 sample, ccds_proteome_file, proteome_file, coords_file, genome_file = line.split('\t')
+                coords_file = os.path.join(bofasa_prep_dir, coords_file)
                 output_file = os.path.join(surround_info_dir, f"{sample}.tsv")
-                genome_params.append([sample, coords_file, output_file, gene_to_og, og_genes, surrounding_bp, log_object])
+                if os.path.isfile(coords_file):
+                    genome_params.append([sample, coords_file, output_file, gene_to_og, og_genes, surrounding_bp, log_object])
+                else:
+                    msg = f"Coordinates file {coords_file} not found for {sample}."
+                    log_object.error(msg)
+                    raise RuntimeError(msg)
 
         # Process in parallel
         with multiprocessing.Pool(threads) as pool:
@@ -671,6 +677,7 @@ def create_final_visual(
             y="Context entropy score",
             color="Majority of protein instances homologous to IS-element or on plasmid or phage", 
             color_discrete_map={"No": "grey", "Yes": "red"},
+            opacity=0.4,
             marginal_x="histogram", 
             marginal_y="histogram"
         )

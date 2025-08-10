@@ -1081,7 +1081,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
         gp_dir = os.path.join(args.output_dir, "Genome_Processing/")
         faa_dir = os.path.join(gp_dir, "Proteomes/")
         bed_dir = os.path.join(gp_dir, "BEDs/")
-
+        wgs_dir = os.path.join(gp_dir, "Genomes/")
 
         # Initialize sample mappings
         sample_wgs = {}
@@ -1089,7 +1089,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
         sample_beds = {}
 
         if not os.path.isfile(step1_checkpoint_file):
-            setup_ready_directory([gp_dir, faa_dir, bed_dir], overwrite_mode="overwrite")
+            setup_ready_directory([gp_dir, faa_dir, bed_dir, wgs_dir], overwrite_mode="overwrite")
 
             # Process input genomes if provided
             if input_genomes:
@@ -1141,10 +1141,13 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                             assert os.path.isfile(faa) and os.path.isfile(bed)
                             renamed_faa = os.path.join(faa_dir, f"{sample}.faa")
                             renamed_bed = os.path.join(bed_dir, f"{sample}.bed")
+                            renamed_fna = os.path.join(wgs_dir, f"{sample}.fna")
                             shutil.move(faa, renamed_faa)
                             shutil.move(bed, renamed_bed)
-                            sample_proteomes[sample] = renamed_faa
-                            sample_beds[sample] = renamed_bed
+                            shutil.move(fna, renamed_fna)
+                            sample_proteomes[sample] = "Genome_Processing/Proteomes/" + f"{sample}.faa"
+                            sample_beds[sample] = "Genome_Processing/BEDs/" + f"{sample}.bed"
+                            sample_wgs[sample] = "Genome_Processing/Genomes/" + f"{sample}.fna"
                         except Exception as e:
                             msg = f'Unable to validate proper processing for sample {sample}, skipping it'
                             if logger:
@@ -1153,6 +1156,8 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                                 print(msg)
                             if sample in sample_wgs:
                                 del sample_wgs[sample]
+                                del sample_proteomes[sample]
+                                del sample_beds[sample]
 
                 # Process GenBank files
                 if genbank_files:
@@ -1187,11 +1192,13 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                             assert os.path.getsize(faa) > 0 and os.path.getsize(bed) > 0 and os.path.getsize(fna) > 0
                             renamed_faa = os.path.join(faa_dir, f"{sample}.faa")
                             renamed_bed = os.path.join(bed_dir, f"{sample}.bed")
+                            renamed_fna = os.path.join(wgs_dir, f"{sample}.fna")
                             shutil.move(faa, renamed_faa)
                             shutil.move(bed, renamed_bed)
-                            sample_proteomes[sample] = renamed_faa
-                            sample_beds[sample] = renamed_bed
-                            sample_wgs[sample] = fna
+                            shutil.move(fna, renamed_fna)
+                            sample_proteomes[sample] = "Genome_Processing/Proteomes/" + f"{sample}.faa"
+                            sample_beds[sample] = "Genome_Processing/BEDs/" + f"{sample}.bed"
+                            sample_wgs[sample] = "Genome_Processing/Genomes/" + f"{sample}.fna"
                         except Exception as e:
                             msg = f'Unable to validate proper processing for sample {sample}, skipping it'
                             if logger:
@@ -1207,7 +1214,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                     logger.info(f"Processing {len(annotation_dirs)} annotation directories...")
                 else:
                     print(f"Processing {len(annotation_dirs)} annotation directories...")
-                
+
                 # Process annotation directories and get sample mappings
                 annotation_results = process_annotation_directories(
                     annotation_dirs,
@@ -1238,7 +1245,8 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
             gp_dir = os.path.join(args.output_dir, "Genome_Processing/")
             faa_dir = os.path.join(gp_dir, "Proteomes/")
             bed_dir = os.path.join(gp_dir, "BEDs/")
-            
+            wgs_dir = os.path.join(gp_dir, "Genomes/")
+
             # Load from existing proteome files
             if os.path.exists(faa_dir):
                 for faa_file in os.listdir(faa_dir):
@@ -1254,16 +1262,11 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                         sample_beds[sample_name] = os.path.join(bed_dir, bed_file)
             
             # Load genome files (check both .fna files and original input files)
-            for sample in sample_proteomes:
-                fna_file = os.path.join(gp_dir, f"{sample}.fna")
-                if os.path.exists(fna_file):
-                    sample_wgs[sample] = fna_file
-                else:
-                    # If no .fna file, try to find original input file
-                    for input_file in input_genomes:
-                        if os.path.splitext(os.path.basename(input_file))[0] == sample:
-                            sample_wgs[sample] = input_file
-                            break
+            if os.path.exists(wgs_dir):
+                for fna_file in os.listdir(wgs_dir):
+                    if fna_file.endswith('.fna'):
+                        sample_name = os.path.splitext(fna_file)[0]
+                        sample_wgs[sample_name] = os.path.join(wgs_dir, fna_file)
 
         msg = f'Found and successfully processed {len(sample_proteomes)} genomes, continuing ...'
         if logger:
@@ -1420,10 +1423,10 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                 f.write('\t'.join(header) + '\n')
                 
                 for sample in sample_wgs:
-                    fna = sample_wgs[sample]
-                    faa = sample_proteomes[sample]
-                    ccds_faa = sample_ccds_proteomes[sample]
-                    bed = sample_beds[sample]
+                    fna = 'Genome_Processing/' + sample_wgs[sample].split('/Genome_Processing/')[-1]
+                    faa = 'Genome_Processing/' + sample_proteomes[sample].split('/Genome_Processing/')[-1]
+                    ccds_faa = 'Genome_Processing/' + sample_ccds_proteomes[sample].split('/Genome_Processing/')[-1]
+                    bed = 'Genome_Processing/' + sample_beds[sample].split('/Genome_Processing/')[-1]
                     sample_info = [str(x) for x in [sample, ccds_faa, faa, bed, fna]]
                     f.write('\t'.join(sample_info) + '\n')
             
