@@ -22,3 +22,10 @@ __all__ = [
     "get_version",
     "reset_global_variables",
 ]
+
+# This has been causing issues in some other python packages, including bakta.
+# For us, it is triggered by the loading of scipy.stats in analysis.py
+# The solution is to ignore or as identified in the GitHub issue to downgrade
+# numpy version: https://github.com/oschwengers/bakta/issues/347
+import warnings
+warnings.filterwarnings("ignore", message="The value of the smallest subnormal for")
