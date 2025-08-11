@@ -941,7 +941,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
     import shutil
     from .utils import (
         create_logger_object, close_logger_object, memory_limit, 
-        check_genomad_setup, setup_ready_directory, create_locus_tag_options,
+        check_genomad_setup, setup_ready_directory,
         log_parameters_to_file
     )
     from .processing import (
@@ -1098,9 +1098,9 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                 genbank_files = []
 
                 for genome_file in input_genomes:
-                    if os.path.splitext(genome_file)[1].lower() in [".gbk", ".gb", ".genbank", ".gbff"]:
+                    if genome_file.split('.')[-1].lower() in ["gbk", "gb", "genbank", "gbff"]:
                         genbank_files.append(genome_file)
-                    elif os.path.splitext(genome_file)[1].lower() in [".fasta", ".fa", ".fna"]:
+                    elif genome_file.split('.')[-1].lower() in ["fasta", "fa", "fna"]:
                         fasta_files.append(genome_file)
                     else:
                         if logger:
@@ -1131,23 +1131,19 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                         locus_tag_length=args.locus_tag_length,
                         gene_calling_method=args.gene_calling_method,
                         meta_mode=args.meta_mode,
+                        min_length=args.min_length
                     )
 
                     # Move files to proper locations
                     for sample in fasta_dict:
-                        faa = os.path.join(gp_dir, f"{sample}.faa")
-                        bed = os.path.join(gp_dir, f"{sample}.coords.bed")
+                        faa = os.path.join(faa_dir, f"{sample}.faa")
+                        bed = os.path.join(bed_dir, f"{sample}.bed")
+                        fna = os.path.join(wgs_dir, f"{sample}.fna")
                         try:
-                            assert os.path.isfile(faa) and os.path.isfile(bed)
-                            renamed_faa = os.path.join(faa_dir, f"{sample}.faa")
-                            renamed_bed = os.path.join(bed_dir, f"{sample}.bed")
-                            renamed_fna = os.path.join(wgs_dir, f"{sample}.fna")
-                            shutil.move(faa, renamed_faa)
-                            shutil.move(bed, renamed_bed)
-                            shutil.move(fna, renamed_fna)
+                            assert os.path.isfile(faa) and os.path.isfile(bed) and os.path.isfile(fna)
+                            sample_wgs[sample] = "Genome_Processing/Genomes/" + f"{sample}.fna"
                             sample_proteomes[sample] = "Genome_Processing/Proteomes/" + f"{sample}.faa"
                             sample_beds[sample] = "Genome_Processing/BEDs/" + f"{sample}.bed"
-                            sample_wgs[sample] = "Genome_Processing/Genomes/" + f"{sample}.fna"
                         except Exception as e:
                             msg = f'Unable to validate proper processing for sample {sample}, skipping it'
                             if logger:
@@ -1180,12 +1176,13 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                         threads=args.threads,
                         locus_tag_length=args.locus_tag_length,
                         rename_locus_tags=args.rename_locus_tags,
+                        min_length=args.min_length
                     )
 
                     # Move files to proper locations
                     for sample in genbank_dict:
                         faa = os.path.join(gp_dir, f"{sample}.faa")
-                        bed = os.path.join(gp_dir, f"{sample}.coords.bed")
+                        bed = os.path.join(gp_dir, f"{sample}.bed")
                         fna = os.path.join(gp_dir, f"{sample}.fna")
                         try:
                             assert os.path.isfile(faa) and os.path.isfile(bed) and os.path.isfile(fna)
@@ -1223,6 +1220,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                     locus_tag_length=args.locus_tag_length,
                     rename_locus_tags=args.rename_locus_tags,
                     threads=args.threads,
+                    min_length=args.min_length
                 )
                 
                 # Update sample mappings
@@ -1252,21 +1250,21 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                 for faa_file in os.listdir(faa_dir):
                     if faa_file.endswith('.faa'):
                         sample_name = os.path.splitext(faa_file)[0]
-                        sample_proteomes[sample_name] = os.path.join(faa_dir, faa_file)
+                        sample_proteomes[sample_name] = os.path.join('Genome_Processing/Proteomes', faa_file)
             
             # Load from existing bed files
             if os.path.exists(bed_dir):
                 for bed_file in os.listdir(bed_dir):
                     if bed_file.endswith('.bed'):
                         sample_name = os.path.splitext(bed_file)[0]
-                        sample_beds[sample_name] = os.path.join(bed_dir, bed_file)
+                        sample_beds[sample_name] = os.path.join('Genome_Processing/BEDs', bed_file)
             
             # Load genome files (check both .fna files and original input files)
             if os.path.exists(wgs_dir):
                 for fna_file in os.listdir(wgs_dir):
                     if fna_file.endswith('.fna'):
                         sample_name = os.path.splitext(fna_file)[0]
-                        sample_wgs[sample_name] = os.path.join(wgs_dir, fna_file)
+                        sample_wgs[sample_name] = os.path.join('Genome_Processing/Genomes', fna_file)
 
         msg = f'Found and successfully processed {len(sample_proteomes)} genomes, continuing ...'
         if logger:
@@ -1292,6 +1290,15 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                 print(error_msg)
             print(f"Please provide at most {config.DEFAULT_MAX_GENOMES} valid genome files or annotation directories or alternatively issue the --ignore-upperbound-limit flag.")
             sys.exit(1)
+
+        for sample in sample_proteomes:
+            sample_proteomes[sample] = os.path.join(args.output_dir, sample_proteomes[sample])
+
+        for sample in sample_beds:
+            sample_beds[sample] = os.path.join(args.output_dir, sample_beds[sample])
+        
+        for sample in sample_wgs:
+            sample_wgs[sample] = os.path.join(args.output_dir, sample_wgs[sample])
 
         # Step 2a: Running geNomad (if requested and genome files are available)
         step2a_checkpoint_file = os.path.join(checkdir, "Step2a.txt")
@@ -1425,8 +1432,8 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                 for sample in sample_wgs:
                     fna = 'Genome_Processing/' + sample_wgs[sample].split('/Genome_Processing/')[-1]
                     faa = 'Genome_Processing/' + sample_proteomes[sample].split('/Genome_Processing/')[-1]
-                    ccds_faa = 'Genome_Processing/' + sample_ccds_proteomes[sample].split('/Genome_Processing/')[-1]
-                    bed = 'Genome_Processing/' + sample_beds[sample].split('/Genome_Processing/')[-1]
+                    ccds_faa = 'Domain_and_Interdomain_FASTAs/' + sample_ccds_proteomes[sample].split('/Domain_and_Interdomain_FASTAs/')[-1]
+                    bed = 'Genome_Processing/' + sample_beds[sample].split('Genome_Processing/')[-1]
                     sample_info = [str(x) for x in [sample, ccds_faa, faa, bed, fna]]
                     f.write('\t'.join(sample_info) + '\n')
             

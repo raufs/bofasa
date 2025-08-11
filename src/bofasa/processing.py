@@ -5,10 +5,13 @@ This module contains functions for processing genomes, proteomes, and other
 data files, including file format validation and data loading.
 """
 
+from curses import raw
 import gzip
 import logging
 import multiprocessing
 import os
+from re import M
+import shutil
 import subprocess
 import sys
 import traceback
@@ -17,7 +20,7 @@ from collections import defaultdict
 from operator import itemgetter
 from typing import Dict, List, Any, Optional
 from Bio import SeqIO
-from .utils import create_locus_tag_options, _iter_progress, setup_ready_directory
+from .utils import create_locus_tag_options, _iter_progress
 from . import config
 
 # No global variables needed for per-sample logging
@@ -110,6 +113,8 @@ def run_pyrodigal_gene_calling(
         backend="detect"  # Use fastest available backend
     )
 
+    shutil.copy(input_file, os.path.join(outdir, f"{sample_name}.fna"))
+
     # Read sequences
     sequences = []
     with open(input_file, 'r') as handle:
@@ -149,9 +154,6 @@ def run_prodigal_command(
     if meta_mode:
         cmd.append('-p')
         cmd.append('meta')
-    else:
-        cmd.append('-p')
-        cmd.append('single')
 
     cmd.extend(
         [
@@ -205,7 +207,7 @@ def write_gene_predictions(
 
 
 def create_formatted_annotation_files(
-    outdir: str, sample_name: str, locus_tag: str
+    outdir: str, sample_name: str, locus_tag: str, min_length: int = config.DEFAULT_MIN_LENGTH
 ) -> None:
     """Create formatted BED and proteome files with custom locus tags from Prodigal output."""
     # Read GFF file
@@ -213,9 +215,19 @@ def create_formatted_annotation_files(
     if not os.path.exists(gff_file):
         raise FileNotFoundError(f"GFF file not found: {gff_file}")
 
+    fna_file = os.path.join(outdir, f"{sample_name}.fna")
+    if not os.path.exists(fna_file):
+        raise FileNotFoundError(f"FNA file not found: {fna_file}")
+
+    bed_dir = os.path.join(outdir, "BEDs/")
+    faa_dir = os.path.join(outdir, "Proteomes/")
+    wgs_dir = os.path.join(outdir, "Genomes/")
+
+    shutil.move(fna_file, os.path.join(wgs_dir, f"{sample_name}.fna"))
+
     # Create output files
-    bed_file = os.path.join(outdir, f"{sample_name}.coords.bed")
-    proteome_file = os.path.join(outdir, f"{sample_name}.faa")
+    bed_file = os.path.join(bed_dir, f"{sample_name}.bed")
+    proteome_file = os.path.join(faa_dir, f"{sample_name}.faa")
     name_map_file = os.path.join(outdir, f"{sample_name}.name_map.txt")
 
     # Process GFF and create formatted files
@@ -238,6 +250,10 @@ def create_formatted_annotation_files(
             end = int(parts[4])
             strand = parts[6]
 
+            protein_len = (end-start+1)/3
+            if protein_len < min_length:
+                continue
+
             # Create new locus tag
             new_locus_tag = f"{locus_tag}_{locus_tag_counter:06d}"
             locus_tag_counter += 1
@@ -252,10 +268,11 @@ def create_formatted_annotation_files(
             map_handle.write(f"{old_name}\t{new_locus_tag}\n")
 
     # Update proteome file with new locus tags
-    update_proteome_locus_tags(proteome_file, name_map_file)
+    raw_proteome_file = os.path.join(outdir, f"{sample_name}.faa")
+    update_proteome_locus_tags(proteome_file, raw_proteome_file, name_map_file)
 
 
-def update_proteome_locus_tags(proteome_file: str, name_map_file: str) -> None:
+def update_proteome_locus_tags(proteome_file: str, raw_proteome_file: str, name_map_file: str) -> None:
     """Update proteome file with new locus tags with coordinate information."""
     # Read name mapping
     name_map = {}
@@ -265,7 +282,7 @@ def update_proteome_locus_tags(proteome_file: str, name_map_file: str) -> None:
             name_map[old_name] = new_name
 
     # Get the GFF file path (same directory as proteome file)
-    gff_file = proteome_file.replace('.faa', '.gff')
+    gff_file = raw_proteome_file.replace('.faa', '.gff')
     
     # Read coordinate information from GFF file
     coord_map = {}
@@ -296,13 +313,7 @@ def update_proteome_locus_tags(proteome_file: str, name_map_file: str) -> None:
                 if gene_id:
                     coord_map[gene_id] = (scaffold, start, end, strand)
 
-    # Create temporary file
-    temp_file = proteome_file + '.tmp'
-
-    with open(proteome_file, 'r') as input_handle, open(
-        temp_file, 'w'
-    ) as output_handle:
-
+    with open(raw_proteome_file, 'r') as input_handle, open(proteome_file, 'w') as output_handle:
         for line in input_handle:
             if line.startswith('>'):
                 # Extract old name and replace with new locus tag
@@ -320,16 +331,13 @@ def update_proteome_locus_tags(proteome_file: str, name_map_file: str) -> None:
             else:
                 output_handle.write(line)
 
-    # Replace original file
-    os.replace(temp_file, proteome_file)
-
 
 def process_genbank_file(
     input_file: str,
     outdir: str,
     sample_name: str,
     locus_tag: Optional[str] = None,
-    min_length: int = 20,
+    min_length: int = config.DEFAULT_MIN_LENGTH,
 ) -> None:
     """
     Process GenBank file and create formatted output files.
@@ -351,7 +359,7 @@ def process_genbank_file(
         min_length: Minimum protein length
     """
     # Create output file paths
-    bed_file = os.path.join(outdir, f"{sample_name}.coords.bed")
+    bed_file = os.path.join(outdir, f"{sample_name}.bed")
     proteome_file = os.path.join(outdir, f"{sample_name}.faa")
     genome_file = os.path.join(outdir, f"{sample_name}.fna")
     name_map_file = os.path.join(outdir, f"{sample_name}.name_map.txt")
@@ -570,12 +578,12 @@ def _process_single_genome(args):
     
     Args:
         args: Tuple containing (sample, sample_assembly, prodigal_outdir, sample_locus_tag, 
-              gene_calling_method, meta_mode, log_object)
+              gene_calling_method, meta_mode, log_object, min_length    )
     
     Returns:
         tuple: (sample, success, error_message)
     """
-    sample, sample_assembly, prodigal_outdir, sample_locus_tag, gene_calling_method, meta_mode, log_object = args
+    sample, sample_assembly, prodigal_outdir, sample_locus_tag, gene_calling_method, meta_mode, log_object, min_length = args
     
     try:
         # Run gene calling
@@ -591,7 +599,8 @@ def _process_single_genome(args):
         create_formatted_annotation_files(
             outdir=prodigal_outdir,
             sample_name=sample,
-            locus_tag=sample_locus_tag
+            locus_tag=sample_locus_tag,
+            min_length=min_length
         )
         
         return (sample, True, None)
@@ -609,6 +618,7 @@ def run_gene_calling(
     locus_tag_length: int = config.DEFAULT_LOCUS_TAG_LENGTH,
     gene_calling_method: str = "pyrodigal",
     meta_mode: bool = False,
+    min_length: int = config.DEFAULT_MIN_LENGTH,
 ) -> None:
     """
     Process input genomes using prodigal/pyrodigal for gene prediction and annotation.
@@ -624,7 +634,7 @@ def run_gene_calling(
         locus_tag_length: Length of locus tags to generate (default: 3)
         gene_calling_method: Gene calling method to use - "pyrodigal", "prodigal", or "prodigal-gv" (default: "pyrodigal")
         meta_mode: Whether to run in metagenomics mode (default: False)
-
+        min_length: Minimum length of protein to include (default: 20)
     Returns:
         None: Creates proteome and GenBank files in the output directory
 
@@ -642,7 +652,7 @@ def run_gene_calling(
             sample_locus_tag = possible_locus_tags[i]
             process_args.append((
                 sample, sample_assembly, prodigal_outdir, sample_locus_tag,
-                gene_calling_method, meta_mode, log_object
+                gene_calling_method, meta_mode, log_object, min_length
             ))
 
         # Process genomes in parallel
@@ -690,12 +700,12 @@ def _process_single_genbank(args):
     Process a single GenBank file (multiprocessing worker function).
     
     Args:
-        args: Tuple containing (sample, sample_genbank, gp_dir, sample_locus_tag, log_object)
+        args: Tuple containing (sample, sample_genbank, gp_dir, sample_locus_tag, min_length)
     
     Returns:
         tuple: (sample, success, error_message)
     """
-    sample, sample_genbank, gp_dir, sample_locus_tag, log_object = args
+    sample, sample_genbank, gp_dir, sample_locus_tag, min_length = args
     
     try:
         # Process GenBank file
@@ -704,12 +714,12 @@ def _process_single_genbank(args):
             outdir=gp_dir,
             sample_name=sample,
             locus_tag=sample_locus_tag,
-            min_length=20
+            min_length=min_length
         )
         
         # Verify output files
         faa_file = os.path.join(gp_dir, f"{sample}.faa")
-        bed_file = os.path.join(gp_dir, f"{sample}.coords.bed")
+        bed_file = os.path.join(gp_dir, f"{sample}.bed")
         fna_file = os.path.join(gp_dir, f"{sample}.fna")
         
         if (os.path.isfile(faa_file) and os.path.isfile(bed_file) and os.path.isfile(fna_file) and
@@ -731,6 +741,7 @@ def process_genomes_as_genbanks(
     threads: int = config.DEFAULT_THREADS,
     locus_tag_length: int = config.DEFAULT_LOCUS_TAG_LENGTH,
     rename_locus_tags: bool = False,
+    min_length: int = config.DEFAULT_MIN_LENGTH,
 ) -> None:
     """
     Process input genomes provided as GenBank files with existing CDS features.
@@ -748,7 +759,7 @@ def process_genomes_as_genbanks(
         threads: Number of threads to use for parallel processing (default: 1)
         locus_tag_length: Length of locus tags to generate (default: 3)
         rename_locus_tags: Whether to rename existing locus tags (default: False)
-
+        min_length: Minimum length of protein to include
     Returns:
         dict: Dictionary mapping sample names to paths of processed sample files
 
@@ -770,7 +781,7 @@ def process_genomes_as_genbanks(
         for i, sample in enumerate(sorted(sample_genomes)):
             sample_genbank = sample_genomes[sample]
             sample_locus_tag = locus_tags[i] if rename_locus_tags else None
-            process_args.append((sample, sample_genbank, gp_dir, sample_locus_tag, log_object))
+            process_args.append((sample, sample_genbank, gp_dir, sample_locus_tag, min_length))
 
         # Process genomes in parallel
         if threads > 1 and len(sample_genomes) > 1:
@@ -1328,12 +1339,12 @@ def process_prokka_directory(
         raise FileNotFoundError(f"No GFF file found in Prokka directory: {prokka_dir}")
     
     # Create output file paths
-    bed_file = os.path.join(outdir, f"{sample_name}.coords.bed")
-    proteome_file = os.path.join(outdir, f"{sample_name}.faa")
-    genome_file = os.path.join(outdir, f"{sample_name}.fna")
+    bed_file = os.path.join(outdir, f"BEDs/{sample_name}.bed")
+    proteome_file = os.path.join(outdir, f"Proteomes/{sample_name}.faa")
+    genome_file = os.path.join(outdir, f"Genomes/{sample_name}.fna")
 
     # Initialize counters and mappings
-    locus_tag_counter = 1
+    locus_tag_counter = 0
     protein_count = 0
     sample_old_to_new_lts = {}
     prot_id_counts = defaultdict(int)
@@ -1478,12 +1489,12 @@ def process_bakta_directory(
         raise FileNotFoundError(f"No GFF3 file found in Bakta directory: {bakta_dir}")
     
     # Create output file paths
-    bed_file = os.path.join(outdir, f"{sample_name}.coords.bed")
-    proteome_file = os.path.join(outdir, f"{sample_name}.faa")
-    genome_file = os.path.join(outdir, f"{sample_name}.fna")
+    bed_file = os.path.join(outdir, f"BEDs/{sample_name}.bed")
+    proteome_file = os.path.join(outdir, f"Proteomes/{sample_name}.faa")
+    genome_file = os.path.join(outdir, f"Genomes/{sample_name}.fna")
 
     # Initialize counters and mappings
-    locus_tag_counter = 1
+    locus_tag_counter = 0
     protein_count = 0
     sample_old_to_new_lts = {}
     prot_id_counts = defaultdict(int)
@@ -1645,12 +1656,12 @@ def _process_single_annotation_dir(args):
     Process a single annotation directory (multiprocessing worker function).
     
     Args:
-        args: Tuple containing (annotation_dir, outdir, sample_locus_tag, log_object)
+        args: Tuple containing (annotation_dir, outdir, sample_locus_tag, min_length)
     
     Returns:
         tuple: (sample_name, success, error_message, annotation_type)
     """
-    annotation_dir, outdir, sample_locus_tag, log_object = args
+    annotation_dir, outdir, sample_locus_tag, min_length = args
     
     try:
         # Detect annotation type
@@ -1665,7 +1676,7 @@ def _process_single_annotation_dir(args):
                 outdir=outdir,
                 sample_name=sample_name,
                 locus_tag=sample_locus_tag,
-                min_length=20
+                min_length=min_length
             )
         elif annotation_type == 'bakta':
             process_bakta_directory(
@@ -1673,13 +1684,13 @@ def _process_single_annotation_dir(args):
                 outdir=outdir,
                 sample_name=sample_name,
                 locus_tag=sample_locus_tag,
-                min_length=20
+                min_length=min_length
             )
         
         # Verify output files
-        faa_file = os.path.join(outdir, f"{sample_name}.faa")
-        bed_file = os.path.join(outdir, f"{sample_name}.coords.bed")
-        fna_file = os.path.join(outdir, f"{sample_name}.fna")
+        faa_file = os.path.join(outdir, f"Proteomes/{sample_name}.faa")
+        bed_file = os.path.join(outdir, f"BEDs/{sample_name}.bed")
+        fna_file = os.path.join(outdir, f"Genomes/{sample_name}.fna")
         
         if (os.path.isfile(faa_file) and os.path.isfile(bed_file) and os.path.isfile(fna_file) and
             os.path.getsize(faa_file) > 0 and os.path.getsize(bed_file) > 0 and os.path.getsize(fna_file) > 0):
@@ -1700,6 +1711,7 @@ def process_annotation_directories(
     locus_tag_length: int = config.DEFAULT_LOCUS_TAG_LENGTH,
     rename_locus_tags: bool = False,
     threads: int = config.DEFAULT_THREADS,
+    min_length: int = config.DEFAULT_MIN_LENGTH,
 ) -> Dict[str, Dict[str, str]]:
     """
     Process annotation directories (Prokka/Bakta) and create formatted output files.
@@ -1711,7 +1723,7 @@ def process_annotation_directories(
         locus_tag_length: Length of locus tag prefix
         rename_locus_tags: Whether to rename locus tags
         threads: Number of threads to use
-        
+        min_length: Minimum length of protein to include
     Returns:
         Dictionary containing sample mappings for wgs, proteomes, and beds
     """
@@ -1724,7 +1736,7 @@ def process_annotation_directories(
     process_args = []
     for i, annotation_dir in enumerate(annotation_dirs):
         sample_locus_tag = possible_locustags[i] if rename_locus_tags else None
-        process_args.append((annotation_dir, outdir, sample_locus_tag, log_object))
+        process_args.append((annotation_dir, outdir, sample_locus_tag, min_length))
     
     # Process annotation directories in parallel
     sample_wgs = {}
@@ -1753,20 +1765,20 @@ def process_annotation_directories(
     for sample_name, success, error_message, annotation_type in results:
         if success:
             # Define expected file paths
-            faa_file = os.path.join(outdir, f"{sample_name}.faa")
-            bed_file = os.path.join(outdir, f"{sample_name}.coords.bed")
-            fna_file = os.path.join(outdir, f"{sample_name}.fna")
+            faa_file = os.path.join(outdir, f"Proteomes/{sample_name}.faa")
+            bed_file = os.path.join(outdir, f"BEDs/{sample_name}.bed")
+            fna_file = os.path.join(outdir, f"Genomes/{sample_name}.fna")
             
             # Verify files exist and have content
             if (os.path.isfile(faa_file) and os.path.isfile(bed_file) and 
                 os.path.getsize(faa_file) > 0 and os.path.getsize(bed_file) > 0):
                 
-                sample_proteomes[sample_name] = faa_file
-                sample_beds[sample_name] = bed_file
+                sample_proteomes[sample_name] = f"Genome_Processing/Proteomes/{sample_name}.faa"
+                sample_beds[sample_name] = f"Genome_Processing/BEDs/{sample_name}.bed"
                 
                 # Add genome file if it exists
                 if os.path.isfile(fna_file) and os.path.getsize(fna_file) > 0:
-                    sample_wgs[sample_name] = fna_file
+                    sample_wgs[sample_name] = f"Genome_Processing/Genomes/{sample_name}.fna"
                 
                 if log_object:
                     log_object.info(f"Successfully processed {annotation_type} directory: {sample_name}")
