@@ -252,13 +252,13 @@ def determine_ortholog_group_contexts(
                 
                 if total_nog > 0:
                     context_var_score = round(avg_nog/total_nog, 2)
-                    if total_nog > 1:
-                        context_entropy = round(stats.entropy([x/sum_nog_freqs for x in nog_freqs]), total_nog)
+                    if total_nog > 1:                        
+                        context_entropy = round(stats.entropy([x/sum_nog_freqs for x in nog_freqs], total_nog))
                 
                 if total_nog_complete > 0:
                     context_var_score_complete = round(avg_nog_complete/total_nog_complete, 2)
                     if total_nog_complete > 1:
-                        context_entropy_complete = round(stats.entropy([x/sum_nog_freqs_complete for x in nog_freqs_complete]), total_nog_complete)
+                        context_entropy_complete = round(stats.entropy([x/sum_nog_freqs_complete for x in nog_freqs_complete], total_nog_complete))
                 
                 # Calculate MGE percentages
                 plasmid_count = 0
