@@ -32,6 +32,7 @@ single_copy_dogs: Set[str] = set([])
 largely_idr_dogs: Set[str] = set([])
 protein_dogs: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
 dog_conservation: Dict[str, Any] = {}
+tree_obj: Any = None
 
 version: str = get_version()
 
@@ -675,8 +676,11 @@ def resolve_orthogroups_using_phylogenetics(
             if len(t.get_leaves()) < 500:
                 split_inputs.append([dog, tre_file, spl_full_file, skip_merge_back_flag, rooting_seeds, fixation_index_cutoff, 1, log_object])
             else:
-                # Handle large trees directly (no global tree object needed)
+                # Handle large trees with global tree object for efficiency
+                global tree_obj
+                tree_obj = Tree(tre_file)
                 split_dogs([dog, tre_file, spl_full_file, skip_merge_back_flag, rooting_seeds, fixation_index_cutoff, threads, log_object])
+                tree_obj = None
 
         # Run phylogenetic splitting of orthogroups
         msg = 'Using phylogenetics to split coarse domain resolution ortholog groups.'
@@ -1373,15 +1377,15 @@ def pairwise_dist(inputs: List[Any]) -> None:
     Calculate pairwise distance between two tree leaves.
 
     Args:
-        inputs: List containing [d, l1, l2, tre_file] where d is distance dict, 
-        l1, l2 are leaves, tre_file is tree file
+        inputs: List containing [d, l1, l2] where d is distance dict, 
+        l1, l2 are leaves
 
     Returns:
         None: Updates distance dictionary
     """
-    d, l1, l2, tre_file = inputs
-    t = Tree(tre_file)
-    dist = t.get_distance(l1, l2)
+    global tree_obj
+    d, l1, l2 = inputs
+    dist = tree_obj.get_distance(l1, l2)
     key = tuple(sorted([l1, l2]))
     d[key] = dist
 
@@ -1397,6 +1401,7 @@ def split_dogs(inputs: List[Any]) -> None:
     Returns:
         None: Creates split files for domain ortholog groups
     """
+    global tree_obj
     (
         og,
         tre_file,
@@ -1409,7 +1414,12 @@ def split_dogs(inputs: List[Any]) -> None:
     ) = inputs
     rooting_seeds = max([rooting_seeds, 1])
     try:
-        t = Tree(tre_file)
+        # Use global tree object if available, otherwise load from file
+        if tree_obj is not None:
+            t = tree_obj
+        else:
+            t = Tree(tre_file)
+
         samples_with_og = set([])
         leafs = set([])
         for n in t.traverse('postorder'):
@@ -1426,7 +1436,7 @@ def split_dogs(inputs: List[Any]) -> None:
                 for i, l1 in enumerate(leafs):
                     for j, l2 in enumerate(leafs):
                         if i < j:
-                            pairs.append([d, l1, l2, tre_file])
+                            pairs.append([d, l1, l2])
 
                 with manager.Pool(threads) as pool:
                     pool.map(pairwise_dist, pairs)
@@ -1469,7 +1479,7 @@ def split_dogs(inputs: List[Any]) -> None:
                     else:
                         rooted_t.set_outgroup(n.name)
                 except Exception:
-                    sys.stderr.write(traceback.format_exc() + '\n')
+                    log_object.error(f"Error setting outgroup for node {n.name}: {traceback.format_exc()}")
                     continue
 
                 sp = recursive_splitting(rooted_t, samples_with_og)
@@ -1544,7 +1554,6 @@ def split_dogs(inputs: List[Any]) -> None:
         msg = (
             f'Issue with splitting ortholog group {og} - based on phylo from full MSA.'
         )
-        sys.stderr.write(msg + '\n')
-        sys.stderr.write(traceback.format_exc() + '\n')
         log_object.error(msg)
+        log_object.error(traceback.format_exc())
         sys.exit(1)
