@@ -672,15 +672,10 @@ def resolve_orthogroups_using_phylogenetics(
             dog = '.tre'.join(f.split('.tre')[:-1])
             tre_file = tre_dir + f
             spl_full_file = spl_full_dir + dog + '.txt'
-            t = Tree(tre_file)
             if len(t.get_leaves()) < 500:
                 split_inputs.append([dog, tre_file, spl_full_file, skip_merge_back_flag, rooting_seeds, fixation_index_cutoff, 1, log_object])
             else:
-                # Handle large trees with global tree object for efficiency
-                global tree_obj
-                tree_obj = Tree(tre_file)
                 split_dogs([dog, tre_file, spl_full_file, skip_merge_back_flag, rooting_seeds, fixation_index_cutoff, threads, log_object])
-                tree_obj = None
 
         # Run phylogenetic splitting of orthogroups
         msg = 'Using phylogenetics to split coarse domain resolution ortholog groups.'
@@ -1383,7 +1378,6 @@ def pairwise_dist(inputs: List[Any]) -> None:
     Returns:
         None: Updates distance dictionary
     """
-    global tree_obj
     d, l1, l2 = inputs
     dist = tree_obj.get_distance(l1, l2)
     key = tuple(sorted([l1, l2]))
@@ -1413,12 +1407,7 @@ def split_dogs(inputs: List[Any]) -> None:
     ) = inputs
     rooting_seeds = max([rooting_seeds, 1])
     try:
-        # Use global tree object if available, otherwise load from file
-        if tree_obj is not None:
-            t = tree_obj
-        else:
-            t = Tree(tre_file)
-
+        t = Tree(tre_file)
         samples_with_og = set([])
         leafs = set([])
         for n in t.traverse('postorder'):
@@ -1429,6 +1418,8 @@ def split_dogs(inputs: List[Any]) -> None:
 
         pw_dists = None
         if threads > 1:
+            global tree_obj
+            tree_obj = t
             with multiprocessing.Manager() as manager:
                 d = manager.dict()
                 pairs = []
