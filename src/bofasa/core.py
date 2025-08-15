@@ -1401,7 +1401,6 @@ def split_dogs(inputs: List[Any]) -> None:
     Returns:
         None: Creates split files for domain ortholog groups
     """
-    global tree_obj
     (
         og,
         tre_file,
