@@ -24,6 +24,7 @@ from scipy.spatial import distance
 from . import config
 from .utils import get_version, setup_ready_directory, run_cmd, _iter_progress
 from .alignment import create_domain_alignments
+import itertools
 
 # Set random seed for reproducibility
 random.seed(12345)
@@ -1266,6 +1267,32 @@ def further_split_outlier_artifact_groups(
         sys.exit(1)
 
 
+def single_linkage_cluster(pairs, all_lts, paired_lts):
+    """
+    Solution for single-linkage clustering taken from mimomu's response in the stackoverflow page:
+    https://stackoverflow.com/questions/4842613/merge-lists-that-share-common-elements?lq=1
+    """
+    try:
+        L = pairs
+        LL = set(itertools.chain.from_iterable(L))
+        for each in LL:
+            components = [x for x in L if each in x]
+            for i in components:
+                L.remove(i)
+            L += [list(set(itertools.chain.from_iterable(components)))]
+
+        for lt in all_lts:
+            if not lt in paired_lts:
+                L.append([lt])
+
+        return (L)
+    except Exception:
+        msg = 'Issue running single linkage clustering!'
+        sys.stderr.write(msg + '\n')
+        sys.stderr.write(traceback.format_exc() + '\n')
+        sys.exit(1)
+
+
 def merge_back_dog_partitions(
     t: Tree,
     pw_dists: Dict[Tuple[str, str], float],
@@ -1354,7 +1381,6 @@ def merge_back_dog_partitions(
                 paired_sps.add(c2)
 
     if len(merge_sps) > 0:
-        from .utils import single_linkage_cluster
         merged_sp_ids = single_linkage_cluster(merge_sps, all_sps, paired_sps)
         merged_sp_listing = []
         for msp in merged_sp_ids:
