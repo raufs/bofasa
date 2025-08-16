@@ -672,6 +672,7 @@ def resolve_orthogroups_using_phylogenetics(
             dog = '.tre'.join(f.split('.tre')[:-1])
             tre_file = tre_dir + f
             spl_full_file = spl_full_dir + dog + '.txt'
+            t = Tree(tre_file)
             if len(t.get_leaves()) < 500:
                 split_inputs.append([dog, tre_file, spl_full_file, skip_merge_back_flag, rooting_seeds, fixation_index_cutoff, 1, log_object])
             else:
