@@ -687,32 +687,11 @@ def resolve_orthogroups_using_phylogenetics(
         sys.stderr.write(msg + '\n')
         log_object.info(msg)
         
-        # Configure threading for domain ortholog group splitting
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
-                future_to_input = {executor.submit(split_dogs, input_data): input_data 
-                                 for input_data in split_inputs}
-                
-                for future in _iter_progress(
-                    concurrent.futures.as_completed(future_to_input),
-                    total=len(split_inputs),
-                    description="Domain OG splits",
-                ):
-                    try:
-                        future.result()
-                    except Exception as e:
-                        input_data = future_to_input[future]
-                        msg = f'Failed during domain ortholog group splitting job: {e}'
-                        log_object.error(msg)
-                        sys.stderr.write(msg + '\n')
-                        sys.stderr.write(traceback.format_exc() + '\n')
-                        # Continue with other jobs instead of exiting
-        except Exception as e:
-            msg = 'Failed during threading domain ortholog group splitting'
-            log_object.error(msg)
-            sys.stderr.write(msg + '\n')
-            sys.stderr.write(traceback.format_exc() + '\n')
-            sys.exit(1)
+        # Use multiprocessing for domain ortholog group splitting
+        p = multiprocessing.Pool(threads)
+        for _ in _iter_progress(p.imap_unordered(split_dogs, split_inputs), total=len(split_inputs), description="Domain OG splits"):
+            pass
+        p.close()
 
         # Write final results file
         with open(result_file, 'w') as outf_handle:
