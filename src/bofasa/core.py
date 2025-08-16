@@ -677,8 +677,11 @@ def resolve_orthogroups_using_phylogenetics(
             if len(t.get_leaves()) < 500:
                 split_inputs.append([dog, tre_file, spl_full_file, skip_merge_back_flag, rooting_seeds, fixation_index_cutoff, 1, log_object])
             else:
+                global tree_obj
+                tree_obj = t
                 split_dogs([dog, tre_file, spl_full_file, skip_merge_back_flag, rooting_seeds, fixation_index_cutoff, threads, log_object])
-
+                tree_obj = None
+                
         # Run phylogenetic splitting of orthogroups
         msg = 'Using phylogenetics to split coarse domain resolution ortholog groups.'
         sys.stderr.write(msg + '\n')
@@ -1445,8 +1448,6 @@ def split_dogs(inputs: List[Any]) -> None:
 
         pw_dists = None
         if threads > 1:
-            global tree_obj
-            tree_obj = t
             with multiprocessing.Manager() as manager:
                 d = manager.dict()
                 pairs = []
@@ -1459,10 +1460,6 @@ def split_dogs(inputs: List[Any]) -> None:
                     pool.map(pairwise_dist, pairs)
 
                 pw_dists = dict(d)
-
-            for l in leafs:
-                pw_dists[tuple([l, l])] = 0.0
-
         else:
             pw_dists = {}
             for i, l1 in enumerate(leafs):
@@ -1472,6 +1469,10 @@ def split_dogs(inputs: List[Any]) -> None:
                     dist = t.get_distance(l1, l2)
                     key = tuple(sorted([l1, l2]))
                     pw_dists[key] = dist
+        
+        # Add self-distances
+        for l in leafs:
+            pw_dists[tuple([l, l])] = 0.0
 
         all_rooting_partitions = []
         possible_nodes_for_rooting = set([])
