@@ -183,11 +183,8 @@ def write_gene_predictions(
     # Create output files
     gff_file = os.path.join(outdir, f"{sample_name}.gff")
     faa_file = os.path.join(outdir, f"{sample_name}.faa")
-    fna_file = os.path.join(outdir, f"{sample_name}.fna")
 
-    with open(gff_file, 'w') as gff_handle, open(faa_file, 'w') as faa_handle, open(
-        fna_file, 'w'
-    ) as fna_handle:
+    with open(gff_file, 'w') as gff_handle, open(faa_file, 'w') as faa_handle:
 
         # Write GFF header
         gff_handle.write("##gff-version 3\n")
@@ -201,29 +198,36 @@ def write_gene_predictions(
 
             # Write protein sequence
             faa_handle.write(f">gene_{i}\n{gene.translate()}\n")
-
-            # Write DNA sequence
-            fna_handle.write(f">gene_{i}\n{gene.sequence()}\n")
+            
+            # Note: We don't write individual gene DNA sequences to FNA
+            # The original genome scaffolds should be copied separately
 
 
 def create_formatted_annotation_files(
-    outdir: str, sample_name: str, locus_tag: str, min_length: int = config.DEFAULT_MIN_LENGTH
+    outdir: str, sample_name: str, locus_tag: str, min_length: int = config.DEFAULT_MIN_LENGTH,
+    input_genome_file: str = None
 ) -> None:
-    """Create formatted BED and proteome files with custom locus tags from Prodigal output."""
+    """Create formatted BED and proteome files with custom locus tags from Prodigal output.
+    
+    Args:
+        outdir: Output directory
+        sample_name: Sample name
+        locus_tag: Locus tag prefix
+        min_length: Minimum protein length
+        input_genome_file: Path to original input genome file (to copy to Genomes/)
+    """
     # Read GFF file
     gff_file = os.path.join(outdir, f"{sample_name}.gff")
     if not os.path.exists(gff_file):
         raise FileNotFoundError(f"GFF file not found: {gff_file}")
 
-    fna_file = os.path.join(outdir, f"{sample_name}.fna")
-    if not os.path.exists(fna_file):
-        raise FileNotFoundError(f"FNA file not found: {fna_file}")
-
     bed_dir = os.path.join(outdir, "BEDs/")
     faa_dir = os.path.join(outdir, "Proteomes/")
     wgs_dir = os.path.join(outdir, "Genomes/")
 
-    shutil.move(fna_file, os.path.join(wgs_dir, f"{sample_name}.fna"))
+    # Copy original genome file to Genomes/ directory (not gene sequences!)
+    if input_genome_file and os.path.exists(input_genome_file):
+        shutil.copy(input_genome_file, os.path.join(wgs_dir, f"{sample_name}.fna"))
 
     # Create output files
     bed_file = os.path.join(bed_dir, f"{sample_name}.bed")
@@ -401,7 +405,7 @@ def process_genbank_file(
                 # Count CDS features
                 cds_count = sum(1 for feature in record.features if feature.type == "CDS")
                 if cds_count == 0:
-                    print(f"Warning: No CDS features found in record {scaffold} of {input_file}")
+                    sys.stdout.write(f"Warning: No CDS features found in record {scaffold} of {input_file}\n")
                     _log_cds_issue(outdir, sample_name, scaffold, "N/A", "no_cds_features", f"No CDS features found in record")
 
                 # Write genome sequence
@@ -475,7 +479,7 @@ def process_genbank_file(
         finally:
             genbank_handle.close()
 
-    print(f"Processed {protein_count} proteins from {record_count} records in GenBank file.")
+    sys.stdout.write(f"Processed {protein_count} proteins from {record_count} records in GenBank file.\n")
     
     # Check if any CDS issues were logged
     cds_log_file = _get_cds_log_file(outdir, sample_name)
@@ -486,7 +490,7 @@ def process_genbank_file(
                 lines = log_handle.readlines()
                 if len(lines) > 1:  # More than just header
                     issue_count = len(lines) - 1  # Exclude header
-                    print(f"CDS processing issues logged to: {cds_log_file} ({issue_count} issues)")
+                    sys.stdout.write(f"CDS processing issues logged to: {cds_log_file} ({issue_count} issues)\n")
         except Exception:
             pass  # Don't let logging summary break the main process
     
@@ -595,12 +599,13 @@ def _process_single_genome(args):
             meta_mode=meta_mode
         )
         
-        # Create formatted files with locus tags
+        # Create formatted files with locus tags and copy original genome file
         create_formatted_annotation_files(
             outdir=prodigal_outdir,
             sample_name=sample,
             locus_tag=sample_locus_tag,
-            min_length=min_length
+            min_length=min_length,
+            input_genome_file=sample_assembly
         )
         
         return (sample, True, None)
@@ -1124,7 +1129,7 @@ def create_chopped_proteomes(inputs: List[Any]) -> None:
 
             target_dom_hits = defaultdict(list)
             with pyhmmer.plan7.HMMFile(pfam_db_file) as hmm_file:
-                for hits in pyhmmer.hmmsearch(hmm_file, sequences, bit_cutoffs="trusted", Z=int(pfam_z), cpus=threads):
+                for hits in pyhmmer.hmmsearch(hmm_file, sequences, bit_cutoffs="gathering", Z=int(pfam_z), cpus=threads):
                     for hit in hits:
                         for domain in hit.domains.included:
                             target_dom_hits[hit.name.decode()].append(
@@ -1451,7 +1456,7 @@ def process_prokka_directory(
             with open(genome_file, 'w') as genome_handle:
                 genome_handle.write(fna_handle.read())
 
-    print(f"Processed {protein_count} proteins from Prokka directory.")
+    sys.stdout.write(f"Processed {protein_count} proteins from Prokka directory.\n")
 
 
 def process_bakta_directory(
@@ -1601,7 +1606,7 @@ def process_bakta_directory(
             with open(genome_file, 'w') as genome_handle:
                 genome_handle.write(fna_handle.read())
 
-    print(f"Processed {protein_count} proteins from Bakta directory.")
+    sys.stdout.write(f"Processed {protein_count} proteins from Bakta directory.\n")
 
 
 def extract_protein_sequence(faa_file: str, locus_tag: str) -> Optional[str]:

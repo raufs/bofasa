@@ -61,14 +61,11 @@ bofasa provides a single entry point with intuitive subcommands:
 ██████╔╝╚██████╔╝██║     ██║  ██║███████║██║  ██║
 ╚═════╝  ╚═════╝ ╚═╝     ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
 
-BOFASA: Bacterial Ortholog Finder and Synteny Analyzer
+BOFASA: Bacterial Ortholog Finder and Synteny Analysis
 
 A comprehensive tool for identifying ortholog groups and analyzing
 syntenic conservation in bacterial genomes representing multiple
 species.
-
-Authors: Rauf A. Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan
-Affiliation: University of Wisconsin - Madison, McMaster University
 
 Commands:
   setup    Set up annotation databases
@@ -101,8 +98,10 @@ bofasa prep -i <genome1.fasta> <genome2.gbk> ... -o <output-dir> [OPTIONS]
 - `-c, --threads`: Number of threads (default: 4)
 - `-gcm, --gene-calling-method`: Gene calling method (pyrodigal/prodigal, default: pyrodigal)
 - `-l, --locus-tag-length`: Length of locus tags (default: 3)
-- `-m, --meta-mode`: Use meta mode for gene calling
+- `-m, --meta-mode`: Use meta-mode for gene calling
 - `-rlt, --rename-locus-tags`: Rename locus tags in GenBank files
+- `-rg, --run-genomad`: Run genomad for phage/plasmid annotation
+- `-emg, --extract-mge-genomes`: Extract mobile genetic element (phage/plasmid) genomes identified by genomad (requires -rg)
 - `-mm, --max-memory`: Memory limit in GB (default: 32)
 
 #### `bofasa run` - Execute Analysis

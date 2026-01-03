@@ -5,9 +5,11 @@ This module contains functions for analyzing ortholog groups, creating alignment
 generating reports, and performing various analyses on the results.
 """
 
+from logging import warn
 from math import log
 import multiprocessing
 import os
+import platform
 import subprocess
 import sys
 import traceback
@@ -21,6 +23,7 @@ import plotly.express as px
 import pyhmmer
 from .utils import _iter_progress, multi_process, setup_ready_directory, load_table_in_pandas_dataframe, run_cmd
 from .processing import create_chopped_proteomes, extract_gene_contexts
+from .core import generate_og_name
 from . import config
 from scipy import stats 
 
@@ -762,10 +765,19 @@ def determine_phages_and_plasmids(
                 genomad_results = os.path.join(genomad_dir, sample)
                 
                 # Run genomad
-                genomad_cmd = [
-                    'genomad', 'end-to-end', '--cleanup', '--threads', str(threads), 
-                    '--splits', str(genome_splits), input_genome, genomad_results, genomad_db_dir
-                ]
+                # Build base command
+                genomad_cmd = ['genomad', 'end-to-end', '--cleanup']
+                
+                # On macOS, disable neural network classification to avoid TensorFlow crashes
+                # (especially on Apple Silicon). On Linux, neural network classification works fine.
+                if platform.system() == 'Darwin':
+                    genomad_cmd.append('--disable-nn-classification')
+                
+                # Add remaining parameters
+                genomad_cmd.extend([
+                    '--threads', str(threads), '--splits', str(genome_splits), 
+                    input_genome, genomad_results, genomad_db_dir
+                ])
                 
                 try:
                     run_cmd(genomad_cmd, log_object)
@@ -904,6 +916,502 @@ def extract_mge_proteins(
         raise
 
 
+def extract_mge_genome_sequences(
+    genomad_dir: str,
+    sample_wgs: Dict[str, str],
+    output_dir: str,
+    log_object: Any,
+) -> Dict[str, Dict[str, str]]:
+    """
+    Extract plasmid and phage genome sequences from genomad results as separate genome files.
+    
+    Parameters:
+    -----------
+    genomad_dir : str
+        Directory containing genomad results
+    sample_wgs : Dict[str, str]
+        Dictionary mapping sample names to genome file paths
+    output_dir : str
+        Output directory for extracted MGE genomes
+    log_object : Any
+        Logger object
+        
+    Returns:
+    --------
+    Dict[str, Dict[str, str]]
+        Dictionary with keys 'plasmids' and 'phages', each containing a dict mapping
+        MGE identifiers to their FASTA file paths
+    """
+    from Bio import SeqIO
+    import os
+    
+    try:
+        mge_genomes = {
+            'plasmids': {},
+            'phages': {}
+        }
+        
+        # Create output directories
+        plasmid_genomes_dir = os.path.join(output_dir, "Extracted_Plasmid_Genomes/")
+        phage_genomes_dir = os.path.join(output_dir, "Extracted_Phage_Genomes/")
+        setup_ready_directory([plasmid_genomes_dir, phage_genomes_dir], overwrite_mode="overwrite")
+        
+        msg = "Extracting plasmid and phage genome sequences from geNomad results..."
+        log_object.info(msg)
+        
+        total_plasmids = 0
+        total_phages = 0
+        
+        # Process each sample
+        for sample in sample_wgs:
+            genomad_results = os.path.join(genomad_dir, sample)
+            
+            if not os.path.isdir(genomad_results):
+                log_object.warning(f"geNomad results directory not found for {sample}: {genomad_results}")
+                continue
+            
+            # Find genomad output files
+            prophage_summary_tsv = None
+            plasmid_summary_tsv = None
+            plasmid_fasta = None
+            virus_fasta = None
+            
+            for subdir, dirs, files in os.walk(genomad_results):
+                for file in files:
+                    filepath = os.path.join(subdir, file)
+                    if filepath.endswith("_plasmid_summary.tsv"):
+                        plasmid_summary_tsv = filepath
+                    elif filepath.endswith("_virus_summary.tsv"):
+                        prophage_summary_tsv = filepath
+                    elif filepath.endswith("_plasmid.fna"):
+                        plasmid_fasta = filepath
+                    elif filepath.endswith("_virus.fna"):
+                        virus_fasta = filepath
+            
+            # Extract plasmids
+            if plasmid_summary_tsv and plasmid_fasta and os.path.isfile(plasmid_fasta):
+                try:
+                    plasmid_count = 0
+                    with open(plasmid_fasta, 'r') as handle:
+                        for record in SeqIO.parse(handle, 'fasta'):
+                            # Create unique identifier for this plasmid
+                            plasmid_id = f"{sample}_plasmid_{plasmid_count + 1}"
+                            output_file = os.path.join(plasmid_genomes_dir, f"{plasmid_id}.fna")
+                            
+                            # Write plasmid sequence
+                            with open(output_file, 'w') as out_handle:
+                                out_handle.write(f">{plasmid_id} {record.description}\n")
+                                out_handle.write(f"{str(record.seq)}\n")
+                            
+                            mge_genomes['plasmids'][plasmid_id] = output_file
+                            plasmid_count += 1
+                            total_plasmids += 1
+                    
+                    if plasmid_count > 0:
+                        log_object.info(f"Extracted {plasmid_count} plasmid(s) from {sample}")
+                except Exception as e:
+                    log_object.warning(f"Could not extract plasmids from {sample}: {str(e)}")
+            
+            # Extract phages/viruses
+            if prophage_summary_tsv and virus_fasta and os.path.isfile(virus_fasta):
+                try:
+                    phage_count = 0
+                    with open(virus_fasta, 'r') as handle:
+                        for record in SeqIO.parse(handle, 'fasta'):
+                            # Create unique identifier for this phage
+                            phage_id = f"{sample}_phage_{phage_count + 1}"
+                            output_file = os.path.join(phage_genomes_dir, f"{phage_id}.fna")
+                            
+                            # Write phage sequence
+                            with open(output_file, 'w') as out_handle:
+                                out_handle.write(f">{phage_id} {record.description}\n")
+                                out_handle.write(f"{str(record.seq)}\n")
+                            
+                            mge_genomes['phages'][phage_id] = output_file
+                            phage_count += 1
+                            total_phages += 1
+                    
+                    if phage_count > 0:
+                        log_object.info(f"Extracted {phage_count} phage(s) from {sample}")
+                except Exception as e:
+                    log_object.warning(f"Could not extract phages from {sample}: {str(e)}")
+        
+        msg = f"Extraction complete: {total_plasmids} plasmids and {total_phages} phages extracted as separate genomes"
+        log_object.info(msg)
+        
+        return mge_genomes
+        
+    except Exception as e:
+        log_object.error(f"Error extracting MGE genome sequences: {str(e)}")
+        log_object.error(traceback.format_exc())
+        raise
+
+
+def extract_mge_annotations_from_parent_genomes(
+    genomad_dir: str,
+    sample_wgs: Dict[str, str],
+    sample_proteomes: Dict[str, str],
+    sample_beds: Dict[str, str],
+    output_dir: str,
+    log_object: Any,
+) -> Dict[str, Dict[str, str]]:
+    """
+    Extract gene annotations for MGEs from their parent genomes and remove them from parent files.
+    
+    This function extracts phage and plasmid sequences along with their gene annotations
+    from the parent genome's existing gene calls, avoiding the need to re-run gene calling
+    on small MGE sequences which often fail due to size constraints.
+    
+    IMPORTANT: This function also filters out MGE genes from the parent genome files to
+    avoid double-counting when MGEs are treated as separate entities.
+    
+    Parameters:
+    -----------
+    genomad_dir : str
+        Directory containing genomad results
+    sample_wgs : Dict[str, str]
+        Dictionary mapping sample names to genome file paths
+    sample_proteomes : Dict[str, str]
+        Dictionary mapping sample names to proteome file paths
+    sample_beds : Dict[str, str]
+        Dictionary mapping sample names to BED coordinate file paths
+    output_dir : str
+        Output directory for extracted MGE genomes and annotations
+    log_object : Any
+        Logger object
+        
+    Returns:
+    --------
+    Dict[str, Dict[str, str]]
+        Dictionary with keys 'mge_wgs', 'mge_proteomes', 'mge_beds' containing paths to
+        MGE genome, proteome, and BED files
+    """
+    from Bio import SeqIO
+    import os
+    
+    try:
+        mge_data = {
+            'mge_wgs': {},
+            'mge_proteomes': {},
+            'mge_beds': {}
+        }
+        
+        # Create output directories
+        plasmid_genomes_dir = os.path.join(output_dir, "Extracted_Plasmid_Genomes/")
+        phage_genomes_dir = os.path.join(output_dir, "Extracted_Phage_Genomes/")
+        setup_ready_directory([plasmid_genomes_dir, phage_genomes_dir], overwrite_mode="overwrite")
+        
+        # Also create directories in Genome_Processing
+        gp_dir = os.path.join(output_dir, "Genome_Processing/")
+        wgs_dir = os.path.join(gp_dir, "Genomes/")
+        faa_dir = os.path.join(gp_dir, "Proteomes/")
+        bed_dir = os.path.join(gp_dir, "BEDs/")
+        
+        msg = "Extracting plasmid and phage sequences with annotations from parent genomes..."
+        log_object.info(msg)
+        
+        total_plasmids = 0
+        total_phages = 0
+        
+        # Track MGE genes per sample for filtering parent genomes
+        sample_mge_genes = {}  # sample -> set of gene_ids that belong to MGEs
+        
+        # Process each sample
+        for sample in sample_wgs:
+            genomad_results = os.path.join(genomad_dir, sample)
+            
+            if not os.path.isdir(genomad_results):
+                log_object.warning(f"geNomad results directory not found for {sample}: {genomad_results}")
+                continue
+            
+            # Initialize MGE gene tracking for this sample
+            sample_mge_genes[sample] = set()
+            
+            # Get parent genome files
+            # Note: sample_proteomes and sample_beds already contain full paths
+            parent_proteome = sample_proteomes[sample]
+            parent_bed = sample_beds[sample]
+            
+            if not os.path.isfile(parent_proteome) or not os.path.isfile(parent_bed):
+                log_object.warning(f"Parent genome annotations not found for {sample}")
+                log_object.warning(f"  Proteome path: {parent_proteome}")
+                log_object.warning(f"  BED path: {parent_bed}")
+                continue
+            
+            # Load parent genome proteins
+            parent_proteins = {}
+            with open(parent_proteome, 'r') as handle:
+                for record in SeqIO.parse(handle, 'fasta'):
+                    parent_proteins[record.id] = record
+            
+            # Load parent genome gene coordinates
+            parent_genes = {}  # gene_id -> (scaffold, start, end, score, strand)
+            with open(parent_bed) as obf:
+                for line in obf:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    ls = line.split('\t')
+                    scaffold = ls[0]
+                    start = int(ls[1])
+                    end = int(ls[2])
+                    gene_id = ls[3]
+                    score = ls[4] if len(ls) > 4 else '1'
+                    strand = ls[5] if len(ls) > 5 else '+'
+                    parent_genes[gene_id] = (scaffold, start, end, score, strand)
+            
+            # Find genomad output files
+            plasmid_summary_tsv = None
+            virus_summary_tsv = None
+            plasmid_fasta = None
+            virus_fasta = None
+            
+            for subdir, dirs, files in os.walk(genomad_results):
+                for file in files:
+                    filepath = os.path.join(subdir, file)
+                    if filepath.endswith("_plasmid_summary.tsv"):
+                        plasmid_summary_tsv = filepath
+                    elif filepath.endswith("_virus_summary.tsv"):
+                        virus_summary_tsv = filepath
+                    elif filepath.endswith("_plasmid.fna"):
+                        plasmid_fasta = filepath
+                    elif filepath.endswith("_virus.fna"):
+                        virus_fasta = filepath
+            
+            # Process plasmids
+            if plasmid_summary_tsv and plasmid_fasta and os.path.isfile(plasmid_fasta):
+                try:
+                    # Read plasmid summary to get coordinates
+                    plasmid_coords = {}  # plasmid_seq_id -> (scaffold, start, end)
+                    with open(plasmid_summary_tsv) as pst:
+                        header = pst.readline()  # skip header
+                        for line in pst:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            ls = line.split('\t')
+                            seq_name = ls[0]
+                            # Plasmid summary format: seq_name, length, topology, n_genes, ...
+                            # For full plasmid scaffolds, the coordinates are the entire scaffold
+                            plasmid_coords[seq_name] = (seq_name, None, None)  # Full scaffold
+                    
+                    plasmid_count = 0
+                    with open(plasmid_fasta, 'r') as handle:
+                        for record in SeqIO.parse(handle, 'fasta'):
+                            plasmid_id = f"{sample}_plasmid_{plasmid_count + 1}"
+                            seq_name = record.id
+                            
+                            # Write plasmid genome sequence
+                            output_fna = os.path.join(wgs_dir, f"{plasmid_id}.fna")
+                            with open(output_fna, 'w') as out_handle:
+                                out_handle.write(f">{plasmid_id} {record.description}\n")
+                                out_handle.write(f"{str(record.seq)}\n")
+                            
+                            # Extract genes for this plasmid
+                            plasmid_genes = []
+                            for gene_id, (gene_scaffold, gene_start, gene_end, gene_score, gene_strand) in parent_genes.items():
+                                if gene_scaffold == seq_name:
+                                    plasmid_genes.append(gene_id)
+                                    # Track that this gene belongs to an MGE
+                                    sample_mge_genes[sample].add(gene_id)
+                            
+                            # Write proteome and BED files
+                            output_faa = os.path.join(faa_dir, f"{plasmid_id}.faa")
+                            output_bed = os.path.join(bed_dir, f"{plasmid_id}.bed")
+                            
+                            with open(output_faa, 'w') as faa_handle:
+                                for gene_id in plasmid_genes:
+                                    if gene_id in parent_proteins:
+                                        prot_record = parent_proteins[gene_id]
+                                        faa_handle.write(f">{prot_record.id} {prot_record.description}\n")
+                                        faa_handle.write(f"{str(prot_record.seq)}\n")
+                            
+                            with open(output_bed, 'w') as bed_handle:
+                                for gene_id in plasmid_genes:
+                                    if gene_id in parent_genes:
+                                        gene_scaffold, gene_start, gene_end, gene_score, gene_strand = parent_genes[gene_id]
+                                        bed_handle.write(f"{gene_scaffold}\t{gene_start}\t{gene_end}\t{gene_id}\t{gene_score}\t{gene_strand}\n")
+                            
+                            # Track MGE data with absolute paths
+                            mge_data['mge_wgs'][plasmid_id] = os.path.join(output_dir, "Genome_Processing/Genomes", f"{plasmid_id}.fna")
+                            mge_data['mge_proteomes'][plasmid_id] = os.path.join(output_dir, "Genome_Processing/Proteomes", f"{plasmid_id}.faa")
+                            mge_data['mge_beds'][plasmid_id] = os.path.join(output_dir, "Genome_Processing/BEDs", f"{plasmid_id}.bed")
+                            
+                            plasmid_count += 1
+                            total_plasmids += 1
+                    
+                    if plasmid_count > 0:
+                        log_object.info(f"Extracted {plasmid_count} plasmid(s) from {sample}")
+                except Exception as e:
+                    log_object.warning(f"Could not extract plasmids from {sample}: {str(e)}")
+                    log_object.warning(traceback.format_exc())
+            
+            # Process phages/viruses
+            if virus_summary_tsv and virus_fasta and os.path.isfile(virus_fasta):
+                try:
+                    # Read virus summary to get coordinates
+                    virus_coords = {}  # virus_seq_id -> (scaffold, start, end)
+                    with open(virus_summary_tsv) as vst:
+                        header = vst.readline()  # skip header
+                        for line in vst:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            ls = line.split('\t')
+                            seq_name = ls[0]
+                            # Virus summary format: seq_name, length, topology, coordinates, ...
+                            # Check if this is a provirus (has coordinates) or full scaffold
+                            if len(ls) > 3 and ls[3]:
+                                coords = ls[3]
+                                if '|' in coords and '-' in coords:
+                                    # Provirus format: scaffold|start-end
+                                    parts = coords.split('|')
+                                    scaffold = parts[0]
+                                    coord_parts = parts[1].split('-')
+                                    start = int(coord_parts[0])
+                                    end = int(coord_parts[1])
+                                    virus_coords[seq_name] = (scaffold, start, end)
+                                else:
+                                    virus_coords[seq_name] = (seq_name, None, None)  # Full scaffold
+                            else:
+                                virus_coords[seq_name] = (seq_name, None, None)  # Full scaffold
+                    
+                    phage_count = 0
+                    with open(virus_fasta, 'r') as handle:
+                        for record in SeqIO.parse(handle, 'fasta'):
+                            phage_id = f"{sample}_phage_{phage_count + 1}"
+                            seq_name = record.id
+                            
+                            # Write phage genome sequence
+                            output_fna = os.path.join(wgs_dir, f"{phage_id}.fna")
+                            with open(output_fna, 'w') as out_handle:
+                                out_handle.write(f">{phage_id} {record.description}\n")
+                                out_handle.write(f"{str(record.seq)}\n")
+                            
+                            # Get coordinates for this virus
+                            if seq_name in virus_coords:
+                                scaffold, v_start, v_end = virus_coords[seq_name]
+                            else:
+                                # Assume it's the full scaffold
+                                scaffold = seq_name
+                                v_start = None
+                                v_end = None
+                            
+                            # Extract genes for this phage
+                            phage_genes = []
+                            for gene_id, (gene_scaffold, gene_start, gene_end, gene_score, gene_strand) in parent_genes.items():
+                                if gene_scaffold == scaffold:
+                                    # If we have specific coordinates, check overlap
+                                    if v_start is not None and v_end is not None:
+                                        # Gene overlaps if it starts or ends within the virus region
+                                        if (v_start <= gene_start <= v_end) or (v_start <= gene_end <= v_end):
+                                            phage_genes.append(gene_id)
+                                            # Track that this gene belongs to an MGE
+                                            sample_mge_genes[sample].add(gene_id)
+                                    else:
+                                        # Full scaffold - include all genes from that scaffold
+                                        phage_genes.append(gene_id)
+                                        # Track that this gene belongs to an MGE
+                                        sample_mge_genes[sample].add(gene_id)
+                            
+                            # Write proteome and BED files
+                            output_faa = os.path.join(faa_dir, f"{phage_id}.faa")
+                            output_bed = os.path.join(bed_dir, f"{phage_id}.bed")
+                            
+                            with open(output_faa, 'w') as faa_handle:
+                                for gene_id in phage_genes:
+                                    if gene_id in parent_proteins:
+                                        prot_record = parent_proteins[gene_id]
+                                        faa_handle.write(f">{prot_record.id} {prot_record.description}\n")
+                                        faa_handle.write(f"{str(prot_record.seq)}\n")
+                            
+                            with open(output_bed, 'w') as bed_handle:
+                                for gene_id in phage_genes:
+                                    if gene_id in parent_genes:
+                                        gene_scaffold, gene_start, gene_end, gene_score, gene_strand = parent_genes[gene_id]
+                                        bed_handle.write(f"{gene_scaffold}\t{gene_start}\t{gene_end}\t{gene_id}\t{gene_score}\t{gene_strand}\n")
+                            
+                            # Track MGE data with absolute paths
+                            mge_data['mge_wgs'][phage_id] = os.path.join(output_dir, "Genome_Processing/Genomes", f"{phage_id}.fna")
+                            mge_data['mge_proteomes'][phage_id] = os.path.join(output_dir, "Genome_Processing/Proteomes", f"{phage_id}.faa")
+                            mge_data['mge_beds'][phage_id] = os.path.join(output_dir, "Genome_Processing/BEDs", f"{phage_id}.bed")
+                            
+                            phage_count += 1
+                            total_phages += 1
+                    
+                    if phage_count > 0:
+                        log_object.info(f"Extracted {phage_count} phage(s) from {sample}")
+                except Exception as e:
+                    log_object.warning(f"Could not extract phages from {sample}: {str(e)}")
+                    log_object.warning(traceback.format_exc())
+        
+        msg = f"Extraction complete: {total_plasmids} plasmids and {total_phages} phages extracted with annotations from parent genomes"
+        log_object.info(msg)
+        
+        # Now filter MGE genes from parent genome files
+        log_object.info("Filtering MGE genes from parent genome files to avoid double-counting...")
+        total_filtered_genes = 0
+        
+        for sample, mge_gene_set in sample_mge_genes.items():
+            if len(mge_gene_set) == 0:
+                continue
+            
+            try:
+                # Note: sample_proteomes and sample_beds already contain full paths
+                parent_proteome = sample_proteomes[sample]
+                parent_bed = sample_beds[sample]
+                
+                if not os.path.isfile(parent_proteome) or not os.path.isfile(parent_bed):
+                    log_object.warning(f"Cannot filter parent genome for {sample}: files not found")
+                    continue
+                
+                # Read parent proteome and filter out MGE genes
+                filtered_proteins = []
+                with open(parent_proteome, 'r') as handle:
+                    for record in SeqIO.parse(handle, 'fasta'):
+                        if record.id not in mge_gene_set:
+                            filtered_proteins.append(record)
+                
+                # Write filtered proteome
+                with open(parent_proteome, 'w') as out_handle:
+                    SeqIO.write(filtered_proteins, out_handle, 'fasta')
+                
+                # Read parent BED and filter out MGE genes
+                filtered_bed_lines = []
+                with open(parent_bed, 'r') as bed_handle:
+                    for line in bed_handle:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        ls = line.split('\t')
+                        gene_id = ls[3]
+                        if gene_id not in mge_gene_set:
+                            filtered_bed_lines.append(line)
+                
+                # Write filtered BED file
+                with open(parent_bed, 'w') as bed_handle:
+                    for line in filtered_bed_lines:
+                        bed_handle.write(line + '\n')
+                
+                genes_filtered = len(mge_gene_set)
+                total_filtered_genes += genes_filtered
+                log_object.info(f"Filtered {genes_filtered} MGE gene(s) from {sample}")
+                
+            except Exception as e:
+                log_object.warning(f"Could not filter MGE genes from {sample}: {str(e)}")
+                log_object.warning(traceback.format_exc())
+        
+        if total_filtered_genes > 0:
+            log_object.info(f"Total MGE genes filtered from parent genomes: {total_filtered_genes}")
+        
+        return mge_data
+        
+    except Exception as e:
+        log_object.error(f"Error extracting MGE annotations from parent genomes: {str(e)}")
+        log_object.error(traceback.format_exc())
+        raise
+
+
 def annotate_is_finder(
     sample_proteomes: Dict[str, str],
     annot_dir: str,
@@ -957,14 +1465,24 @@ def annotate_is_finder(
         setup_ready_directory([annot_dir], overwrite_mode="overwrite")
         
         # Prepare DIAMOND commands for each sample
+        # Skip empty proteome files (e.g., from MGEs with no extractable genes)
         dmnd_search_cmds = []
+        skipped_samples = []
         for sample_name, faa_file in sample_proteomes.items():
+            # Check if file exists and is not empty
+            if not os.path.isfile(faa_file) or os.path.getsize(faa_file) == 0:
+                skipped_samples.append(sample_name)
+                continue
+            
             annotation_result_file = os.path.join(annot_dir, f"{sample_name}.isfinder_diamond_blastp.txt")
             search_cmd = [
                 'diamond', 'blastp', '--ignore-warnings', '-p', str(1), 
                 '-d', isfinder_dmnd_path, '-q', faa_file, '-o', annotation_result_file
             ]
             dmnd_search_cmds.append(search_cmd + [log_object])
+        
+        if skipped_samples:
+            log_object.warning(f"Skipping {len(skipped_samples)} samples with empty proteome files: {', '.join(skipped_samples[:5])}{'...' if len(skipped_samples) > 5 else ''}")
         
         msg = f"Running {len(dmnd_search_cmds)} DIAMOND blastp jobs for IS element annotation"
         log_object.info(msg)
@@ -1030,6 +1548,7 @@ def annotate_and_split_proteins_using_pfam(
     domain_coords_dir: str,
     domain_coord_info_file: str,
     log_object: Any,
+    sample_is_mge: Set[str] = None,
     minimal_length: int = 20,
     threads: int = 1,
     skip_domain_splitting: bool = False,
@@ -1049,6 +1568,8 @@ def annotate_and_split_proteins_using_pfam(
         Output file for domain coordinate information
     log_object : Any
         Logger object
+    sample_is_mge : Set[str], optional
+        Set of sample names that are MGEs (plasmids/phages)
     minimal_length : int, default=20
         Minimum length for protein domains
     threads : int, default=1
@@ -1086,14 +1607,20 @@ def annotate_and_split_proteins_using_pfam(
         if not pfam_hmm_path or not os.path.isfile(pfam_hmm_path) or pfam_z is None:
             raise FileNotFoundError(f"Pfam HMM file or Z value not found: {pfam_hmm_path}")
         
-        # Create output directories
+        # Create output directories (all files in common directories)
         setup_ready_directory([split_proteins_dir, domain_coords_dir], overwrite_mode="overwrite")
         
         # Prepare inputs for multiprocessing
+        # All samples (bacterial genomes and MGEs) go to the same directories
+        # The sample_is_mge set is used downstream to filter which samples go to OrthoFinder
+        if sample_is_mge is None:
+            sample_is_mge = set()
+        
         prot_mod_inputs = []
         for sample_name, proteome_file in sample_proteomes.items():
             ccds_prot_file = os.path.join(split_proteins_dir, f"{sample_name}.ccds.faa")
             domain_coord_file = os.path.join(domain_coords_dir, f"{sample_name}.domain_coords.txt")
+            
             prot_mod_inputs.append([
                 proteome_file, ccds_prot_file, domain_coord_file, pfam_hmm_path, 
                 pfam_z, minimal_length, log_object, threads, skip_domain_splitting
@@ -1118,6 +1645,7 @@ def annotate_and_split_proteins_using_pfam(
             # Write header
             dci_handle.write('\t'.join(['Sample', 'Protein', 'Domain_Type', 'Domain_Index', 'Domain_Count', 'Length']) + '\n')
             
+            # Process all files in the domain_coords_dir
             for f in os.listdir(domain_coords_dir):
                 if f.endswith('.domain_coords.txt'):
                     sample = f.replace('.domain_coords.txt', '')
@@ -1205,7 +1733,7 @@ def process_pfam_domains_with_pyhmmer(
         # Run HMM search using hmmsearch (not hmmscan)
         target_dom_hits = defaultdict(list)
         with pyhmmer.plan7.HMMFile(pfam_hmm_path) as hmm_file:
-            for hits in pyhmmer.hmmsearch(hmm_file, sequences, bit_cutoffs="trusted", Z=1000000, cpus=threads):
+            for hits in pyhmmer.hmmsearch(hmm_file, sequences, bit_cutoffs="gathering", Z=1000000, cpus=threads):
                 for hit in hits:
                     for domain in hit.domains.included:
                         target_dom_hits[hits.query.name.decode()].append([
@@ -1307,7 +1835,7 @@ def create_chopped_proteomes(inputs):
             # Run HMM search using hmmsearch
             target_dom_hits = defaultdict(list)
             with pyhmmer.plan7.HMMFile(pfam_hmm_path) as hmm_file:
-                for hits in pyhmmer.hmmsearch(hmm_file, sequences, bit_cutoffs="trusted", Z=int(pfam_z), cpus=threads):
+                for hits in pyhmmer.hmmsearch(hmm_file, sequences, bit_cutoffs="gathering", Z=int(pfam_z), cpus=threads):
                     for hit in hits:
                         for domain in hit.domains.included:
                             target_dom_hits[hit.name.decode()].append([hits.query.name.decode(), domain.alignment.target_from, domain.alignment.target_to, domain.score, domain.i_evalue])
@@ -1394,3 +1922,356 @@ def split_by_idx(S, list_of_indices):
         yield S[left:right]
         left = right
     yield S[left:]
+
+
+def integrate_mge_proteins_into_orthogroups(
+    input_dir: str,
+    sample_is_mge: Set[str],
+    orthofinder_tsv_file: str,
+    orthofinder_tsv_singletons_file: str,
+    workspace_dir: str,
+    orthofinder_mod_tsv_file: str,
+    orthofinder_mod_tsv_singletons_file: str,
+    mge_og_assignment_file: str,
+    threads: int = 1,
+    ultra_sens: bool = False,
+    evalue_cutoff: float = 1e-3,
+    log_object: Any = None,
+) -> None:
+    """
+    Integrate MGE (phage/plasmid) proteins into ortholog groups via DIAMOND alignment.
+    
+    Strategy:
+    1. Concatenate all MGE proteins into a single FASTA file
+    2. Concatenate all bacterial genome proteins and create a DIAMOND database
+    3. Run DIAMOND blastp to align MGE proteins against bacterial genome proteins
+    4. Merge MGE proteins into existing OGs based on best bitscore match (e-value <= cutoff)
+    5. Create new OGs for MGE proteins with no matches meeting the cutoff
+    
+    Parameters:
+    -----------
+    input_dir : str
+        Directory containing all ccds.faa files (both bacterial genomes and MGEs)
+    sample_is_mge : Set[str]
+        Set of sample names that are MGEs (plasmids/phages)
+    orthofinder_tsv_file : str
+        Path to Orthogroups.tsv from OrthoFinder
+    orthofinder_tsv_singletons_file : str
+        Path to Orthogroups_UnassignedGenes.tsv from OrthoFinder
+    orthofinder_mod_tsv_file : str
+        Path to Orthogroups_Modified.tsv from OrthoFinder
+    orthofinder_mod_tsv_singletons_file : str
+        Path to Orthogroups_UnassignedGenes_Modified.tsv from OrthoFinder
+    workspace_dir : str
+        Workspace directory for results
+    mge_og_assignment_file : str
+        Output file for MGE orthogroup assignments
+    threads : int
+        Number of threads for DIAMOND
+    ultra_sens : bool
+        Whether to use ultra-sensitive mode for DIAMOND
+    evalue_cutoff : float
+        E-value cutoff for assigning MGE proteins to OGs
+    log_object : Any
+        Logger object
+    """
+    try:
+        log_object.info("Step 1b.1: Concatenating MGE proteins...")
+
+        # Concatenate all MGE proteins into a single file
+        mge_concat_fasta = os.path.join(workspace_dir, "MGE_protein_chunks_concatenated.faa")
+        mge_protein_to_sample = {}  # Track which sample each MGE protein comes from
+        
+        # Concatenate bacterial genome proteins
+        bacterial_genome_concat_fasta = os.path.join(workspace_dir, "Bacterial_genome_protein_chunks_concatenated.faa")
+        bacterial_genome_protein_to_sample = {}  # Track which sample each bacterial genome protein comes from
+        
+        mge_count = 0
+        bac_count = 0
+        all_mge_protein_chunks = set([])
+        mge_protein_chunks = defaultdict(set)
+        all_mges = set([])
+        with open(mge_concat_fasta, 'w') as mge_out, open(bacterial_genome_concat_fasta, 'w') as bac_out:
+            for fasta_file in os.listdir(input_dir):
+                if not fasta_file.endswith('.ccds.faa'): continue
+                    
+                sample_name = fasta_file.replace('.ccds.faa', '')
+                fasta_path = os.path.join(input_dir, fasta_file)
+                
+                # Determine if this sample is an MGE or bacterial genome
+                is_mge = sample_name in sample_is_mge
+                if is_mge:
+                    all_mges.add(sample_name)
+                with open(fasta_path) as in_handle:
+                    for rec in SeqIO.parse(in_handle, 'fasta'):
+                        if is_mge:
+                            mge_protein_to_sample[rec.id] = sample_name
+                            all_mge_protein_chunks.add(rec.id)
+                            mge_protein_chunks[sample_name].add(rec.id)
+                            SeqIO.write(rec, mge_out, 'fasta')
+                        else:
+                            bacterial_genome_protein_to_sample[rec.id] = sample_name
+                            SeqIO.write(rec, bac_out, 'fasta')
+                
+                if is_mge:
+                    mge_count += 1
+                else:
+                    bac_count += 1
+    
+        log_object.info(f"Concatenated {len(mge_protein_to_sample)} MGE proteins from {mge_count} MGEs")
+        log_object.info(f"Concatenated {len(bacterial_genome_protein_to_sample)} bacterial genome proteins from {bac_count} bacteria genomes")
+        
+        # Create DIAMOND bacterial genome database
+        log_object.info("Step 1b.2: Creating DIAMOND databases from bacterial and MGE domain-resolution protein chunks...")
+        diamond_bac_db = os.path.join(workspace_dir, "Bacterial_genome_domain-resolution_protein_chunks.dmnd")
+        diamond_makedb_cmd = [
+            'diamond', 'makedb', '--in', bacterial_genome_concat_fasta, '--db', diamond_bac_db, '--threads', str(threads)
+        ]
+        run_cmd(diamond_makedb_cmd, log_object, check_files=[diamond_bac_db])
+        
+        # Create DIAMOND MGE domain-resolution protein chunks database
+        diamond_mge_db = os.path.join(workspace_dir, "MGE_domain-resolution_protein_chunks.dmnd")
+        diamond_makedb_cmd = [
+            'diamond', 'makedb', '--in', mge_concat_fasta, '--db', diamond_mge_db, '--threads', str(threads)
+        ]
+        run_cmd(diamond_makedb_cmd, log_object, check_files=[diamond_mge_db])
+
+        sensitivity = 'ultra-sensitive' if ultra_sens else 'very-sensitive'
+        log_object.info("Step 1b.3: Running reflexive alignment of MGE domain-resolution protein chunks against themselves to cluster them into homologous. groups...")
+
+        mge_reflexive_diamond_output = os.path.join(workspace_dir, "MGE_vs_MGE_diamond.tsv")
+        
+        # Run reflexive alignment of MGE proteins against themselves
+        diamond_blastp_cmd = [
+            'diamond', 'blastp',
+            '--db', diamond_mge_db,
+            '--query', mge_concat_fasta,
+            '--out', mge_reflexive_diamond_output,
+            '--outfmt', '6', 'qseqid', 'sseqid', 'pident', 'length', 'mismatch', 'gapopen', 
+                        'qstart', 'qend', 'sstart', 'send', 'evalue', 'bitscore', 'qcovhsp',
+                        'scovhsp',
+            '--threads', str(threads),
+            '--' + sensitivity,
+            '--evalue', str(evalue_cutoff),
+            '--max-target-seqs', '10'  # Only keep best 10 hits per query
+        ]
+        run_cmd(diamond_blastp_cmd, log_object, check_files=[mge_reflexive_diamond_output])
+
+        pair_listing_file = os.path.join(workspace_dir, "Homologous_MGE_pairs.txt")
+        with open(pair_listing_file, 'w') as plf:
+            with open(mge_reflexive_diamond_output, 'r') as of:
+                for line in of:
+                    line = line.strip()
+                    ls = line.split('\t')
+                    if len(ls) >= 12:
+                        query = ls[0]
+                        hit = ls[1]
+                        qcovhsp = float(ls[12])
+                        scovhsp = float(ls[13])
+                        if query == hit: continue
+                        if qcovhsp < 0.5 or scovhsp < 0.5: continue
+                        plf.write(f"{query} {hit}\n")
+
+        # Run slclust with explicit file redirection (shell operators don't work with subprocess.run without shell=True)
+        slclust_output = os.path.join(workspace_dir, "Homologous_MGE_slclusters.txt")
+        log_object.info(f"Running slclust with input: {pair_listing_file} and output: {slclust_output}")
+        
+        with open(pair_listing_file, 'r') as stdin_file, open(slclust_output, 'w') as stdout_file:
+            result = subprocess.run(
+                ['slclust'],
+                stdin=stdin_file,
+                stdout=stdout_file,
+                stderr=subprocess.PIPE,
+                check=True,
+                text=True
+            )
+        
+        log_object.info("slclust completed successfully")
+        
+        if not os.path.isfile(slclust_output):
+            raise FileNotFoundError(f"slclust output file not created: {slclust_output}")
+
+        cluster_proteins = defaultdict(set)
+        with open(slclust_output, 'r') as of:
+            for i, line in enumerate(of):
+                line = line.strip()
+                ls = line.split()
+                if len(ls) >= 2:
+                    cluster = ls[0]
+                    for pchunk in ls:
+                        cluster_proteins[i].add(pchunk)
+
+        # Run DIAMOND blastp
+        log_object.info("Step 1b.4: Running DIAMOND blastp to align MGE proteins against bacterial genome proteins...")
+        
+        diamond_output = os.path.join(workspace_dir, "MGE_vs_BacterialGenomes_diamond.tsv")
+        sensitivity = 'ultra-sensitive' if ultra_sens else 'very-sensitive'
+        
+        diamond_blastp_cmd = [
+            'diamond', 'blastp',
+            '--db', diamond_bac_db,
+            '--query', mge_concat_fasta,
+            '--out', diamond_output,
+            '--outfmt', '6', 'qseqid', 'sseqid', 'pident', 'length', 'mismatch', 'gapopen', 
+                        'qstart', 'qend', 'sstart', 'send', 'evalue', 'bitscore',
+            '--threads', str(threads),
+            '--' + sensitivity,
+            '--evalue', str(evalue_cutoff),
+            '--max-target-seqs', '10'  # Only keep best 10 hits per query
+        ]
+        
+        run_cmd(diamond_blastp_cmd, log_object, check_files=[diamond_output])
+        
+        # Sort DIAMOND output by bitscore (column 12) in descending order using Unix sort
+        log_object.info("Sorting DIAMOND output by bitscore (this may take a while for large files)...")
+        diamond_output_sorted = os.path.join(workspace_dir, "MGE_vs_BacterialGenomes_diamond_sorted.tsv")
+        
+        # Use Unix sort for efficient sorting of large files
+        # -t $'\t' : tab delimiter
+        # -k12,12 : sort by column 12 (bitscore)
+        # -n : numeric sort
+        # -r : reverse order (highest first)
+        # --parallel : use multiple threads for sorting
+        sort_cmd = f"sort -t $'\\t' -k12,12 -n -r --parallel={threads} {diamond_output} > {diamond_output_sorted}"
+        
+        try:
+            subprocess.run(sort_cmd, shell=True, check=True, executable='/bin/bash')
+            log_object.info(f"Successfully sorted DIAMOND output by bitscore")
+            # Use sorted file for downstream processing
+            diamond_output = diamond_output_sorted
+        except subprocess.CalledProcessError as e:
+            log_object.error(f"Failed to sort DIAMOND output: {str(e)}")
+            raise
+        
+        last_og_id = -1
+        pchunk_to_og = dict()  
+        with open(orthofinder_tsv_file, 'r') as ogf:
+            for i, line in enumerate(ogf):
+                if i == 0: continue
+                line = line.strip()
+                ls = line.split('\t')
+                og_id = ls[0]
+                protein_chunks = ls[1:]
+                for pchunks in protein_chunks:
+                    for pchunk in pchunks.split(','):
+                        pchunk = pchunk.strip()
+                        if pchunk == '': continue
+                        pchunk_to_og[pchunk] = og_id
+                        last_og_id = max([last_og_id, int(og_id[2:])])
+
+        with open(orthofinder_tsv_singletons_file, 'r') as ogf:
+            for i, line in enumerate(ogf):
+                if i == 0: continue
+                line = line.strip()
+                ls = line.split('\t')
+                og_id = ls[0]
+                protein_chunks = ls[1:]
+                for pchunks in protein_chunks:
+                    for pchunk in pchunks.split(','):
+                        pchunk = pchunk.strip()
+                        if pchunk == '': continue
+                        pchunk_to_og[pchunk] = og_id
+                        last_og_id = max([last_og_id, int(og_id[2:])])
+
+        mge_pchunk_to_og = dict()
+        accounted_mge_pchunks = set([])
+        with open(diamond_output_sorted, 'r') as of:
+            for i, line in enumerate(of):
+                line = line.strip()
+                ls = line.split('\t')
+                if len(ls) != 12: continue
+                query = ls[0]
+                hit = ls[1]
+                bitscore = float(ls[11])
+                if query in accounted_mge_pchunks: continue
+                mge_pchunk_to_og[query] = pchunk_to_og[hit]
+                accounted_mge_pchunks.add(query)
+
+        difficult_to_fit = 0
+        for clust in cluster_proteins:
+            total = len(cluster_proteins[clust])
+            accounted = 0
+            best_ogs_by_members = set([])
+            for pchunk in cluster_proteins[clust]:
+                if pchunk in accounted_mge_pchunks:
+                    accounted += 1
+                    best_ogs_by_members.add(mge_pchunk_to_og[pchunk])
+            if accounted == total: continue
+            if len(best_ogs_by_members) == 1:
+                best_og = list(best_ogs_by_members)[0]
+                for pchunk in cluster_proteins[clust]:
+                    mge_pchunk_to_og[pchunk] = best_og
+                    accounted_mge_pchunks.add(pchunk)
+            else:
+                # this can be improved - but for now we prioritize 
+                # minimizing false positive orthology prediction
+                # and so MGE proteins that do not map to a protein
+                # from a non-MGE context are not assigned to an OG
+                # but are left as singletons
+                difficult_to_fit += len(cluster_proteins[clust])
+
+        warning_msg = f"There were {difficult_to_fit} MGE-derived proteins\n"
+        warning_msg += f"which might be homologous/orthologous to each other, "
+        warning_msg += f"but were differentially assigned to orthogroups determined\n"
+        warning_msg += f"by OrthoFinder based on proteins from non-MGE contexts.\n"
+        warning_msg += f"For proteins which didn't map to OrthoFinder orthogroups\n"
+        warning_msg += f"directly, we currently leave them as singletons.\n"
+        log_object.warning(warning_msg)
+
+        mge_og_pchunks = defaultdict(lambda: defaultdict(set))
+        for pchunk in mge_pchunk_to_og:
+            mge = pchunk.split('|')[0]
+            og_id = mge_pchunk_to_og[pchunk]
+            mge_og_pchunks[mge][og_id].add(pchunk)
+
+        mges_sorted = sorted(list(all_mges))
+
+        with open(orthofinder_mod_tsv_file, 'w') as ogf:
+            with open(orthofinder_tsv_file, 'r') as ogf_orig:
+                for i, line in enumerate(ogf_orig): 
+                    line = line.strip()
+                    if i == 0:
+                        ogf.write(line + '\t' + '\t'.join([x + '.ccds' for x in mges_sorted]) + '\n')
+                    else:
+                        ls = line.split('\t')
+                        og_id = ls[0]
+                        bac_chrom_pcs = ls[1:]
+                        mge_pcs = []
+                        for mge in mges_sorted:
+                            if mge in mge_og_pchunks:
+                                if og_id in mge_og_pchunks[mge]:
+                                    mge_pcs.append(', '.join(list(mge_og_pchunks[mge][og_id])))
+                                else:
+                                    mge_pcs.append('')
+
+                        pcs = bac_chrom_pcs + mge_pcs
+                        ogf.write(line + '\t' + '\t'.join(pcs) + '\n')
+
+        bac_sample_count = 0
+        with open(orthofinder_mod_tsv_singletons_file, 'w') as ogf:
+            with open(orthofinder_tsv_singletons_file, 'r') as ogf_orig:
+                for i, line in enumerate(ogf_orig):
+                    line = line.strip()
+                    if i == 0:
+                        ogf.write(line + '\t' + '\t'.join([x + '.ccds' for x in mges_sorted]) + '\n')
+                        bac_sample_count = len(line.split('\t')[1:])
+                    else:
+                        ogf.write(line + '\n')
+
+            last_og_id += 1
+            for i, mge in enumerate(mges_sorted):
+                for pchunk in mge_protein_chunks[mge]:
+                    if pchunk in accounted_mge_pchunks: continue
+                    new_sog_id = generate_og_name(last_og_id)
+                    line_part_1 = [new_sog_id] + (['']*bac_sample_count) + (['']*i)
+                    remainder_i = len(mges_sorted) - i - 1
+                    line_part_2 = ['']*remainder_i
+                    ogf.write('\t'.join(line_part_1 + [pchunk] + line_part_2) + '\n')
+                    assert((len(line_part_1[1:]) + len(line_part_2) + 1) == (len(mges_sorted) + bac_sample_count))
+                    last_og_id += 1
+                    
+    except Exception as e:
+        log_object.error("Error integrating MGE proteins into ortholog groups")
+        log_object.error(str(e))
+        log_object.error(traceback.format_exc())
+        raise

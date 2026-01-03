@@ -28,6 +28,7 @@ build-backend = "setuptools.build_meta"
 script-files=["src/bofasa/scripts/extract_og_pairs.py",
               "src/bofasa/scripts/extract_scc_og_pairs.py",
               "src/bofasa/scripts/print_og_itol_matrix.py",
+              "src/bofasa/scripts/extract_genomad_proteomes.py",
               "src/bofasa/scripts/compare_og_pairs.py",
               "src/bofasa/scripts/determine_og_freqs.py"]
 

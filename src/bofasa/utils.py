@@ -123,27 +123,20 @@ def print_colored_help(help_text: str, command_name: Optional[str] = None) -> No
             genomad_message: str
             genomad_ok, genomad_message = check_genomad_setup()
             if not genomad_ok:
-                print(f"\nWarning: {genomad_message}")
-                print("genomad is required for phage/plasmid annotation in the analysis step.")
+                sys.stdout.write(f"\nWarning: {genomad_message}\n")
+                sys.stdout.write("genomad is required for phage/plasmid annotation in the analysis step.\n")
         elif command_name == "run":
             # For run help, check OrthoFinder and error if missing
             orthofinder_ok: bool
             orthofinder_message: str
             orthofinder_ok, orthofinder_message = check_orthofinder_setup()
             if not orthofinder_ok:
-                print(f"\nError: {orthofinder_message}")
-                print("OrthoFinder is essential for the run command and must be properly configured.")
-                
-                # Highlight PATH solution in a different color if it's mentioned
-                if "export PATH=$CONDA_PREFIX/bin:$PATH" in orthofinder_message:
-                    print(f"\n{Colors.YELLOW}Solution:{Colors.END} Try updating your PATH environment variable:")
-                    print(f"{Colors.CYAN}export PATH=$CONDA_PREFIX/bin:$PATH{Colors.END}")
-                
+                sys.stdout.write(orthofinder_message + '\n')
                 sys.exit(1)
     
     # Check if we're in a terminal that supports colors
     if not sys.stdout.isatty():
-        print(help_text)
+        sys.stdout.write(help_text + '\n')
         return
     
     # Define color scheme
@@ -166,9 +159,9 @@ def print_colored_help(help_text: str, command_name: Optional[str] = None) -> No
     
     if command_name:
         command_header: str = f"\n{subtitle_color}Program: bofasa {command_name}{end_color}"
-        print(logo + command_header)
+        sys.stdout.write(logo + command_header + '\n')
     else:
-        print(logo)
+        sys.stdout.write(logo + '\n')
     
     # Process help text with colors
     lines: List[str] = help_text.split('\n')
@@ -176,19 +169,19 @@ def print_colored_help(help_text: str, command_name: Optional[str] = None) -> No
     
     for line in lines:
         if line.startswith('usage:') or line.startswith('positional arguments:') or line.startswith('optional arguments:'):
-            print(f"{title_color}{line}{end_color}")
+            sys.stdout.write(f"{title_color}{line}{end_color}\n")
         elif line.startswith('  -') or line.startswith('  --'):
             parts: List[str] = line.split('  ', 2)
             if len(parts) >= 3:
                 option_part: str = parts[1]
                 description_part: str = parts[2]
-                print(f"  {option_color}{option_part}{end_color}  {description_color}{description_part}{end_color}")
+                sys.stdout.write(f"  {option_color}{option_part}{end_color}  {description_color}{description_part}{end_color}\n")
             else:
-                print(f"{option_color}{line}{end_color}")
+                sys.stdout.write(f"{option_color}{line}{end_color}\n")
         elif line.strip() and not line.startswith('  '):
-            print(f"{section_color}{line}{end_color}")
+            sys.stdout.write(f"{section_color}{line}{end_color}\n")
         else:
-            print(f"{description_color}{line}{end_color}")
+            sys.stdout.write(f"{description_color}{line}{end_color}\n")
 
 
 def print_bofasa_help() -> None:
@@ -201,14 +194,11 @@ def print_bofasa_help() -> None:
         Prints help text to stdout
     """
     help_text: str = f"""
-BOFASA: Bacterial Ortholog Finder and Synteny Analyzer
+BOFASA: Bacterial Ortholog Finder and Synteny Analysis
 
 A comprehensive tool for identifying ortholog groups and analyzing 
 syntenic conservation in bacterial genomes representing multiple
 species.
-
-Authors: Rauf A. Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan
-Affiliation: University of Wisconsin - Madison, McMaster University
 
 Commands:
   {config.SUBCMD_SETUP_COLOR}setup{config.SUBCMD_END_COLOR}    Set up annotation databases
@@ -502,12 +492,12 @@ def memory_limit(mem: int) -> None:
         
         # Validate memory limit is within reasonable bounds
         if mem < MIN_MEMORY_LIMIT:
-            print(f"Warning: Requested memory limit ({mem}GB) is below minimum ({MIN_MEMORY_LIMIT}GB)")
-            print(f"Using minimum limit of {MIN_MEMORY_LIMIT}GB")
+            sys.stdout.write(f"Warning: Requested memory limit ({mem}GB) is below minimum ({MIN_MEMORY_LIMIT}GB)\n")
+            sys.stdout.write(f"Using minimum limit of {MIN_MEMORY_LIMIT}GB\n")
             mem = MIN_MEMORY_LIMIT
         elif mem > MAX_MEMORY_LIMIT:
-            print(f"Warning: Requested memory limit ({mem}GB) is above maximum ({MAX_MEMORY_LIMIT}GB)")
-            print(f"Using maximum limit of {MAX_MEMORY_LIMIT}GB")
+            sys.stdout.write(f"Warning: Requested memory limit ({mem}GB) is above maximum ({MAX_MEMORY_LIMIT}GB)\n")
+            sys.stdout.write(f"Using maximum limit of {MAX_MEMORY_LIMIT}GB\n")
             mem = MAX_MEMORY_LIMIT
         
         max_virtual_memory: int = mem * 1000000000
@@ -519,15 +509,15 @@ def memory_limit(mem: int) -> None:
         
         # Check if the requested limit exceeds the system's hard limit
         if hard != resource.RLIM_INFINITY and max_virtual_memory > hard:
-            print(f"Warning: Requested memory limit ({mem}GB) exceeds system maximum ({hard_gb})")
-            print(f"Using system maximum instead")
+            sys.stdout.write(f"Warning: Requested memory limit ({mem}GB) exceeds system maximum ({hard_gb})\n")
+            sys.stdout.write(f"Using system maximum instead\n")
             max_virtual_memory = hard
         
         # Check if the requested limit is lower than the current soft limit
         if soft != resource.RLIM_INFINITY and max_virtual_memory < soft:
-            print(f"Reducing memory limit from {soft_gb} to {mem}GB")
+            sys.stdout.write(f"Reducing memory limit from {soft_gb} to {mem}GB\n")
         elif soft == resource.RLIM_INFINITY:
-            print(f"Setting memory limit from unlimited to {mem}GB")
+            sys.stdout.write(f"Setting memory limit from unlimited to {mem}GB\n")
         
         # When setting a lower limit, we need to set both soft and hard limits
         # to the same value to ensure the limit is enforced
@@ -537,12 +527,12 @@ def memory_limit(mem: int) -> None:
             else:
                 resource.setrlimit(resource.RLIMIT_AS, (max_virtual_memory, hard))
             
-            print(f"Memory limit set to: {mem}GB")
+            sys.stdout.write(f"Memory limit set to: {mem}GB\n")
         except ValueError as e:
             if "current limit exceeds maximum limit" in str(e):
-                print(f"Warning: Unable to set memory limit to {mem}GB on this system")
-                print("This may be due to system restrictions (common on macOS)")
-                print("Memory usage will not be limited by this process")
+                sys.stdout.write(f"Warning: Unable to set memory limit to {mem}GB on this system\n")
+                sys.stdout.write("This may be due to system restrictions (common on macOS)\n")
+                sys.stdout.write("Memory usage will not be limited by this process\n")
             else:
                 raise
     except Exception as e:
@@ -582,7 +572,7 @@ def setup_ready_directory(directories: List[str], overwrite_mode: str = "skip") 
                         shutil.rmtree(directory)
                         os.makedirs(directory, exist_ok=True)
                     else:
-                        print(f"Skipping directory '{directory}'")
+                        sys.stdout.write(f"Skipping directory '{directory}'\n")
                 else:
                     raise ValueError(f"Invalid overwrite_mode: {overwrite_mode}. Must be 'skip', 'overwrite', or 'ask'")
             else:
@@ -724,29 +714,101 @@ def check_genomad_setup() -> Tuple[bool, str]:
 def check_orthofinder_setup() -> Tuple[bool, str]:
     """
     Check if OrthoFinder is properly set up and accessible.
+    
+    This function performs a comprehensive check of the OrthoFinder installation
+    by running the help command and examining both the return code and output
+    for any error messages. Provides detailed troubleshooting guidance if issues
+    are detected.
 
     Returns:
     --------
     Tuple[bool, str]
         (is_available, message) - True if OrthoFinder is available, False otherwise
+        The message contains detailed information about the status or error.
     """
     try:
         # Check if orthofinder command is available by trying to run it with help
         result: subprocess.CompletedProcess = subprocess.run(
-            ['orthofinder', '--help'], 
+            ['orthofinder', '-h'], 
             capture_output=True, 
             text=True, 
             timeout=10
         )
         
-        if result.returncode == 0 and "OrthoFinder version" in result.stdout:
-            return True, "OrthoFinder is available"
+        # Check for error messages in the output (similar to lsaBGC-Pan approach)
+        combined_output = (result.stdout + result.stderr).lower()
+        
+        if 'error' in combined_output:
+            error_msg = """
+[ERROR] OrthoFinder was not installed (properly) or set up correctly!
+
+> Set the bin/ folder in your conda environment to have the highest priority for path lookup:
+$ export PATH=$CONDA_PREFIX/bin:$PATH
+
+> Then, test if you are able to see the help message for OrthoFinder without errors:
+$ orthofinder -h
+
+Finally, please try re-running bofasa again!
+"""
+            return False, error_msg
+        
+        # Verify successful execution with proper output
+        if result.returncode == 0 and ("OrthoFinder" in result.stdout or "orthofinder" in combined_output):
+            return True, "OrthoFinder is properly set up"
         else:
-            return False, "OrthoFinder command failed"
+            error_msg = """
+[ERROR] OrthoFinder command failed to execute properly!
+
+> Set the bin/ folder in your conda environment to have the highest priority for path lookup:
+$ export PATH=$CONDA_PREFIX/bin:$PATH
+
+> Then, test if you are able to see the help message for OrthoFinder without errors:
+$ orthofinder -h
+
+Finally, please try re-running bofasa again!
+"""
+            return False, error_msg
             
     except subprocess.TimeoutExpired:
-        return False, "OrthoFinder command timed out"
+        error_msg = """
+[ERROR] OrthoFinder command timed out!
+
+This may indicate an installation or configuration issue.
+
+> Try setting the bin/ folder in your conda environment to have the highest priority:
+$ export PATH=$CONDA_PREFIX/bin:$PATH
+
+> Test the OrthoFinder installation:
+$ orthofinder -h
+
+Finally, please try re-running bofasa again!
+"""
+        return False, error_msg
+        
     except FileNotFoundError:
-        return False, "OrthoFinder command not found in PATH. Try: export PATH=$CONDA_PREFIX/bin:$PATH"
+        error_msg = """
+[ERROR] OrthoFinder was not installed (properly) or set up correctly!
+
+> Set the bin/ folder in your conda environment to have the highest priority for path lookup:
+$ export PATH=$CONDA_PREFIX/bin:$PATH
+
+> Then, test if you are able to see the help message for OrthoFinder without errors:
+$ orthofinder -h
+
+Finally, please try re-running bofasa again!
+"""
+        return False, error_msg
+        
     except Exception as e:
-        return False, f"Error checking OrthoFinder: {str(e)}"
+        error_msg = f"""
+[ERROR] Unexpected error while checking OrthoFinder: {str(e)}
+
+> Try setting the bin/ folder in your conda environment to have the highest priority:
+$ export PATH=$CONDA_PREFIX/bin:$PATH
+
+> Test the OrthoFinder installation:
+$ orthofinder -h
+
+Finally, please try re-running bofasa again!
+"""
+        return False, error_msg

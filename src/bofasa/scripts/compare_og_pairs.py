@@ -125,7 +125,7 @@ def compare_og_pairs() -> None:
     unique_b = len(method_b_set.difference(method_a_set))
     jaccard_index = intersection / union
 
-    print(
+    sys.stdout.write(
         '\t'.join(
             [
                 'Method_A',
@@ -136,9 +136,9 @@ def compare_og_pairs() -> None:
                 'Intersection',
                 'Union',
             ]
-        )
+        ) + '\n'
     )
-    print(
+    sys.stdout.write(
         '\t'.join(
             [
                 str(x)
@@ -152,7 +152,7 @@ def compare_og_pairs() -> None:
                     union,
                 ]
             ]
-        )
+        ) + '\n'
     )
 
 

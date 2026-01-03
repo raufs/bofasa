@@ -230,7 +230,8 @@ def create_main_parser() -> BofasaArgumentParser:
     prep_parser.epilog = (
         "Examples:\n"
         "  bofasa prep -i genome1.fasta genome2.fasta -o prepared_data\n"
-        "  bofasa prep -i *.fasta -o prepared_data -c 8 --gene-calling-method prodigal"
+        "  bofasa prep -i *.fasta -o prepared_data -c 8 --gene-calling-method prodigal\n"
+        "  bofasa prep -i *.fasta -o prepared_data --run-genomad --extract-mge-genomes"
     )
 
     # Add run subcommand
@@ -370,9 +371,7 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--more-deterministic",
         action="store_true",
-        help="Use more deterministic settings for reproducible results.\n"
-        "This may be slower but ensures consistent output across runs.",
-    )
+        help="Use more deterministic settings for reproducible results.")
 
 
 def add_prep_arguments(parser: argparse.ArgumentParser) -> None:
@@ -456,6 +455,12 @@ def add_prep_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help=f"Ignore the upper bound limit for the number of genomes to process [Default is {config.DEFAULT_MAX_GENOMES}].",
     )
+    parser.add_argument(
+        "-emg",
+        "--extract-mge-genomes",
+        action="store_true",
+        help="Extract plasmids and phages identified by geNomad as separate genome files for downstream analysis.",
+    )
 
 
 def add_setup_annotation_dbs_arguments(parser: argparse.ArgumentParser) -> None:
@@ -484,6 +489,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
     """Run the main bofasa analysis."""
     # Import here to avoid circular imports and heavy dependencies
     import os
+    import shutil
     import subprocess
     from .utils import (
         create_logger_object, close_logger_object, memory_limit, 
@@ -502,29 +508,28 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
     from .alignment import create_protein_alignments, create_near_scc_resolved_domain_protein_alignments
 
     # Check OrthoFinder setup early in the workflow
-    print("Checking OrthoFinder setup...")
+    sys.stdout.write("Checking OrthoFinder setup...\n")
     orthofinder_ok, orthofinder_message = check_orthofinder_setup()
     if not orthofinder_ok:
-        print(f"Error: {orthofinder_message}")
-        print("OrthoFinder is essential for the run command and must be properly configured.")
+        sys.stdout.write(orthofinder_message + '\n')
         sys.exit(1)
-    print("✓ OrthoFinder is properly set up")
+    sys.stdout.write("✓ OrthoFinder is properly set up\n")
 
     # Check if output directory already exists
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
-        print(f"\nWARNING: The output directory '{args.output_dir}' already exists and contains files!")
-        print("This process may overwrite existing files.")
+        sys.stdout.write(f"\nWARNING: The output directory '{args.output_dir}' already exists and contains files!\n")
+        sys.stdout.write("This process may overwrite existing files.\n")
         
         while True:
             response = input("Do you want to continue and potentially overwrite existing files? (y/N): ").strip().lower()
             if response in ['y', 'yes']:
-                print("Continuing with existing output directory...")
+                sys.stdout.write("Continuing with existing output directory...\n")
                 break
             elif response in ['n', 'no', '']:
-                print("Exiting. Please choose a different output directory or remove existing files.")
+                sys.stdout.write("Exiting. Please choose a different output directory or remove existing files.\n")
                 sys.exit(1)
             else:
-                print("Please enter 'y' for yes or 'n' for no.")
+                sys.stdout.write("Please enter 'y' for yes or 'n' for no.\n")
 
     # Debug: print(args.threads)  # Removed debug print
 
@@ -545,7 +550,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
     
     # Check if logger was created successfully
     if logger is None:
-        print("Warning: Failed to create logger. Continuing without logging.")
+        sys.stdout.write("Warning: Failed to create logger. Continuing without logging.\n")
         logger = None
 
     try:
@@ -556,11 +561,11 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             logger.info(f"Threads: {args.threads}")
             logger.info(f"Memory limit requested: {args.max_memory}GB")
         else:
-            print("Starting bofasa analysis")
-            print(f"Input directory: {args.bofasa_prep_dir}")
-            print(f"Output directory: {args.output_dir}")
-            print(f"Threads: {args.threads}")
-            print(f"Memory limit requested: {args.max_memory}GB")
+            sys.stdout.write("Starting bofasa analysis\n")
+            sys.stdout.write(f"Input directory: {args.bofasa_prep_dir}\n")
+            sys.stdout.write(f"Output directory: {args.output_dir}\n")
+            sys.stdout.write(f"Threads: {args.threads}\n")
+            sys.stdout.write(f"Memory limit requested: {args.max_memory}GB\n")
 
         # Log parameters
         if logger:
@@ -615,12 +620,12 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             if logger:
                 logger.info(msg)
             else:
-                print(msg)
+                sys.stdout.write(msg + '\n')
         except Exception as e:
             if logger:
                 logger.error('Issue with validating directory with input genomes exists.')
             else:
-                print('Issue with validating directory with input genomes exists.')
+                sys.stdout.write('Issue with validating directory with input genomes exists.\n')
             sys.exit(1)
 
         # Create checkpoint and final results directories
@@ -628,18 +633,55 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
         findir = os.path.join(args.output_dir, "Final_Results/")
         setup_ready_directory([checkdir, findir], overwrite_mode="skip")
 
-        # Step 1: Run OrthoFinder
+        # Step 1: Run OrthoFinder (on bacterial genomes only, excluding MGEs)
         step1_checkpoint_file = os.path.join(checkdir, "Step1.txt")
-        msg = '\n--------------------\nStep 1\n--------------------\nRunning OrthoFinder.'
+        msg = '\n--------------------\nStep 1\n--------------------\nRunning OrthoFinder on bacterial genomes (MGEs will be processed separately if bofasa prep was run with the -emg flag).'
         if logger:
             logger.info(msg)
         else:
-            print(msg)
+            sys.stdout.write(msg + '\n')
         
-        orthofinder_input_dir = os.path.join(args.bofasa_prep_dir, "Domain_and_Interdomain_FASTAs/")
+        # Load MGE metadata to determine which samples are MGEs
+        mge_metadata_file = os.path.join(args.bofasa_prep_dir, "Sample_MGE_Metadata.txt")
+        sample_is_mge = set()
+        if os.path.exists(mge_metadata_file):
+            with open(mge_metadata_file) as mge_handle:
+                for i, line in enumerate(mge_handle):
+                    if i == 0:  # Skip header
+                        continue
+                    parts = line.strip().split('\t')
+                    if len(parts) == 2 and parts[1] == "True":
+                        sample_is_mge.add(parts[0])
+        
+        # All files are in a common directory now
+        all_fastas_dir = os.path.join(args.bofasa_prep_dir, "Domain_and_Interdomain_FASTAs/")
         orthofinder_results_dir = os.path.join(args.output_dir, "OrthoFinder_Results/")
         
+        # Create temporary directory with copies of only bacterial genome files for OrthoFinder
+        orthofinder_input_dir = os.path.join(args.output_dir, "OrthoFinder_Input_Bacterial_Genomes/")
+        
         if not os.path.isfile(step1_checkpoint_file):
+            # Create temporary directory with copies of bacterial genome files only
+            setup_ready_directory([orthofinder_input_dir], overwrite_mode="overwrite")
+            
+            # Copy bacterial genomes (excluding MGEs)
+            for fasta_file in os.listdir(all_fastas_dir):
+                if fasta_file.endswith('.ccds.faa'):
+                    sample_name = fasta_file.replace('.ccds.faa', '')
+                    # Only include if not an MGE
+                    if sample_name not in sample_is_mge:
+                        src = os.path.join(all_fastas_dir, fasta_file)
+                        dst = os.path.join(orthofinder_input_dir, fasta_file)
+                        shutil.copy2(src, dst)
+            
+            num_bacterial = len(os.listdir(orthofinder_input_dir))
+            num_mge = len(sample_is_mge)
+            msg = f"Running OrthoFinder on {num_bacterial} bacterial genomes ({num_mge} MGEs will be integrated separately)"
+            if logger:
+                logger.info(msg)
+            else:
+                sys.stdout.write(msg + '\n')
+            
             orthofinder_cmd = [
                 'orthofinder', '-f', orthofinder_input_dir, '-o', orthofinder_results_dir,
                 '-t', str(args.threads), '-og', '-I', str(args.mcl_inflation)
@@ -656,7 +698,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
                     logger.error(f'Had an issue running: {" ".join(orthofinder_cmd)}')
                     logger.error(str(e))
                 else:
-                    print(f'Had an issue running: {" ".join(orthofinder_cmd)}')
+                    sys.stdout.write(f'Had an issue running: {" ".join(orthofinder_cmd)}\n')
                 sys.exit(1)
             
             with open(step1_checkpoint_file, 'w') as f:
@@ -666,7 +708,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             if logger:
                 logger.info(msg)
             else:
-                print(msg)
+                sys.stdout.write(msg + '\n')
 
         # Find OrthoFinder results files
         orthofinder_subdirs = [d for d in os.listdir(orthofinder_results_dir) 
@@ -675,7 +717,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             if logger:
                 logger.error('Could not find OrthoFinder results directory.')
             else:
-                print('Could not find OrthoFinder results directory.')
+                sys.stdout.write('Could not find OrthoFinder results directory.\n')
             sys.exit(1)
         
         orthofinder_subdir = orthofinder_subdirs[0]
@@ -683,6 +725,8 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
         
         orthofinder_tsv_file = os.path.join(orthofinder_base, "Orthogroups/Orthogroups.tsv")
         orthofinder_tsv_singletons_file = os.path.join(orthofinder_base, "Orthogroups/Orthogroups_UnassignedGenes.tsv")
+        orthofinder_mod_tsv_file = os.path.join(orthofinder_base, "Orthogroups/Orthogroups_Modified.tsv")
+        orthofinder_mod_tsv_singletons_file = os.path.join(orthofinder_base, "Orthogroups/Orthogroups_UnassignedGenes_Modified.tsv")
         orthofinder_graph_file = os.path.join(orthofinder_base, "WorkingDirectory/OrthoFinder_graph.txt")
         orthofinder_seqid_file = os.path.join(orthofinder_base, "WorkingDirectory/SequenceIDs.txt")
         orthofinder_fasta_dir = os.path.join(orthofinder_base, "Orthogroup_Sequences/")
@@ -698,12 +742,73 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
                     'logging information.'
                 )
             else:
-                print(
+                sys.stdout.write(
                     'Could not validate Orthofinder results exist. '
                     'Perhaps investigate the OrthoFinder log files for further '
-                    'logging information.'
+                    'logging information.\n'
                 )
             sys.exit(1)
+
+        # Step 1b: Integrate MGE proteins into ortholog groups
+        step1b_checkpoint_file = os.path.join(checkdir, "Step1b.txt")
+        mge_og_assignment_file = os.path.join(args.output_dir, "MGE_Orthogroup_Assignments.tsv")
+        
+        if not os.path.isfile(step1b_checkpoint_file):
+            msg = '\n--------------------\nStep 1b\n--------------------\nIntegrating MGE (phage/plasmid) proteins into ortholog groups.'
+            if logger:
+                logger.info(msg)
+            else:
+                sys.stdout.write(msg + '\n')
+            
+            # Check if there are any MGEs to integrate
+            if sample_is_mge:
+                # Import MGE integration function
+                from bofasa.analysis import integrate_mge_proteins_into_orthogroups
+                
+                workspace_dir = os.path.join(args.output_dir, "MGE_Integration_Workspace/")
+                setup_ready_directory([workspace_dir], overwrite_mode="overwrite")
+
+                # Run MGE integration 
+                integrate_mge_proteins_into_orthogroups(
+                    input_dir=all_fastas_dir,
+                    sample_is_mge=sample_is_mge,
+                    orthofinder_tsv_file=orthofinder_tsv_file,
+                    orthofinder_tsv_singletons_file=orthofinder_tsv_singletons_file,
+                    orthofinder_mod_tsv_file=orthofinder_mod_tsv_file,
+                    orthofinder_mod_tsv_singletons_file=orthofinder_mod_tsv_singletons_file,
+                    workspace_dir=workspace_dir,
+                    mge_og_assignment_file=mge_og_assignment_file,
+                    threads=args.threads,
+                    ultra_sens=args.ultra_sens,
+                    evalue_cutoff=1e-3,
+                    log_object=logger
+                )
+                
+                msg = "MGE protein integration completed"
+                if logger:
+                    logger.info(msg)
+                else:
+                    sys.stdout.write(msg + '\n')
+            else:
+                msg = "No MGE proteins found or were requested to be extracted via the -emg flag in bofasa prep"
+                if logger:
+                    logger.info(msg)
+                else:
+                    sys.stdout.write(msg + '\n')
+            
+            # Create Step 1b checkpoint
+            with open(step1b_checkpoint_file, 'w') as f:
+                f.write("DONE")
+        else:
+            msg = "Step 1b checkpoint found"
+            if logger:
+                logger.info(msg)
+            else:
+                sys.stdout.write(msg + '\n')
+
+        if sample_is_mge:
+            orthofinder_tsv_file = orthofinder_mod_tsv_file
+            orthofinder_tsv_singletons_file = orthofinder_mod_tsv_singletons_file
 
         # Step 2: Process OrthoFinder results and determine more coarse domain ortholog groups
         step2_checkpoint_file = os.path.join(checkdir, "Step2.txt")
@@ -711,7 +816,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
         if logger:
             logger.info(msg)
         else:
-            print(msg)
+            sys.stdout.write(msg + '\n')
         
         resdog_dir = os.path.join(args.output_dir, "Resolve_Domain_Ortholog_Groups/")
         resulting_dogs_file = os.path.join(findir, "Domain_Ortholog_Groups.tsv")
@@ -741,7 +846,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             if logger:
                 logger.info(msg)
             else:
-                print(msg)
+                sys.stdout.write(msg + '\n')
 
         # Step 3: Determine protein-resolution ortholog groups from domain-resolution ortholog groups
         step3_checkpoint_file = os.path.join(checkdir, "Step3.txt")
@@ -749,7 +854,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
         if logger:
             logger.info(msg)
         else:
-            print(msg)
+            sys.stdout.write(msg + '\n')
         
         protein_cluster_dir = os.path.join(args.output_dir, "Protein_Clustering/")
         resulting_ogs_file = os.path.join(findir, "Protein_Ortholog_Groups.tsv")
@@ -768,7 +873,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             if logger:
                 logger.info(msg)
             else:
-                print(msg)
+                sys.stdout.write(msg + '\n')
 
         # Step 4: Determine surrounding contexts for each ortholog group
         step4_checkpoint_file = os.path.join(checkdir, "Step4.txt")
@@ -776,7 +881,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
         if logger:
             logger.info(msg)
         else:
-            print(msg)
+            sys.stdout.write(msg + '\n')
         
         surround_info_dir = os.path.join(args.output_dir, "Surrounding_Context_Information/")
         og_context_info_file = os.path.join(surround_info_dir, "OrthoGroup_Contexts.tsv")
@@ -797,7 +902,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             if logger:
                 logger.info(msg)
             else:
-                print(msg)
+                sys.stdout.write(msg + '\n')
 
         # Step 5: Create final summarizations
         step5_checkpoint_file = os.path.join(checkdir, "Step5.txt")
@@ -805,7 +910,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
         if logger:
             logger.info(msg)
         else:
-            print(msg)
+            sys.stdout.write(msg + '\n')
         
         final_result_file = os.path.join(findir, "Orthogroup_Overview.xlsx")
         
@@ -821,7 +926,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             if logger:
                 logger.info(msg)
             else:
-                print(msg)
+                sys.stdout.write(msg + '\n')
 
         # Step 6: Create final visuals
         step6_checkpoint_file = os.path.join(checkdir, "Step6.txt")
@@ -833,7 +938,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
         if logger:
             logger.info(msg)
         else:
-            print(msg)
+            sys.stdout.write(msg + '\n')
         
         tmp_result_file = os.path.join(surround_info_dir, "Simplified_Info_for_Plotting.tsv")
         final_result_plot = os.path.join(findir, "Orthogroup_Conservation_vs_ContextEntropy.html")
@@ -851,7 +956,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             if logger:
                 logger.info(msg)
             else:
-                print(msg)
+                sys.stdout.write(msg + '\n')
 
         # Step 7: (Optional) Create profile-HMM database
         if args.og_consensus:
@@ -860,7 +965,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             if logger:
                 logger.info(msg)
             else:
-                print(msg)
+                sys.stdout.write(msg + '\n')
             
             og_seqs_dir = os.path.join(args.output_dir, "Ortholog_Group_Sequences/")
             og_algn_dir = os.path.join(args.output_dir, "Ortholog_Group_Alignments/")
@@ -885,7 +990,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
                 if logger:
                     logger.info(msg)
                 else:
-                    print(msg)
+                    sys.stdout.write(msg + '\n')
 
         # Step 8: (Optional) Create core genome alignment
         if args.core_genome:
@@ -894,7 +999,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             if logger:
                 logger.info(msg)
             else:
-                print(msg)
+                sys.stdout.write(msg + '\n')
             
             dogs_seqs_dir = os.path.join(args.output_dir, "NearSCC_Coarse_Domain_Ortholog_Group_Sequences/")
             dogs_algn_dir = os.path.join(args.output_dir, "NearSCC_Coarse_Domain_Ortholog_Group_Alignments/")
@@ -917,18 +1022,18 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
                 if logger:
                     logger.info(msg)
                 else:
-                    print(msg)
+                    sys.stdout.write(msg + '\n')
 
         if logger:
             logger.info("bofasa analysis completed successfully")
         else:
-            print("bofasa analysis completed successfully")
+            sys.stdout.write("bofasa analysis completed successfully\n")
 
     except Exception as e:
         if logger:
             logger.error(f"Error during bofasa analysis: {str(e)}")
         else:
-            print(f"Error during bofasa analysis: {str(e)}")
+            sys.stdout.write(f"Error during bofasa analysis: {str(e)}\n")
         raise
     finally:
         close_logger_object(logger)
@@ -958,42 +1063,48 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
     annotation_dirs = getattr(args, 'annotation_dirs', [])
     
     if not input_genomes and not annotation_dirs:
-        print("Error: Either input genomes (-i/--input-genomes) or annotation directories (-a/--annotation-dirs) must be provided.")
+        sys.stdout.write("Error: Either input genomes (-i/--input-genomes) or annotation directories (-a/--annotation-dirs) must be provided.\n")
         sys.exit(1)
     
     if input_genomes and annotation_dirs:
-        print("Warning: Both input genomes and annotation directories provided. Processing both types of input.")
+        sys.stdout.write("Warning: Both input genomes and annotation directories provided. Processing both types of input.\n")
+    
+    # Validate extract-mge-genomes requires run-genomad
+    if args.extract_mge_genomes and not args.run_genomad:
+        sys.stdout.write("Error: --extract-mge-genomes requires --run-genomad to be enabled.\n")
+        sys.stdout.write("Please add the --run-genomad flag to use --extract-mge-genomes.\n")
+        sys.exit(1)
 
     # Check if output directory already exists
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
-        print(f"\nWARNING: The output directory '{args.output_dir}' already exists and contains files!")
-        print("This process may overwrite existing files.")
+        sys.stdout.write(f"\nWARNING: The output directory '{args.output_dir}' already exists and contains files!\n")
+        sys.stdout.write("This process may overwrite existing files.\n")
         
         while True:
             response = input("Do you want to continue and potentially overwrite existing files? (y/N): ").strip().lower()
             if response in ['y', 'yes']:
-                print("Continuing with existing output directory...")
+                sys.stdout.write("Continuing with existing output directory...\n")
                 break
             elif response in ['n', 'no', '']:
-                print("Exiting. Please choose a different output directory or remove existing files.")
+                sys.stdout.write("Exiting. Please choose a different output directory or remove existing files.\n")
                 sys.exit(1)
             else:
-                print("Please enter 'y' for yes or 'n' for no.")
+                sys.stdout.write("Please enter 'y' for yes or 'n' for no.\n")
 
     # Check genomad setup early in the workflow
-    print("Checking genomad setup...")
+    sys.stdout.write("Checking genomad setup...\n")
     genomad_ok, genomad_message = check_genomad_setup()
     if not genomad_ok:
-        print(f"Warning: {genomad_message}")
-        print("genomad is required for phage/plasmid annotation in the analysis step.")
-        print("You can continue with prep, but the analysis step may fail.")
+        sys.stdout.write(f"Warning: {genomad_message}\n")
+        sys.stdout.write("genomad is required for phage/plasmid annotation in the analysis step.\n")
+        sys.stdout.write("You can continue with prep, but the analysis step may fail.\n")
         response = input("Do you want to continue with prep anyway? (y/N): ")
         if response.lower() not in ['y', 'yes']:
-            print("Exiting. Please run 'bofasa setup' first to configure genomad.")
+            sys.stdout.write("Exiting. Please run 'bofasa setup' first to configure genomad.\n")
             sys.exit(1)
-        print("Continuing with prep despite genomad issues...")
+        sys.stdout.write("Continuing with prep despite genomad issues...\n")
     else:
-        print("✓ genomad is properly set up")
+        sys.stdout.write("✓ genomad is properly set up\n")
 
     # Set memory limit
     if args.max_memory:
@@ -1012,7 +1123,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
     
     # Check if logger was created successfully
     if logger is None:
-        print("Warning: Failed to create logger. Continuing without logging.")
+        sys.stdout.write("Warning: Failed to create logger. Continuing without logging.\n")
         logger = None
 
     try:
@@ -1027,15 +1138,15 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
             logger.info(f"Gene calling method: {args.gene_calling_method}")
             logger.info(f"genomad setup status: {genomad_ok} - {genomad_message}")
         else:
-            print("Starting bofasa preparation")
+            sys.stdout.write("Starting bofasa preparation\n")
             if input_genomes:
-                print(f"Input genomes: {input_genomes}")
+                sys.stdout.write(f"Input genomes: {input_genomes}\n")
             if annotation_dirs:
-                print(f"Annotation directories: {annotation_dirs}")
-            print(f"Output directory: {args.output_dir}")
-            print(f"Threads: {args.threads}")
-            print(f"Gene calling method: {args.gene_calling_method}")
-            print(f"genomad setup status: {genomad_ok} - {genomad_message}")
+                sys.stdout.write(f"Annotation directories: {annotation_dirs}\n")
+            sys.stdout.write(f"Output directory: {args.output_dir}\n")
+            sys.stdout.write(f"Threads: {args.threads}\n")
+            sys.stdout.write(f"Gene calling method: {args.gene_calling_method}\n")
+            sys.stdout.write(f"genomad setup status: {genomad_ok} - {genomad_message}\n")
 
         # Log parameters
         if logger:
@@ -1048,6 +1159,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                 args.rename_locus_tags,
                 args.meta_mode,
                 args.run_genomad,
+                args.extract_mge_genomes,
                 args.ignore_upperbound_limit,
                 args.gene_calling_method,
                 args.min_length,
@@ -1061,6 +1173,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                 "Rename Locus Tags?",
                 "Draft Mode?",
                 "Run geNomad?",
+                "Extract MGE Genomes?",
                 "Ignore Upperbound Genome Limit?",
                 "Gene Calling Method",
                 "Minimum Length of Domain/Inter-Domain Unit",
@@ -1076,7 +1189,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
         if logger:
             logger.info(msg)
         else:
-            print(msg)
+            sys.stdout.write(msg + '\n')
         
         gp_dir = os.path.join(args.output_dir, "Genome_Processing/")
         faa_dir = os.path.join(gp_dir, "Proteomes/")
@@ -1087,6 +1200,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
         sample_wgs = {}
         sample_proteomes = {}
         sample_beds = {}
+        sample_is_mge = set()  # Track which samples are MGEs (plasmids/phages)
 
         if not os.path.isfile(step1_checkpoint_file):
             setup_ready_directory([gp_dir, faa_dir, bed_dir, wgs_dir], overwrite_mode="overwrite")
@@ -1106,14 +1220,14 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                         if logger:
                             logger.warning(f"{genome_file} is not a valid genome file. Skipping...")
                         else:
-                            print(f"Warning: {genome_file} is not a valid genome file. Skipping...")
+                            sys.stdout.write(f"Warning: {genome_file} is not a valid genome file. Skipping...\n")
 
                 # Process FASTA files with Prodigal
                 if fasta_files:
                     if logger:
                         logger.info(f"Processing {len(fasta_files)} FASTA files with {args.gene_calling_method}...")
                     else:
-                        print(f"Processing {len(fasta_files)} FASTA files with {args.gene_calling_method}...")
+                        sys.stdout.write(f"Processing {len(fasta_files)} FASTA files with {args.gene_calling_method}...\n")
                     
                     # Convert list of fasta files to dictionary with sample names
                     fasta_dict = {}
@@ -1149,7 +1263,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                             if logger:
                                 logger.info(msg)
                             else:
-                                print(msg)
+                                sys.stdout.write(msg + '\n')
                             if sample in sample_wgs:
                                 del sample_wgs[sample]
                                 del sample_proteomes[sample]
@@ -1160,7 +1274,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                     if logger:
                         logger.info(f"Processing {len(genbank_files)} GenBank files...")
                     else:
-                        print(f"Processing {len(genbank_files)} GenBank files...")
+                        sys.stdout.write(f"Processing {len(genbank_files)} GenBank files...\n")
                     
                     # Convert list of genbank files to dictionary with sample names
                     genbank_dict = {}
@@ -1201,7 +1315,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                             if logger:
                                 logger.info(msg)
                             else:
-                                print(msg)
+                                sys.stdout.write(msg + '\n')
                             if sample in sample_wgs:
                                 del sample_wgs[sample]
 
@@ -1210,7 +1324,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                 if logger:
                     logger.info(f"Processing {len(annotation_dirs)} annotation directories...")
                 else:
-                    print(f"Processing {len(annotation_dirs)} annotation directories...")
+                    sys.stdout.write(f"Processing {len(annotation_dirs)} annotation directories...\n")
 
                 # Process annotation directories and get sample mappings
                 annotation_results = process_annotation_directories(
@@ -1237,7 +1351,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
             if logger:
                 logger.info(msg)
             else:
-                print(msg)
+                sys.stdout.write(msg + '\n')
             
             # Load existing data from previous run
             gp_dir = os.path.join(args.output_dir, "Genome_Processing/")
@@ -1270,7 +1384,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
         if logger:
             logger.info(msg)
         else:
-            print(msg)
+            sys.stdout.write(msg + '\n')
 
         # Check if we have enough genomes for analysis
         if len(sample_proteomes) < 4:
@@ -1278,8 +1392,8 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
             if logger:
                 logger.error(error_msg)
             else:
-                print(error_msg)
-            print("Please provide at least 4 valid genome files or annotation directories.")
+                sys.stdout.write(error_msg + '\n')
+            sys.stdout.write("Please provide at least 4 valid genome files or annotation directories.\n")
             sys.exit(1)
 
         if len(sample_proteomes) > config.DEFAULT_MAX_GENOMES and not args.ignore_upperbound_limit:
@@ -1287,8 +1401,8 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
             if logger:
                 logger.error(error_msg)
             else:
-                print(error_msg)
-            print(f"Please provide at most {config.DEFAULT_MAX_GENOMES} valid genome files or annotation directories or alternatively issue the --ignore-upperbound-limit flag.")
+                sys.stdout.write(error_msg + '\n')
+            sys.stdout.write(f"Please provide at most {config.DEFAULT_MAX_GENOMES} valid genome files or annotation directories or alternatively issue the --ignore-upperbound-limit flag.\n")
             sys.exit(1)
 
         for sample in sample_proteomes:
@@ -1308,7 +1422,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                 if logger:
                     logger.info(msg)
                 else:
-                    print(msg)
+                    sys.stdout.write(msg + '\n')
 
                 genomad_dir = os.path.join(args.output_dir, "geNomad_Annotations/")
                 setup_ready_directory([genomad_dir], overwrite_mode="overwrite")
@@ -1330,7 +1444,87 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                 if logger:
                     logger.info(msg)
                 else:
-                    print(msg)
+                    sys.stdout.write(msg + '\n')
+            
+            # Step 2a.5: Extract MGE genomes if requested
+            if args.extract_mge_genomes:
+                step2a5_checkpoint_file = os.path.join(checkdir, "Step2a5.txt")
+                if not os.path.isfile(step2a5_checkpoint_file):
+                    msg = '\n--------------------\nStep 2a.5\n--------------------\nExtracting plasmid and phage genomes as separate entities.'
+                    if logger:
+                        logger.info(msg)
+                    else:
+                        sys.stdout.write(msg + '\n')
+                    
+                    genomad_dir = os.path.join(args.output_dir, "geNomad_Annotations/")
+                    
+                    # Extract MGE genomes with annotations from parent genomes
+                    # This avoids re-running gene calling on small MGE sequences
+                    from .analysis import extract_mge_annotations_from_parent_genomes
+                    mge_data = extract_mge_annotations_from_parent_genomes(
+                        genomad_dir, sample_wgs, sample_proteomes, sample_beds, 
+                        args.output_dir, logger
+                    )
+                    
+                    # Add MGE genomes to sample tracking (skip empty proteome files)
+                    num_mges = len(mge_data['mge_wgs'])
+                    num_skipped = 0
+                    if num_mges > 0:
+                        for mge_id in mge_data['mge_wgs']:
+                            proteome_file = mge_data['mge_proteomes'][mge_id]
+                            # Only add if proteome file is not empty
+                            if os.path.isfile(proteome_file) and os.path.getsize(proteome_file) > 0:
+                                sample_wgs[mge_id] = mge_data['mge_wgs'][mge_id]
+                                sample_proteomes[mge_id] = proteome_file
+                                sample_beds[mge_id] = mge_data['mge_beds'][mge_id]
+                                sample_is_mge.add(mge_id)  # Mark this sample as an MGE
+                            else:
+                                num_skipped += 1
+                        
+                        num_valid = num_mges - num_skipped
+                        msg = f'Successfully extracted annotations for {num_valid} MGE genomes from parent genomes'
+                        if num_skipped > 0:
+                            msg += f' ({num_skipped} MGEs skipped due to no extractable genes)'
+                        if logger:
+                            logger.info(msg)
+                        else:
+                            sys.stdout.write(msg + '\n')
+                    
+                    # Create Step 2a.5 checkpoint
+                    with open(step2a5_checkpoint_file, 'w') as f:
+                        f.write("DONE")
+                else:
+                    msg = "Step 2a.5 checkpoint found - skipping MGE genome extraction"
+                    if logger:
+                        logger.info(msg)
+                    else:
+                        sys.stdout.write(msg + '\n')
+                    
+                    # Need to reload MGE genomes from previous run
+                    # Check for MGE genome files in the output directory
+                    plasmid_genomes_dir = os.path.join(args.output_dir, "Extracted_Plasmid_Genomes/")
+                    phage_genomes_dir = os.path.join(args.output_dir, "Extracted_Phage_Genomes/")
+                    
+                    if os.path.exists(plasmid_genomes_dir):
+                        for fna_file in os.listdir(plasmid_genomes_dir):
+                            if fna_file.endswith('.fna'):
+                                mge_id = os.path.splitext(fna_file)[0]
+                                if os.path.exists(os.path.join(faa_dir, f"{mge_id}.faa")):
+                                    sample_wgs[mge_id] = os.path.join('Genome_Processing/Genomes', f"{mge_id}.fna")
+                                    sample_proteomes[mge_id] = os.path.join('Genome_Processing/Proteomes', f"{mge_id}.faa")
+                                    sample_beds[mge_id] = os.path.join('Genome_Processing/BEDs', f"{mge_id}.bed")
+                                    sample_is_mge.add(mge_id)  # Mark this sample as an MGE
+                    
+                    if os.path.exists(phage_genomes_dir):
+                        for fna_file in os.listdir(phage_genomes_dir):
+                            if fna_file.endswith('.fna'):
+                                mge_id = os.path.splitext(fna_file)[0]
+                                if os.path.exists(os.path.join(faa_dir, f"{mge_id}.faa")):
+                                    sample_wgs[mge_id] = os.path.join('Genome_Processing/Genomes', f"{mge_id}.fna")
+                                    sample_proteomes[mge_id] = os.path.join('Genome_Processing/Proteomes', f"{mge_id}.faa")
+                                    sample_beds[mge_id] = os.path.join('Genome_Processing/BEDs', f"{mge_id}.bed")
+                                    sample_is_mge.add(mge_id)  # Mark this sample as an MGE
+        
         elif args.run_genomad and not sample_wgs:
             msg = (
                 'Warning: geNomad requested but no genome files available '
@@ -1339,7 +1533,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
             if logger:
                 logger.warning(msg)
             else:
-                print(msg)
+                sys.stdout.write(msg + '\n')
 
         # Step 2b: Annotate proteins with ISfinder databases
         step2b_checkpoint_file = os.path.join(checkdir, "Step2b.txt")
@@ -1348,7 +1542,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
             if logger:
                 logger.info(msg)
             else:
-                print(msg)
+                sys.stdout.write(msg + '\n')
 
             annot_dir = os.path.join(args.output_dir, "ISFinder_Annotations/")
             setup_ready_directory([annot_dir], overwrite_mode="overwrite")
@@ -1367,7 +1561,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
             if logger:
                 logger.info(msg)
             else:
-                print(msg)
+                sys.stdout.write(msg + '\n')
 
         # Step 3: Annotate proteins with Pfam and split into domain/inter-domain units
         step3_checkpoint_file = os.path.join(checkdir, "Step3.txt")
@@ -1376,7 +1570,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
             if logger:
                 logger.info(msg)
             else:
-                print(msg)
+                sys.stdout.write(msg + '\n')
 
             split_proteins_dir = os.path.join(args.output_dir, "Domain_and_Interdomain_FASTAs/")
             domain_coords_dir = os.path.join(args.output_dir, "Domain_and_Interdomain_Coordinates/")
@@ -1386,10 +1580,19 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
             sample_ccds_proteomes = annotate_and_split_proteins_using_pfam(
                 sample_proteomes, split_proteins_dir, domain_coords_dir, 
                 domain_coord_info_file, logger, 
+                sample_is_mge=sample_is_mge,
                 minimal_length=args.min_length, 
                 threads=args.threads, 
                 skip_domain_splitting=args.skip_domain_splitting
             )
+            
+            # Save sample_is_mge metadata for downstream use
+            mge_metadata_file = os.path.join(args.output_dir, "Sample_MGE_Metadata.txt")
+            with open(mge_metadata_file, 'w') as mge_handle:
+                mge_handle.write("Sample\tIs_MGE\n")
+                for sample in sample_proteomes:
+                    is_mge = "True" if sample in sample_is_mge else "False"
+                    mge_handle.write(f"{sample}\t{is_mge}\n")
             
             # Create Step 3 checkpoint
             with open(step3_checkpoint_file, 'w') as f:
@@ -1399,20 +1602,31 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
             if logger:
                 logger.info(msg)
             else:
-                print(msg)
+                sys.stdout.write(msg + '\n')
             
             # Load existing data from previous run
             split_proteins_dir = os.path.join(args.output_dir, "Domain_and_Interdomain_FASTAs/")
             domain_coords_dir = os.path.join(args.output_dir, "Domain_and_Interdomain_Coordinates/")
             domain_coord_info_file = os.path.join(args.output_dir, "Sample_Domain_and_InterDomain_Information.txt")
             
-            # Reconstruct sample_ccds_proteomes from existing files
+            # Reconstruct sample_ccds_proteomes from existing files (single directory)
             sample_ccds_proteomes = {}
             if os.path.exists(split_proteins_dir):
                 for ccds_file in os.listdir(split_proteins_dir):
-                    if ccds_file.endswith('.faa'):
-                        sample_name = os.path.splitext(ccds_file)[0]
+                    if ccds_file.endswith('.ccds.faa'):
+                        sample_name = ccds_file.replace('.ccds.faa', '')
                         sample_ccds_proteomes[sample_name] = os.path.join(split_proteins_dir, ccds_file)
+            
+            # Reload sample_is_mge metadata
+            mge_metadata_file = os.path.join(args.output_dir, "Sample_MGE_Metadata.txt")
+            if os.path.exists(mge_metadata_file):
+                with open(mge_metadata_file) as mge_handle:
+                    for i, line in enumerate(mge_handle):
+                        if i == 0:  # Skip header
+                            continue
+                        parts = line.strip().split('\t')
+                        if len(parts) == 2 and parts[1] == "True":
+                            sample_is_mge.add(parts[0])
 
         # Step 4: Finalize setting up for final bofasa analysis
         step4_checkpoint_file = os.path.join(checkdir, "Step4.txt")
@@ -1421,7 +1635,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
             if logger:
                 logger.info(msg)
             else:
-                print(msg)
+                sys.stdout.write(msg + '\n')
 
             # Create info file
             genome_info_listing_file = os.path.join(args.output_dir, "Info_on_Input_Genome_Files.txt")
@@ -1445,18 +1659,18 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
             if logger:
                 logger.info(msg)
             else:
-                print(msg)
+                sys.stdout.write(msg + '\n')
 
         if logger:
             logger.info("bofasa preparation completed successfully")
         else:
-            print("bofasa preparation completed successfully")
+            sys.stdout.write("bofasa preparation completed successfully\n")
 
     except Exception as e:
         if logger:
             logger.error(f"Error during bofasa preparation: {str(e)}")
         else:
-            print(f"Error during bofasa preparation: {str(e)}")
+            sys.stdout.write(f"Error during bofasa preparation: {str(e)}\n")
         raise
     finally:
         close_logger_object(logger)
@@ -1471,21 +1685,21 @@ def run_setup_annotation_dbs(args: argparse.Namespace) -> None:
     # Get output directory from environment variable
     output_dir = os.getenv("BOFASA_DB_PATH")
     if not output_dir:
-        print("Error: BOFASA_DB_PATH environment variable is not set.")
-        print(
-            "Please set BOFASA_DB_PATH to the directory where you want to store annotation databases."
+        sys.stdout.write("Error: BOFASA_DB_PATH environment variable is not set.\n")
+        sys.stdout.write(
+            "Please set BOFASA_DB_PATH to the directory where you want to store annotation databases.\n"
         )
         sys.exit(1)
 
     output_dir = output_dir.strip()
     if not output_dir:
-        print("Error: BOFASA_DB_PATH environment variable is empty.")
+        sys.stdout.write("Error: BOFASA_DB_PATH environment variable is empty.\n")
         sys.exit(1)
 
     try:
         setup_annotation_databases(output_dir, args.threads, args.force)
     except Exception as e:
-        print(f"Error during setup annotation databases: {str(e)}")
+        sys.stdout.write(f"Error during setup annotation databases: {str(e)}\n")
         raise
 
 
@@ -1496,7 +1710,7 @@ def main() -> None:
 
     # Handle version flag
     if len(sys.argv) > 1 and ("-v" in set(sys.argv) or "--version" in set(sys.argv)):
-        print(config.get_version())
+        sys.stdout.write(config.get_version() + '\n')
         sys.exit(0)
 
     # Let argparse handle help automatically through our custom parser
@@ -1515,7 +1729,7 @@ def main() -> None:
     elif args.command == "setup":
         run_setup_annotation_dbs(args)
     else:
-        print(f"Unknown command: {args.command}")
+        sys.stdout.write(f"Unknown command: {args.command}\n")
         print_bofasa_help()
         sys.exit(1)
 
