@@ -148,6 +148,42 @@ Optional Extraction (if -emg)
   - Useful for studying mobile genetic elements independently
   - May reveal ortholog groups specific to MGEs
   - Increases total number of "genomes" in analysis
+  - MGE samples are tracked in `Sample_MGE_Metadata.txt` for downstream processing
+
+**MGE Integration Workflow** (when using `-emg`):
+1. **Prep Phase**: MGEs are extracted as separate genome files with annotations
+2. **Domain Processing**: All samples (bacterial + MGE) are processed together into common directories
+3. **Run Phase - Step 1**: 
+   - OrthoFinder runs on **bacterial genomes only** (MGEs excluded)
+   - Temporary directory created with copies of bacterial genome files
+4. **Run Phase - Step 1b**: MGE Integration
+   - MGE proteins are clustered among themselves via reflexive DIAMOND alignment
+   - MGE protein clusters are aligned against bacterial genome proteins
+   - MGE proteins assigned to existing ortholog groups based on best DIAMOND hit
+   - Unassigned MGE proteins remain as singletons
+   - Modified ortholog tables include MGE columns
+
+**Directory Structure** (after prep with `-emg`):
+```
+prep_output/
+├── Genome_Processing/
+│   ├── Genomes/          # All genomes (bacterial + MGE)
+│   ├── Proteomes/        # All proteomes (bacterial + MGE)
+│   └── BEDs/             # All coordinate files (bacterial + MGE)
+├── Domain_and_Interdomain_FASTAs/   # ALL samples in common directory
+│   ├── sample1.ccds.faa
+│   ├── sample2.ccds.faa
+│   ├── plasmid_X.ccds.faa           # MGE files mixed with bacterial
+│   └── phage_Y.ccds.faa
+├── Domain_and_Interdomain_Coordinates/   # ALL samples in common directory
+│   ├── sample1.domain_coords.txt
+│   ├── sample2.domain_coords.txt
+│   ├── plasmid_X.domain_coords.txt
+│   └── phage_Y.domain_coords.txt
+└── Sample_MGE_Metadata.txt          # Tracks which samples are MGEs
+```
+
+**Note**: Prior to recent updates, MGE files were stored in separate `Bacterial_Genomes/` and `MGEs/` subdirectories. The unified structure simplifies processing while maintaining logical separation via metadata.
 
 ---
 
@@ -158,7 +194,9 @@ The analysis phase performs hierarchical ortholog inference using the prepared d
 ### Step 1: Coarse Ortholog Inference (OrthoFinder)
 
 ```
-Domain & Inter-domain FASTAs
+Domain & Inter-domain FASTAs (Bacterial Genomes Only)
+  ↓
+Temporary Directory Creation (copies of bacterial genome files)
   ↓
 OrthoFinder (MCL-based clustering)
   ↓
@@ -166,10 +204,11 @@ Coarse Domain Ortholog Groups (DOGs)
 ```
 
 **Algorithm:**
-1. All-vs-all DIAMOND BLAST searches
-2. Graph construction based on sequence similarity
-3. MCL clustering to identify ortholog groups
-4. Output: Initial domain ortholog groups
+1. **File Filtering**: Create temporary directory with copies of bacterial genome files only (MGEs excluded via `Sample_MGE_Metadata.txt`)
+2. All-vs-all DIAMOND BLAST searches on bacterial genomes
+3. Graph construction based on sequence similarity
+4. MCL clustering to identify ortholog groups
+5. Output: Initial domain ortholog groups (bacterial genomes only)
 
 **Key Parameters:**
 - `-mi, --mcl-inflation` (default: 1.2): MCL inflation parameter
@@ -197,6 +236,61 @@ Coarse Domain Ortholog Groups (DOGs)
   - ✓ Better for ancient gene families
   - ✗ 3-10x slower
   - ✗ May increase false positives
+
+**Note**: When MGEs are present (from `bofasa prep -emg`), they are **excluded** from OrthoFinder to prevent biasing the core ortholog group structure. MGEs are integrated in Step 1b.
+
+### Step 1b: MGE Integration (if -emg used in prep)
+
+```
+MGE Protein Chunks
+  ↓
+Reflexive DIAMOND Alignment (MGE vs MGE)
+  ↓
+Single-Linkage Clustering (slclust)
+  ↓
+MGE Homology Clusters
+  ↓
+DIAMOND Alignment (MGE vs Bacterial Genomes)
+  ↓
+OG Assignment (best hit or singleton)
+  ↓
+Modified Orthogroups.tsv (with MGE columns)
+```
+
+**Algorithm:**
+1. **Concatenate MGE proteins**: All MGE protein chunks into single FASTA
+2. **Concatenate bacterial proteins**: All bacterial genome protein chunks into single FASTA
+3. **Create DIAMOND databases**: Separate databases for MGE and bacterial proteins
+4. **Reflexive MGE alignment**: DIAMOND blastp of MGEs against themselves
+   - Filter hits: require ≥50% query coverage AND ≥50% subject coverage
+   - Purpose: Identify MGE protein chunks that are homologous to each other
+5. **Cluster MGE proteins**: Single-linkage clustering (slclust) on filtered hits
+   - Groups MGE proteins into homology clusters
+6. **MGE vs Bacterial alignment**: DIAMOND blastp of MGEs against bacterial genome database
+   - Sorted by bitscore (descending) using multi-threaded Unix `sort`
+   - Each MGE protein assigned to OG of its best bacterial genome hit
+7. **Cluster consensus**: For each MGE homology cluster:
+   - If all members map to same OG → assign all to that OG
+   - If members map to different OGs → leave as singletons (conservative approach)
+8. **Output modified tables**:
+   - `Orthogroups_Modified.tsv`: Original OGs + MGE columns
+   - `Orthogroups_UnassignedGenes_Modified.tsv`: Singletons + new MGE singletons
+
+**Key Features:**
+- **Conservative assignment**: Prioritizes accuracy over completeness
+- **Homology-aware**: MGE proteins that cluster together are handled consistently
+- **Sorted by quality**: Best alignments processed first
+- **Efficient**: Unix `sort` with `--parallel` for large files
+
+**Outputs:**
+- `MGE_protein_chunks_concatenated.faa`: All MGE proteins
+- `Bacterial_genome_protein_chunks_concatenated.faa`: All bacterial proteins
+- `MGE_vs_MGE_diamond.tsv`: Reflexive MGE alignment results
+- `Homologous_MGE_pairs.txt`: Filtered MGE homology pairs
+- `Homologous_MGE_slclusters.txt`: MGE homology clusters
+- `MGE_vs_BacterialGenomes_diamond_sorted.tsv`: MGE-bacterial alignments (sorted)
+- `Orthogroups_Modified.tsv`: Updated ortholog groups with MGE columns
+- `Orthogroups_UnassignedGenes_Modified.tsv`: Updated singletons with MGE columns
 
 ### Step 2: Phylogenetic Refinement
 
@@ -790,17 +884,36 @@ bofasa run -i prep/ -o out/ \
 
 #### For Mobile Genetic Element Analysis
 ```bash
-# Prep
+# Prep - Extract MGEs as separate entities
 bofasa prep -i *.fasta -o prep/ -rg -emg
 
-# Run
+# Run - MGEs integrated via Step 1b
 bofasa run -i prep/ -o out/ \
   -mi 1.0 \           # Lower inflation for distant MGE homologs
   -fic 0.15 \         # More aggressive splitting
   -sr 5000            # Smaller window (MGEs often lack synteny)
 ```
 
+**MGE Analysis Notes:**
+- MGEs are excluded from initial OrthoFinder run (Step 1)
+- MGEs integrated in Step 1b via DIAMOND alignment against bacterial OGs
+- Conservative approach: conflicting assignments → singletons
+- Modified ortholog tables include MGE columns (`.ccds` suffix)
+- Unassigned MGE proteins remain as singletons in modified tables
+
 ### Troubleshooting
+
+#### Issue: OrthoFinder fails or hangs
+**Causes:**
+- Symlink issues on some filesystems
+- Too many/too large input files
+- Insufficient disk space
+
+**Solutions:**
+- BOFASA now copies files instead of symlinking (automatic)
+- Temporary directories created: `OrthoFinder_Input_Bacterial_Genomes/`
+- Check disk space in output directory
+- Reduce number of input genomes if memory-limited
 
 #### Issue: Too many singleton ortholog groups
 **Causes:**
@@ -900,6 +1013,87 @@ bofasa run -i prep/ -o out/ \
   - Recently acquired genes
   - Mobile genetic elements
   - Genes under relaxed selection
+
+---
+
+## Technical Implementation Notes
+
+### File Organization and Workflow Optimizations
+
+#### Unified Directory Structure
+BOFASA uses a unified directory structure for all domain and coordinate files:
+- **Before**: Separate subdirectories (`Bacterial_Genomes/`, `MGEs/`)
+- **After**: Common directory with metadata-based filtering
+
+**Benefits:**
+- ✓ Simpler file organization
+- ✓ Easier checkpoint recovery
+- ✓ More maintainable code
+- ✓ Logical separation maintained via `Sample_MGE_Metadata.txt`
+
+#### File Handling for OrthoFinder
+- **Approach**: Copies files instead of symlinks
+- **Reason**: Better compatibility across filesystems
+- **Implementation**: `shutil.copy2()` preserves metadata
+- **Location**: Temporary directory `OrthoFinder_Input_Bacterial_Genomes/`
+
+#### Large File Processing
+**DIAMOND Output Sorting:**
+- **Challenge**: DIAMOND output can be millions of lines
+- **Solution**: Unix `sort` with multi-threading
+- **Command**: `sort -t $'\t' -k12,12 -n -r --parallel={threads}`
+- **Benefits**:
+  - Disk-based external sorting (handles files larger than RAM)
+  - Parallel processing for speed
+  - Sorted by bitscore (descending) for quality-first assignment
+
+**slclust Integration:**
+- **Challenge**: Shell redirection operators (`<`, `>`) don't work with `subprocess.run()` without `shell=True`
+- **Solution**: Explicit file handle redirection
+- **Implementation**: `stdin=file_handle`, `stdout=file_handle`
+- **Benefits**: Safer than shell=True, portable, proper error handling
+
+#### MGE Integration Algorithm
+**Homology Clustering:**
+1. Reflexive DIAMOND alignment (MGE vs MGE)
+2. Coverage filtering (≥50% query and subject coverage)
+3. Single-linkage clustering (slclust)
+4. Cluster-aware OG assignment
+
+**Conservative Assignment Strategy:**
+- Single OG consensus → Assign all cluster members
+- Multiple OG assignments → Leave as singletons
+- Rationale: Prioritizes accuracy over completeness
+
+**Performance Optimizations:**
+- Concatenated FASTA files for batch processing
+- Separate DIAMOND databases for MGEs and bacterial genomes
+- Bitscore-sorted results for quality-first processing
+- Efficient set operations for sample filtering
+
+### Code Quality and Error Handling
+
+**Exception Handling Pattern:**
+```python
+try:
+    # Operation
+    pass
+except Exception as e:
+    log_object.error(f"Context: {str(e)}")
+    log_object.error(traceback.format_exc())
+    raise  # Re-raise with context logged
+```
+
+**Benefits:**
+- Logs error context before propagating
+- Preserves original exception and traceback
+- Follows Python best practices (PEP8-compliant)
+
+**OG Name Generation:**
+- Centralized function: `generate_og_name(i)`
+- Zero-padded formatting: `OG00001`, `OG00042`, etc.
+- Ensures proper alphabetical sorting
+- Used consistently across codebase
 
 ---
 
