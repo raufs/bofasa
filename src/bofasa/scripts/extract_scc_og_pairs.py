@@ -112,6 +112,16 @@ Options for software supported include:
         default="ID",
     )
     parser.add_argument(
+        '-emg',
+        '--exclude-mge-genomes',
+        action='store_true',
+        help='Exclude MGE (mobile genetic element) samples when determining single-copy core.\n'
+             'Filters out samples ending with "_plasmid", "_phage", or ".ccds" suffix.\n'
+             'Useful when bofasa prep was run with -emg flag.',
+        required=False,
+        default=False,
+    )
+    parser.add_argument(
         '-mm',
         '--max_memory',
         type=int,
@@ -167,6 +177,7 @@ def extract_og_pairs():
     max_memory = myargs.max_memory
     pirate_input_dir = myargs.pirate_input_dir
     pirate_gff_identifier = myargs.pirate_gff_identifier
+    exclude_mge_genomes = myargs.exclude_mge_genomes
 
     # START WORKFLOW
 
@@ -197,22 +208,45 @@ def extract_og_pairs():
             sys.stderr.write(msg)
             sys.exit(1)
 
+        # Determine which sample columns to include
+        sample_indices_to_include = []
         with open(result_file) as orf:
             for i, line in enumerate(orf):
-                if i == 0:
-                    continue
                 line = line.rstrip('\n')
                 ls = line.split('\t')
+                
+                if i == 0:
+                    # Header line - determine which samples to include
+                    for j, sample_name in enumerate(ls[1:], start=1):
+                        sample_name = sample_name.strip()
+                        is_mge = (sample_name.endswith('_plasmid') or 
+                                  sample_name.endswith('_phage') or
+                                  sample_name.endswith('.ccds'))
+                        
+                        if exclude_mge_genomes and is_mge:
+                            # Skip MGE samples
+                            continue
+                        else:
+                            sample_indices_to_include.append(j)
+                    
+                    if exclude_mge_genomes:
+                        num_excluded = len(ls) - 1 - len(sample_indices_to_include)
+                        if num_excluded > 0:
+                            sys.stderr.write(f"Excluding {num_excluded} MGE sample(s) from analysis\n")
+                    continue
+                
+                # Data lines - check for single-copy core
                 og_lts = set([])
                 scc_flag = True
-                for lts in ls[1:]:
-                    lts = lts.strip()
+                for j in sample_indices_to_include:
+                    lts = ls[j].strip()
                     if lts == '' or ',' in lts:
                         scc_flag = False
                     for lt in lts.split(','):
                         if lt.strip() == '':
                             continue
                         og_lts.add(lt.strip())
+                
                 if scc_flag:
                     outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
 
