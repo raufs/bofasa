@@ -218,13 +218,10 @@ def extract_og_pairs():
                 if i == 0:
                     # Header line - determine which samples to include
                     for j, sample_name in enumerate(ls[1:], start=1):
-                        sample_name = sample_name.strip()
-                        is_mge = (sample_name.endswith('_plasmid') or 
-                                  sample_name.endswith('_phage') or
-                                  sample_name.endswith('.ccds'))
+                        sample_name = '_'.join(sample_name.strip().split('_')[:-1])
+                        is_mge = (sample_name.endswith('_phage') or sample_name.endswith('_plasmid'))
                         
                         if exclude_mge_genomes and is_mge:
-                            # Skip MGE samples
                             continue
                         else:
                             sample_indices_to_include.append(j)
