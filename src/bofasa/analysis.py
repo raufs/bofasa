@@ -2097,7 +2097,6 @@ def integrate_mge_proteins_into_orthogroups(
                 line = line.strip()
                 ls = line.split()
                 if len(ls) >= 2:
-                    cluster = ls[0]
                     for pchunk in ls:
                         cluster_proteins[i].add(pchunk)
 
