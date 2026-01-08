@@ -667,7 +667,7 @@ def create_final_visual(
                         mge += 1
                 if mge/tot > 0.5:
                     mge_related = 'Yes'
-                outf_handle.write('\t'.join([ls[0], ls[4], ls[5], mge_related]) + '\n')
+                outf_handle.write('\t'.join([ls[0], ls[4], ls[6], mge_related]) + '\n')
         outf_handle.close()
                 
         numeric_columns = set(['Number of protein in OG', 'Context conservation score'])
