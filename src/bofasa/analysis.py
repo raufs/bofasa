@@ -97,6 +97,7 @@ def determine_ortholog_group_contexts(
         # Load ortholog group information
         og_genes: Dict[str, Set[str]] = defaultdict(set)
         og_samples: Dict[str, Set[str]] = defaultdict(set)
+        og_is_single_copy: Dict[str, bool] = {}
         gene_to_og: Dict[str, str] = {}
         samples: List[str] = []
 
@@ -109,14 +110,21 @@ def determine_ortholog_group_contexts(
                         samples = ls[1:]
                     else:
                         og = ls[0]
+                        is_single_copy = True
                         for j, gs in enumerate(ls[1:]):
                             sample = samples[j]
+                            gene_count = 0
                             for g in gs.split(','):
                                 g = g.strip()
                                 if g != '':
                                     og_genes[og].add(g)
                                     og_samples[og].add(sample)
                                     gene_to_og[g] = og
+                                    gene_count += 1
+                            # If any sample has > 1 gene, it's not single-copy
+                            if gene_count > 1:
+                                is_single_copy = False
+                        og_is_single_copy[og] = is_single_copy
 
         try:
             assert(len(og_genes) > 0)
@@ -207,14 +215,14 @@ def determine_ortholog_group_contexts(
                                 og_completed_surrounding_nogs[og][ogc] += 1
                         context_ogs.add(ogc)
                     context_nogs[og].append(len(context_ogs))
-                    context_nogs_complete[og].append(len(context_ogs))
+                    context_nogs_complete[og].append(len(complete_context_ogs))
 
         # Write detailed context information
         with open(og_context_info_file, 'w') as og_context_info_handle:
             og_context_info_handle.write('\t'.join([
                 'OG', 'Median OG length (bp)', 'Percentage contexts near scaffold edge', 'Number of genomes with OG', 
-                'Number of protein in OG', 'Context conservation score', 'Context conservation score - complete contexts', 
-                'Context entropy score', 'Context entropy score - complete contexts', 'Number of distinct neighbor OGs', 
+                'Number of protein in OG', 'Single-copy', 'Context conservation score', 'Context conservation score - complete contexts', 
+                'Number of distinct neighbor OGs', 
                 'Number of distinct OGs from complete contexts', 'Avg. number of distinct neighbor OGs', 
                 'Avg. number of distinct neighbor OGs from complete contexts', 
                 'Percentage instances on plasmid (based on geNomad annotation)', 
@@ -248,22 +256,14 @@ def determine_ortholog_group_contexts(
                 avg_nog = round(statistics.mean(context_nogs[og]), 2)
                 avg_nog_complete = round(statistics.mean(context_nogs_complete[og]), 2)
                 
-                context_entropy = 'NA'
                 context_var_score = 'NA'
-                context_entropy_complete = 'NA'
                 context_var_score_complete = 'NA'
                 
                 if total_nog > 0:
                     context_var_score = round(avg_nog/total_nog, 2)
-                    # TODO: Entropy calculation temporarily disabled
-                    # if total_nog > 1:                        
-                    #     context_entropy = round(stats.entropy([x/sum_nog_freqs for x in nog_freqs], base=total_nog), 2)
                 
                 if total_nog_complete > 0:
                     context_var_score_complete = round(avg_nog_complete/total_nog_complete, 2)
-                    # TODO: Entropy calculation temporarily disabled
-                    # if total_nog_complete > 1:
-                    #     context_entropy_complete = round(stats.entropy([x/sum_nog_freqs_complete for x in nog_freqs_complete], base=total_nog_complete), 2)
                 
                 # Calculate MGE percentages
                 plasmid_count = 0
@@ -284,10 +284,13 @@ def determine_ortholog_group_contexts(
                 if not genomad_flag:
                     plasmid_per = 'NA'
                     phage_per = 'NA'
+                
+                # Determine single-copy status
+                single_copy_status = 'Yes' if og_is_single_copy.get(og, False) else 'No'
                         
                 og_context_info_handle.write('\t'.join([str(x) for x in [
-                    og, round(median_length, 2), nse_perc, num_samples, num_contexts, context_var_score, 
-                    context_var_score_complete, context_entropy, context_entropy_complete, total_nog, total_nog_complete,
+                    og, round(median_length, 2), nse_perc, num_samples, num_contexts, single_copy_status, context_var_score, 
+                    context_var_score_complete, total_nog, total_nog_complete,
                     avg_nog, avg_nog_complete, plasmid_per, phage_per, ise_per, '; '.join(og_proteins[og]), '; '.join(og_contexts[og])
                 ]]) + '\n')
 
@@ -472,8 +475,6 @@ def create_final_report(
             "Number of protein in OG",
             "Context conservation score",
             "Context conservation score - complete contexts",
-            "Context entropy score",
-            "Context entropy score - complete contexts",
             "Number of distinct neighbor OGs",
             "Number of distinct OGs from complete contexts",
             "Avg. number of distinct neighbor OGs",
@@ -554,36 +555,29 @@ def create_final_report(
             f"E2:E{num_rows}",
             {"type": "2_color_scale", "min_color": "#e7cdf7", "max_color": "#a186b3", "min_value": 0.0, "max_value": max_num_proteins, "min_type": "num", "max_type": "num"},
         )
+        # F is Single-copy (Yes/No) - no color scale needed
+        
         worksheet.conditional_format(
-            f"F2:F{num_rows}",
+            f"G2:G{num_rows}",
             {"type": "2_color_scale", "min_color": "#e6f5ab", "max_color": "#a4b36b", "min_value": 0.0, "max_value": max_context_var, "min_type": "num", "max_type": "num"},
         )
         worksheet.conditional_format(
-            f"G2:G{num_rows}",
+            f"H2:H{num_rows}",
             {"type": "2_color_scale", "min_color": "#e6f5ab", "max_color": "#a4b36b", "min_value": 0.0, "max_value": max_context_var_comp, "min_type": "num", "max_type": "num"},
         )
-        # Entropy score color scales disabled - entropy calculation currently has bugs
-        # worksheet.conditional_format(
-        #     f"H2:H{num_rows}",
-        #     {"type": "2_color_scale", "min_color": "#b3e3d6", "max_color": "#6aa192", "min_value": 0.0, "max_value": max_context_ent, "min_type": "num", "max_type": "num"},
-        # )
-        # worksheet.conditional_format(
-        #     f"I2:I{num_rows}",
-        #     {"type": "2_color_scale", "min_color": "#b3e3d6", "max_color": "#6aa192", "min_value": 0.0, "max_value": max_context_ent_comp, "min_type": "num", "max_type": "num"},
-        # )
 
         if genomad_flag:
+            worksheet.conditional_format(
+                f"M2:M{num_rows}",
+                {"type": "2_color_scale", "min_color": "#ffffff", "max_color": "#ed9393", "min_value": 0.0, "max_value": 100.0, "min_type": "num", "max_type": "num"},
+            )
             worksheet.conditional_format(
                 f"N2:N{num_rows}",
                 {"type": "2_color_scale", "min_color": "#ffffff", "max_color": "#ed9393", "min_value": 0.0, "max_value": 100.0, "min_type": "num", "max_type": "num"},
             )
-            worksheet.conditional_format(
-                f"O2:O{num_rows}",
-                {"type": "2_color_scale", "min_color": "#ffffff", "max_color": "#ed9393", "min_value": 0.0, "max_value": 100.0, "min_type": "num", "max_type": "num"},
-            )
 
         worksheet.conditional_format(
-            f"P2:P{num_rows}",
+            f"O2:O{num_rows}",
             {"type": "2_color_scale", "min_color": "#ffffff", "max_color": "#ed9393", "min_value": 0.0, "max_value": 100.0, "min_type": "num", "max_type": "num"},
         )
 
