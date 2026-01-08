@@ -1108,5 +1108,5 @@ And the underlying tools:
 - **geNomad**: Camargo, A.P. et al. (2023) Nature Biotechnology
 - **FastTree**: Price, M.N. et al. (2010) PLoS One (domain-level phylogeny)
 - **FastME**: Lefort, V. et al. (2015) Molecular Biology and Evolution (protein-level phylogeny)
-- **MUSCLE**: Edgar, R.C. (2004) BMC Bioinformatics
+- **MUSCLE**: Edgar, R.C. (2022) Nature Communications
 

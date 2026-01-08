@@ -778,6 +778,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
                     orthofinder_mod_tsv_singletons_file=orthofinder_mod_tsv_singletons_file,
                     workspace_dir=workspace_dir,
                     mge_og_assignment_file=mge_og_assignment_file,
+                    orthogroup_sequences_dir=orthofinder_fasta_dir,
                     threads=args.threads,
                     ultra_sens=args.ultra_sens,
                     evalue_cutoff=1e-3,
@@ -1460,7 +1461,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                     
                     # Extract MGE genomes with annotations from parent genomes
                     # This avoids re-running gene calling on small MGE sequences
-                    from .analysis import extract_mge_annotations_from_parent_genomes
+                    from .analysis import extract_mge_annotations_from_parent_genomes, update_mge_protein_listings_from_proteomes
                     mge_data = extract_mge_annotations_from_parent_genomes(
                         genomad_dir, sample_wgs, sample_proteomes, sample_beds, 
                         args.output_dir, logger
@@ -1489,6 +1490,14 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                             logger.info(msg)
                         else:
                             sys.stdout.write(msg + '\n')
+                        
+                        # Update MGE protein listing files based on extracted proteomes
+                        phage_protein_listing_file = os.path.join(args.output_dir, "Sample_Phage_Proteins.txt")
+                        plasmid_protein_listing_file = os.path.join(args.output_dir, "Sample_Plasmid_Proteins.txt")
+                        update_mge_protein_listings_from_proteomes(
+                            args.output_dir, phage_protein_listing_file, 
+                            plasmid_protein_listing_file, logger
+                        )
                     
                     # Create Step 2a.5 checkpoint
                     with open(step2a5_checkpoint_file, 'w') as f:

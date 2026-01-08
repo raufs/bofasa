@@ -72,18 +72,18 @@ def generate_og_name(i: int) -> str:
     """
     try:
         pid = None
-        if (i + 1) < 10:
-            pid = "OG00000" + str(i + 1)
-        elif (i + 1) < 100:
-            pid = "OG0000" + str(i + 1)
-        elif (i + 1) < 1000:
-            pid = "OG000" + str(i + 1)
-        elif (i + 1) < 10000:
-            pid = "OG00" + str(i + 1)
-        elif (i + 1) < 100000:
-            pid = "OG0" + str(i + 1)
+        if (i) < 10:
+            pid = "OG00000" + str(i)
+        elif (i) < 100:
+            pid = "OG0000" + str(i)
+        elif (i) < 1000:
+            pid = "OG000" + str(i)
+        elif (i) < 10000:
+            pid = "OG00" + str(i)
+        elif (i) < 100000:
+            pid = "OG0" + str(i)
         else:
-            pid = "OG" + str(i + 1)
+            pid = "OG" + str(i)
         assert pid != None
         return pid
     except Exception:
@@ -459,7 +459,7 @@ def determine_protein_orthogroups(
             for p in c: 
                 s = p.split('|')[0]
                 samp_lts[s].append(p.split('|')[1])
-            og_id = generate_og_name(i)
+            og_id = generate_og_name(i+1)
             printlist = [og_id]
             for s in samples:
                 printlist.append(', '.join(sorted(samp_lts[s])))

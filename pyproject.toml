@@ -30,7 +30,8 @@ script-files=["src/bofasa/scripts/extract_og_pairs.py",
               "src/bofasa/scripts/print_og_itol_matrix.py",
               "src/bofasa/scripts/extract_genomad_proteomes.py",
               "src/bofasa/scripts/compare_og_pairs.py",
-              "src/bofasa/scripts/determine_og_freqs.py"]
+              "src/bofasa/scripts/determine_og_freqs.py",
+              "src/bofasa/scripts/list_og_matrix.py"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

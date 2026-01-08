@@ -255,13 +255,15 @@ def determine_ortholog_group_contexts(
                 
                 if total_nog > 0:
                     context_var_score = round(avg_nog/total_nog, 2)
-                    if total_nog > 1:                        
-                        context_entropy = round(stats.entropy([x/sum_nog_freqs for x in nog_freqs], total_nog))
+                    # TODO: Entropy calculation temporarily disabled
+                    # if total_nog > 1:                        
+                    #     context_entropy = round(stats.entropy([x/sum_nog_freqs for x in nog_freqs], base=total_nog), 2)
                 
                 if total_nog_complete > 0:
                     context_var_score_complete = round(avg_nog_complete/total_nog_complete, 2)
-                    if total_nog_complete > 1:
-                        context_entropy_complete = round(stats.entropy([x/sum_nog_freqs_complete for x in nog_freqs_complete], total_nog_complete))
+                    # TODO: Entropy calculation temporarily disabled
+                    # if total_nog_complete > 1:
+                    #     context_entropy_complete = round(stats.entropy([x/sum_nog_freqs_complete for x in nog_freqs_complete], base=total_nog_complete), 2)
                 
                 # Calculate MGE percentages
                 plasmid_count = 0
@@ -531,8 +533,9 @@ def create_final_report(
         max_num_proteins = max_or_zero("Number of protein in OG")
         max_context_var = max_or_zero("Context conservation score")
         max_context_var_comp = max_or_zero("Context conservation score - complete contexts")
-        max_context_ent = max_or_zero("Context entropy score")
-        max_context_ent_comp = max_or_zero("Context entropy score - complete contexts")
+        # Entropy score disabled - see TODO in determine_ortholog_group_contexts()
+        # max_context_ent = max_or_zero("Context entropy score")
+        # max_context_ent_comp = max_or_zero("Context entropy score - complete contexts")
 
         # Column color scales (ranges mirror v1.1.1)
         worksheet.conditional_format(
@@ -559,28 +562,29 @@ def create_final_report(
             f"G2:G{num_rows}",
             {"type": "2_color_scale", "min_color": "#e6f5ab", "max_color": "#a4b36b", "min_value": 0.0, "max_value": max_context_var_comp, "min_type": "num", "max_type": "num"},
         )
-        worksheet.conditional_format(
-            f"H2:H{num_rows}",
-            {"type": "2_color_scale", "min_color": "#b3e3d6", "max_color": "#6aa192", "min_value": 0.0, "max_value": max_context_ent, "min_type": "num", "max_type": "num"},
-        )
-        worksheet.conditional_format(
-            f"I2:I{num_rows}",
-            {"type": "2_color_scale", "min_color": "#b3e3d6", "max_color": "#6aa192", "min_value": 0.0, "max_value": max_context_ent_comp, "min_type": "num", "max_type": "num"},
-        )
+        # Entropy score color scales disabled - entropy calculation currently has bugs
+        # worksheet.conditional_format(
+        #     f"H2:H{num_rows}",
+        #     {"type": "2_color_scale", "min_color": "#b3e3d6", "max_color": "#6aa192", "min_value": 0.0, "max_value": max_context_ent, "min_type": "num", "max_type": "num"},
+        # )
+        # worksheet.conditional_format(
+        #     f"I2:I{num_rows}",
+        #     {"type": "2_color_scale", "min_color": "#b3e3d6", "max_color": "#6aa192", "min_value": 0.0, "max_value": max_context_ent_comp, "min_type": "num", "max_type": "num"},
+        # )
 
         if genomad_flag:
             worksheet.conditional_format(
                 f"N2:N{num_rows}",
-                {"type": "2_color_scale", "min_color": "#ffffff", "max_color": "#ed9393", "min_value": 0.0, "max_value": 1.0, "min_type": "num", "max_type": "num"},
+                {"type": "2_color_scale", "min_color": "#ffffff", "max_color": "#ed9393", "min_value": 0.0, "max_value": 100.0, "min_type": "num", "max_type": "num"},
             )
             worksheet.conditional_format(
                 f"O2:O{num_rows}",
-                {"type": "2_color_scale", "min_color": "#ffffff", "max_color": "#ed9393", "min_value": 0.0, "max_value": 1.0, "min_type": "num", "max_type": "num"},
+                {"type": "2_color_scale", "min_color": "#ffffff", "max_color": "#ed9393", "min_value": 0.0, "max_value": 100.0, "min_type": "num", "max_type": "num"},
             )
 
         worksheet.conditional_format(
             f"P2:P{num_rows}",
-            {"type": "2_color_scale", "min_color": "#ffffff", "max_color": "#ed9393", "min_value": 0.0, "max_value": 1.0, "min_type": "num", "max_type": "num"},
+            {"type": "2_color_scale", "min_color": "#ffffff", "max_color": "#ed9393", "min_value": 0.0, "max_value": 100.0, "min_type": "num", "max_type": "num"},
         )
 
         # Autofilter and finalize
@@ -649,7 +653,7 @@ def create_final_visual(
         tmp_file_header = [
             'OG', 
             'Number of protein in OG', 
-            'Context entropy score', 
+            'Context conservation score', 
             'Majority of protein instances homologous to IS-element or on plasmid or phage'
         ]
         outf_handle = open(tmp_result_file, 'w')
@@ -669,15 +673,15 @@ def create_final_visual(
                         mge += 1
                 if mge/tot > 0.5:
                     mge_related = 'Yes'
-                outf_handle.write('\t'.join([ls[0], ls[4], ls[7], mge_related]) + '\n')
+                outf_handle.write('\t'.join([ls[0], ls[4], ls[5], mge_related]) + '\n')
         outf_handle.close()
                 
-        numeric_columns = set(['Number of protein in OG', 'Context entropy score'])
+        numeric_columns = set(['Number of protein in OG', 'Context conservation score'])
         simple_df = load_table_in_pandas_dataframe(tmp_result_file, numeric_columns)
         fig = px.scatter(
             simple_df, 
             x="Number of protein in OG", 
-            y="Context entropy score",
+            y="Context conservation score",
             color="Majority of protein instances homologous to IS-element or on plasmid or phage", 
             color_discrete_map={"No": "grey", "Yes": "red"},
             opacity=0.4,
@@ -1161,40 +1165,20 @@ def extract_mge_annotations_from_parent_genomes(
                     parent_genes[gene_id] = (scaffold, start, end, score, strand)
             
             # Find genomad output files
-            plasmid_summary_tsv = None
-            virus_summary_tsv = None
             plasmid_fasta = None
             virus_fasta = None
             
             for subdir, dirs, files in os.walk(genomad_results):
                 for file in files:
                     filepath = os.path.join(subdir, file)
-                    if filepath.endswith("_plasmid_summary.tsv"):
-                        plasmid_summary_tsv = filepath
-                    elif filepath.endswith("_virus_summary.tsv"):
-                        virus_summary_tsv = filepath
-                    elif filepath.endswith("_plasmid.fna"):
+                    if filepath.endswith("_plasmid.fna"):
                         plasmid_fasta = filepath
                     elif filepath.endswith("_virus.fna"):
                         virus_fasta = filepath
             
             # Process plasmids
-            if plasmid_summary_tsv and plasmid_fasta and os.path.isfile(plasmid_fasta):
+            if plasmid_fasta and os.path.isfile(plasmid_fasta):
                 try:
-                    # Read plasmid summary to get coordinates
-                    plasmid_coords = {}  # plasmid_seq_id -> (scaffold, start, end)
-                    with open(plasmid_summary_tsv) as pst:
-                        header = pst.readline()  # skip header
-                        for line in pst:
-                            line = line.strip()
-                            if not line:
-                                continue
-                            ls = line.split('\t')
-                            seq_name = ls[0]
-                            # Plasmid summary format: seq_name, length, topology, n_genes, ...
-                            # For full plasmid scaffolds, the coordinates are the entire scaffold
-                            plasmid_coords[seq_name] = (seq_name, None, None)  # Full scaffold
-                    
                     plasmid_count = 0
                     with open(plasmid_fasta, 'r') as handle:
                         for record in SeqIO.parse(handle, 'fasta'):
@@ -1214,6 +1198,14 @@ def extract_mge_annotations_from_parent_genomes(
                                     plasmid_genes.append(gene_id)
                                     # Track that this gene belongs to an MGE
                                     sample_mge_genes[sample].add(gene_id)
+                            
+                            # Debug: warn if no genes found
+                            if len(plasmid_genes) == 0:
+                                log_object.warning(f"No genes found for plasmid {plasmid_id} (scaffold: {seq_name})")
+                                log_object.warning(f"  Available scaffolds in parent BED: {list(set([g[0] for g in parent_genes.values()]))[:10]}")
+                                log_object.warning(f"  This may indicate a scaffold name mismatch between geNomad output and parent genome")
+                                # Skip creating empty files
+                                continue
                             
                             # Write proteome and BED files
                             output_faa = os.path.join(faa_dir, f"{plasmid_id}.faa")
@@ -1247,35 +1239,8 @@ def extract_mge_annotations_from_parent_genomes(
                     log_object.warning(traceback.format_exc())
             
             # Process phages/viruses
-            if virus_summary_tsv and virus_fasta and os.path.isfile(virus_fasta):
+            if virus_fasta and os.path.isfile(virus_fasta):
                 try:
-                    # Read virus summary to get coordinates
-                    virus_coords = {}  # virus_seq_id -> (scaffold, start, end)
-                    with open(virus_summary_tsv) as vst:
-                        header = vst.readline()  # skip header
-                        for line in vst:
-                            line = line.strip()
-                            if not line:
-                                continue
-                            ls = line.split('\t')
-                            seq_name = ls[0]
-                            # Virus summary format: seq_name, length, topology, coordinates, ...
-                            # Check if this is a provirus (has coordinates) or full scaffold
-                            if len(ls) > 3 and ls[3]:
-                                coords = ls[3]
-                                if '|' in coords and '-' in coords:
-                                    # Provirus format: scaffold|start-end
-                                    parts = coords.split('|')
-                                    scaffold = parts[0]
-                                    coord_parts = parts[1].split('-')
-                                    start = int(coord_parts[0])
-                                    end = int(coord_parts[1])
-                                    virus_coords[seq_name] = (scaffold, start, end)
-                                else:
-                                    virus_coords[seq_name] = (seq_name, None, None)  # Full scaffold
-                            else:
-                                virus_coords[seq_name] = (seq_name, None, None)  # Full scaffold
-                    
                     phage_count = 0
                     with open(virus_fasta, 'r') as handle:
                         for record in SeqIO.parse(handle, 'fasta'):
@@ -1288,11 +1253,18 @@ def extract_mge_annotations_from_parent_genomes(
                                 out_handle.write(f">{phage_id} {record.description}\n")
                                 out_handle.write(f"{str(record.seq)}\n")
                             
-                            # Get coordinates for this virus
-                            if seq_name in virus_coords:
-                                scaffold, v_start, v_end = virus_coords[seq_name]
+                            # Parse coordinates from geNomad FASTA header
+                            # geNomad provirus format: scaffold|provirus_START_END
+                            # geNomad full virus format: scaffold_name
+                            if '|provirus_' in seq_name:
+                                # Provirus - extract scaffold and coordinates
+                                scaffold = seq_name.split('|')[0]
+                                coord_part = seq_name.split('|')[1].replace('provirus_', '')
+                                coord_parts = coord_part.split('_')
+                                v_start = int(coord_parts[0])
+                                v_end = int(coord_parts[1])
                             else:
-                                # Assume it's the full scaffold
+                                # Full viral scaffold (not a provirus)
                                 scaffold = seq_name
                                 v_start = None
                                 v_end = None
@@ -1313,6 +1285,24 @@ def extract_mge_annotations_from_parent_genomes(
                                         phage_genes.append(gene_id)
                                         # Track that this gene belongs to an MGE
                                         sample_mge_genes[sample].add(gene_id)
+                            
+                            # Debug: warn if no genes found
+                            if len(phage_genes) == 0:
+                                log_object.warning(f"No genes found for phage {phage_id}")
+                                log_object.warning(f"  geNomad sequence ID: {seq_name}")
+                                log_object.warning(f"  Parsed scaffold: {scaffold}")
+                                if v_start is not None:
+                                    log_object.warning(f"  Parsed coordinates: {v_start}-{v_end}")
+                                    # Count genes in this region
+                                    genes_in_region = 0
+                                    for gene_id, (gene_scaffold, gene_start, gene_end, gene_score, gene_strand) in parent_genes.items():
+                                        if gene_scaffold == scaffold:
+                                            if (v_start <= gene_start <= v_end) or (v_start <= gene_end <= v_end):
+                                                genes_in_region += 1
+                                    log_object.warning(f"  Genes found in region {v_start}-{v_end} on {scaffold}: {genes_in_region}")
+                                log_object.warning(f"  Available scaffolds in parent BED: {list(set([g[0] for g in parent_genes.values()]))[:10]}")
+                                # Skip creating empty files
+                                continue
                             
                             # Write proteome and BED files
                             output_faa = os.path.join(faa_dir, f"{phage_id}.faa")
@@ -1408,6 +1398,80 @@ def extract_mge_annotations_from_parent_genomes(
         
     except Exception as e:
         log_object.error(f"Error extracting MGE annotations from parent genomes: {str(e)}")
+        log_object.error(traceback.format_exc())
+        raise
+
+
+def update_mge_protein_listings_from_proteomes(
+    output_dir: str,
+    phage_protein_listing_file: str,
+    plasmid_protein_listing_file: str,
+    log_object: Any,
+) -> None:
+    """
+    Update MGE protein listing files by reading extracted MGE proteome files.
+    
+    After MGE extraction, this reads all proteome files with _phage_ or _plasmid_
+    in their names and rewrites the listing files accordingly.
+    
+    Parameters:
+    -----------
+    output_dir : str
+        Output directory containing Genome_Processing/Proteomes/
+    phage_protein_listing_file : str
+        Path to Sample_Phage_Proteins.txt
+    plasmid_protein_listing_file : str
+        Path to Sample_Plasmid_Proteins.txt
+    log_object : Any
+        Logger object
+    """
+    from Bio import SeqIO
+    
+    try:
+        proteomes_dir = os.path.join(output_dir, "Genome_Processing/Proteomes/")
+        
+        if not os.path.isdir(proteomes_dir):
+            log_object.warning(f"Proteomes directory not found: {proteomes_dir}")
+            return
+        
+        # Collect phage proteins
+        phage_entries = []
+        plasmid_entries = []
+        
+        for filename in os.listdir(proteomes_dir):
+            if not filename.endswith('.faa'):
+                continue
+            
+            sample_name = filename.replace('.faa', '')
+            proteome_path = os.path.join(proteomes_dir, filename)
+            
+            # Check if this is a phage or plasmid MGE
+            if '_phage_' in sample_name:
+                # Read all protein IDs from this phage proteome
+                with open(proteome_path, 'r') as handle:
+                    for record in SeqIO.parse(handle, 'fasta'):
+                        phage_entries.append(f"{sample_name}\t{record.id}\n")
+            
+            elif '_plasmid_' in sample_name:
+                # Read all protein IDs from this plasmid proteome
+                with open(proteome_path, 'r') as handle:
+                    for record in SeqIO.parse(handle, 'fasta'):
+                        plasmid_entries.append(f"{sample_name}\t{record.id}\n")
+        
+        # Rewrite phage listing file
+        if phage_entries:
+            with open(phage_protein_listing_file, 'w') as f:
+                f.writelines(phage_entries)
+            log_object.info(f"Updated {phage_protein_listing_file} with {len(phage_entries)} entries from extracted MGE proteomes")
+        
+        # Rewrite plasmid listing file
+        if plasmid_entries:
+            with open(plasmid_protein_listing_file, 'w') as f:
+                f.writelines(plasmid_entries)
+            log_object.info(f"Updated {plasmid_protein_listing_file} with {len(plasmid_entries)} entries from extracted MGE proteomes")
+    
+    except Exception as e:
+        log_object.error(f"Error updating MGE protein listings: {str(e)}")
         log_object.error(traceback.format_exc())
         raise
 
@@ -1933,6 +1997,7 @@ def integrate_mge_proteins_into_orthogroups(
     orthofinder_mod_tsv_file: str,
     orthofinder_mod_tsv_singletons_file: str,
     mge_og_assignment_file: str,
+    orthogroup_sequences_dir: str,
     threads: int = 1,
     ultra_sens: bool = False,
     evalue_cutoff: float = 1e-3,
@@ -1966,6 +2031,8 @@ def integrate_mge_proteins_into_orthogroups(
         Workspace directory for results
     mge_og_assignment_file : str
         Output file for MGE orthogroup assignments
+    orthogroup_sequences_dir : str
+        Path to OrthoFinder's Orthogroup_Sequences directory (will append MGE proteins to existing files)
     threads : int
         Number of threads for DIAMOND
     ultra_sens : bool
@@ -1991,10 +2058,11 @@ def integrate_mge_proteins_into_orthogroups(
         all_mge_protein_chunks = set([])
         mge_protein_chunks = defaultdict(set)
         all_mges = set([])
+        mge_pchunk_to_seq = defaultdict(dict)
         with open(mge_concat_fasta, 'w') as mge_out, open(bacterial_genome_concat_fasta, 'w') as bac_out:
             for fasta_file in os.listdir(input_dir):
                 if not fasta_file.endswith('.ccds.faa'): continue
-                    
+              
                 sample_name = fasta_file.replace('.ccds.faa', '')
                 fasta_path = os.path.join(input_dir, fasta_file)
                 
@@ -2008,6 +2076,7 @@ def integrate_mge_proteins_into_orthogroups(
                             mge_protein_to_sample[rec.id] = sample_name
                             all_mge_protein_chunks.add(rec.id)
                             mge_protein_chunks[sample_name].add(rec.id)
+                            mge_pchunk_to_seq[sample_name][rec.id] = str(rec.seq)
                             SeqIO.write(rec, mge_out, 'fasta')
                         else:
                             bacterial_genome_protein_to_sample[rec.id] = sample_name
@@ -2017,7 +2086,9 @@ def integrate_mge_proteins_into_orthogroups(
                     mge_count += 1
                 else:
                     bac_count += 1
-    
+        mges_sorted = sorted(list(all_mges))
+
+
         log_object.info(f"Concatenated {len(mge_protein_to_sample)} MGE proteins from {mge_count} MGEs")
         log_object.info(f"Concatenated {len(bacterial_genome_protein_to_sample)} bacterial genome proteins from {bac_count} bacteria genomes")
         
@@ -2061,7 +2132,7 @@ def integrate_mge_proteins_into_orthogroups(
         with open(pair_listing_file, 'w') as plf:
             with open(mge_reflexive_diamond_output, 'r') as of:
                 for line in of:
-                    line = line.strip()
+                    line = line.strip('\n')
                     ls = line.split('\t')
                     if len(ls) >= 12:
                         query = ls[0]
@@ -2094,7 +2165,7 @@ def integrate_mge_proteins_into_orthogroups(
         cluster_proteins = defaultdict(set)
         with open(slclust_output, 'r') as of:
             for i, line in enumerate(of):
-                line = line.strip()
+                line = line.strip('\n')
                 ls = line.split()
                 if len(ls) >= 2:
                     for pchunk in ls:
@@ -2144,11 +2215,14 @@ def integrate_mge_proteins_into_orthogroups(
         
         last_og_id = -1
         pchunk_to_og = dict()  
+        bac_sample_count = 0
         with open(orthofinder_tsv_file, 'r') as ogf:
             for i, line in enumerate(ogf):
-                if i == 0: continue
-                line = line.strip()
+                line = line.strip('\n')
                 ls = line.split('\t')
+                if i == 0: 
+                    bac_sample_count = len(ls[1:])
+                    continue
                 og_id = ls[0]
                 protein_chunks = ls[1:]
                 for pchunks in protein_chunks:
@@ -2157,12 +2231,13 @@ def integrate_mge_proteins_into_orthogroups(
                         if pchunk == '': continue
                         pchunk_to_og[pchunk] = og_id
                         last_og_id = max([last_og_id, int(og_id[2:])])
+                        bac_sample_count = len(ls[1:])
 
         with open(orthofinder_tsv_singletons_file, 'r') as ogf:
             for i, line in enumerate(ogf):
-                if i == 0: continue
-                line = line.strip()
-                ls = line.split('\t')
+                if i == 0: continue 
+                line = line.strip('\n')
+                ls = line.split('\t')                
                 og_id = ls[0]
                 protein_chunks = ls[1:]
                 for pchunks in protein_chunks:
@@ -2171,12 +2246,14 @@ def integrate_mge_proteins_into_orthogroups(
                         if pchunk == '': continue
                         pchunk_to_og[pchunk] = og_id
                         last_og_id = max([last_og_id, int(og_id[2:])])
+        last_og_id += 1
 
         mge_pchunk_to_og = dict()
         accounted_mge_pchunks = set([])
+        ogs_hit = set([])
         with open(diamond_output_sorted, 'r') as of:
             for i, line in enumerate(of):
-                line = line.strip()
+                line = line.strip('\n')
                 ls = line.split('\t')
                 if len(ls) != 12: continue
                 query = ls[0]
@@ -2185,8 +2262,10 @@ def integrate_mge_proteins_into_orthogroups(
                 if query in accounted_mge_pchunks: continue
                 mge_pchunk_to_og[query] = pchunk_to_og[hit]
                 accounted_mge_pchunks.add(query)
+                ogs_hit.add(pchunk_to_og[hit])
 
         difficult_to_fit = 0
+        not_sogs = []
         for clust in cluster_proteins:
             total = len(cluster_proteins[clust])
             accounted = 0
@@ -2201,6 +2280,25 @@ def integrate_mge_proteins_into_orthogroups(
                 for pchunk in cluster_proteins[clust]:
                     mge_pchunk_to_og[pchunk] = best_og
                     accounted_mge_pchunks.add(pchunk)
+            elif len(best_ogs_by_members) == 0:
+                new_og_id = generate_og_name(last_og_id)
+                new_og_line = [new_og_id] + (['']*bac_sample_count)
+                mge_og_pchunks = defaultdict(set)
+
+                og_fasta_path = os.path.join(orthogroup_sequences_dir, new_og_id + '.fa')
+                ofp_handle = open(og_fasta_path, 'w')
+                for pchunk in cluster_proteins[clust]:
+                    mge = pchunk.split('|')[0]
+                    mge_og_pchunks[mge].add(pchunk)
+                    accounted_mge_pchunks.add(pchunk)
+                    ofp_handle.write('>' + pchunk + '\n' + mge_pchunk_to_seq[mge][pchunk] + '\n')
+                ofp_handle.close()
+
+                mge_parts = []
+                for mge in mges_sorted:
+                    mge_parts.append(', '.join(sorted(mge_og_pchunks[mge])))
+                not_sogs.append('\t'.join(new_og_line + mge_parts))
+                last_og_id += 1
             else:
                 # this can be improved - but for now we prioritize 
                 # minimizing false positive orthology prediction
@@ -2214,7 +2312,8 @@ def integrate_mge_proteins_into_orthogroups(
         warning_msg += f"but were differentially assigned to orthogroups determined\n"
         warning_msg += f"by OrthoFinder based on proteins from non-MGE contexts.\n"
         warning_msg += f"For proteins which didn't map to OrthoFinder orthogroups\n"
-        warning_msg += f"directly, we currently leave them as singletons.\n"
+        warning_msg += f"directly, we currently leave them as singletons for such\n"
+        warning_msg += f"cases.\n"
         log_object.warning(warning_msg)
 
         mge_og_pchunks = defaultdict(lambda: defaultdict(set))
@@ -2223,41 +2322,67 @@ def integrate_mge_proteins_into_orthogroups(
             og_id = mge_pchunk_to_og[pchunk]
             mge_og_pchunks[mge][og_id].add(pchunk)
 
-        mges_sorted = sorted(list(all_mges))
-
         with open(orthofinder_mod_tsv_file, 'w') as ogf:
             with open(orthofinder_tsv_file, 'r') as ogf_orig:
-                for i, line in enumerate(ogf_orig): 
-                    line = line.strip()
+                for i, line in enumerate(ogf_orig):
+                    line = line.strip('\n')
                     if i == 0:
                         ogf.write(line + '\t' + '\t'.join([x + '.ccds' for x in mges_sorted]) + '\n')
                     else:
                         ls = line.split('\t')
                         og_id = ls[0]
-                        bac_chrom_pcs = ls[1:]
+                        og_fasta_path = os.path.join(orthogroup_sequences_dir, og_id + '.fa')
+                        ofp_handle = open(og_fasta_path, 'a+')
                         mge_pcs = []
                         for mge in mges_sorted:
                             if mge in mge_og_pchunks:
                                 if og_id in mge_og_pchunks[mge]:
                                     mge_pcs.append(', '.join(list(mge_og_pchunks[mge][og_id])))
+                                    for pchunk in mge_og_pchunks[mge][og_id]:
+                                        ofp_handle.write('>' + pchunk + '\n' + mge_pchunk_to_seq[mge][pchunk] + '\n')
                                 else:
                                     mge_pcs.append('')
+                            else:
+                                mge_pcs.append('')
+                        ofp_handle.close()
+                        ogf.write(line + '\t' + '\t'.join(mge_pcs) + '\n')
 
-                        pcs = bac_chrom_pcs + mge_pcs
-                        ogf.write(line + '\t' + '\t'.join(pcs) + '\n')
-
-        bac_sample_count = 0
         with open(orthofinder_mod_tsv_singletons_file, 'w') as ogf:
             with open(orthofinder_tsv_singletons_file, 'r') as ogf_orig:
                 for i, line in enumerate(ogf_orig):
-                    line = line.strip()
+                    line = line.strip('\n')
                     if i == 0:
                         ogf.write(line + '\t' + '\t'.join([x + '.ccds' for x in mges_sorted]) + '\n')
-                        bac_sample_count = len(line.split('\t')[1:])
                     else:
-                        ogf.write(line + '\n')
+                        ls = line.split('\t')
+                        og_id = ls[0]
+                        lts = [x for x in ls[1:] if x.strip() != '' and ',' not in x]
+                        if len(lts) != 1:
+                            raise ValueError(f"Expected 1 singleton protein for {og_id}, got {len(lts)}")                            
+                        if og_id in ogs_hit:
+                            mge_matches = []
+                            og_fasta_path = os.path.join(orthogroup_sequences_dir, og_id + '.fa')
+                            ofp_handle = open(og_fasta_path, 'a+')
+                            for mge in mges_sorted:
+                                if mge in mge_og_pchunks:
+                                    if og_id in mge_og_pchunks[mge]:
+                                        mge_matches.append(', '.join(list(mge_og_pchunks[mge][og_id])))
+                                        for pchunk in mge_og_pchunks[mge][og_id]:
+                                            ofp_handle.write('>' + pchunk + '\n' + mge_pchunk_to_seq[mge][pchunk] + '\n')
+                                    else:
+                                        mge_matches.append('')
+                                else:
+                                    mge_matches.append('')
+                            ofp_handle.close()
 
-            last_og_id += 1
+                            if len([x for x in mge_matches if x != '']) == 0:
+                                ogf.write(line + '\t' + '\t'.join(['']*len(mges_sorted)) + '\n')
+                            else:
+                                updated_line = line + '\t' + '\t'.join(mge_matches)
+                                not_sogs.append(updated_line)
+                        else:
+                            ogf.write(line + '\t' + '\t'.join(['']*len(mges_sorted)) + '\n')
+
             for i, mge in enumerate(mges_sorted):
                 for pchunk in mge_protein_chunks[mge]:
                     if pchunk in accounted_mge_pchunks: continue
@@ -2266,11 +2391,21 @@ def integrate_mge_proteins_into_orthogroups(
                     remainder_i = len(mges_sorted) - i - 1
                     line_part_2 = ['']*remainder_i
                     ogf.write('\t'.join(line_part_1 + [pchunk] + line_part_2) + '\n')
-                    assert((len(line_part_1[1:]) + len(line_part_2) + 1) == (len(mges_sorted) + bac_sample_count))
+                    if (len(line_part_1[1:]) + len(line_part_2) + 1) != (len(mges_sorted) + bac_sample_count):
+                        raise ValueError(f"Expected {len(mges_sorted) + bac_sample_count} columns, got {len(line_part_1[1:]) + len(line_part_2) + 1}")
+
+                    og_fasta_path = os.path.join(orthogroup_sequences_dir, new_sog_id + '.fa')
+                    ofp_handle = open(og_fasta_path, 'a+')
+                    ofp_handle.write('>' + pchunk + '\n' + str(mge_pchunk_to_seq[mge][pchunk]) + '\n')
+                    ofp_handle.close()
                     last_og_id += 1
-                    
+        
+        with open(orthofinder_mod_tsv_file, 'a+') as ogf:
+            for line in not_sogs:
+                ogf.write(line + '\n')
+
     except Exception as e:
-        log_object.error("Error integrating MGE proteins into ortholog groups")
+        log_object.error("Error integrating MGE protein chunks into domain-resolution ortholog groups")
         log_object.error(str(e))
         log_object.error(traceback.format_exc())
         raise
