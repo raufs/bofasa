@@ -3,8 +3,8 @@
 ## Table of Contents
 1. [Overview](#overview)
 2. [Workflow Architecture](#workflow-architecture)
-3. [Preparation Phase (bofasa prep)](#preparation-phase)
-4. [Analysis Phase (bofasa run)](#analysis-phase)
+3. [Preparation Phase (`bofasa prep`)](#preparation-phase)
+4. [Analysis Phase (`bofasa run`)](#analysis-phase)
 5. [Algorithm Details](#algorithm-details)
 6. [Parameter Effects](#parameter-effects)
 7. [Best Practices](#best-practices)
@@ -44,7 +44,7 @@ BOFASA operates in two distinct phases:
 
 ---
 
-## Preparation Phase (bofasa prep)
+## Preparation Phase (`bofasa prep`)
 
 The preparation phase processes raw genome data into a format suitable for orthology analysis.
 
@@ -104,72 +104,48 @@ Delineation of Proteins by Domain Coordinates
 - Create "chopped-up" protein FASTA per input genome where each protein is split up into "chunks" based on domain boundary coordinates.
 
 **Reasons:**
-- Increases accuracy by analyzing homology at domain resolution
-- Domains from the same protein family can be properly compared
-- Allows for domain shuffling/fusion events
+- Increases sensitivity by analyzing homology at domain resolution
+- Accounts for domain shuffling/fusion/loss events
 - Downstream we will be using OrthoFinder to determine course domain ortholog groups, which standardizes for differences in protein-chunk length
 
 #### 4. Optional: Mobile Genetic Element Detection
+
 ```
 Genomes (if -rg specified)
   ↓
-geNomad Analysis
-  ↓
-Phage/Plasmid Identification
+geNomad Analysis for Phage/Plasmid Identification
   ↓
 Optional Extraction (if -emg)
 ```
 
 **Key Parameters:**
-- `-rg, --run-genomad`: Enables geNomad for MGE detection
-- `-emg, --extract-mge-genomes`: Extracts identified phage/plasmid sequences as separate genomes
+- `-rg, --run-genomad`: Enables geNomad for MGE (phage/plasmid) detection
+- `-emg, --extract-mge-genomes`: Extracts identified phage/plasmid sequences to be considered as separate genomes
 
 **Effects:**
 - `-rg` alone: Annotates MGEs but keeps them in original genomes
-- `-rg + -emg`: Creates separate genome files for each phage/plasmid
-  - Useful for studying mobile genetic elements independently
-  - May reveal ortholog groups specific to MGEs
-  - Increases total number of "genomes" in analysis
-  - MGE samples are tracked in `Sample_MGE_Metadata.txt` for downstream processing
+- `-rg` + `-emg`: Creates separate genome files for each phage/plasmid
 
-**MGE Integration Workflow** (when using `-emg`):
-1. **Prep Phase**: MGEs are extracted as separate genome files with annotations
-2. **Domain Processing**: All samples (bacterial + MGE) are processed together into common directories
-3. **Run Phase - Step 1**: 
-   - OrthoFinder runs on **bacterial genomes only** (MGEs excluded)
-   - Temporary directory created with copies of bacterial genome files
-4. **Run Phase - Step 1b**: MGE Integration
-   - MGE proteins are clustered among themselves via reflexive DIAMOND alignment
+**Rational:**
+- Useful to understand how ortholog groups are distributed across autonomous mobile elements
+- Can improve resolution of single-copy-core ortholog groups if paralogs exist on MGEs in some genomes
+  
+**Notes on `-emg` workflow**:
+1. **Prep**:
+   - MGEs are extracted as separate genome files with annotations
+   - All samples (bacterial + MGE) are processed together into common directories
+2. **Run - Step 1**:
+   - OrthoFinder is run on bacterial chromosomes only (MGEs excluded)
+3. **Run - Step 2**: MGE
+   - MGE proteins are clustered among themselves via reflexive DIAMOND blastp alignment
    - MGE protein clusters are aligned against bacterial genome proteins
-   - MGE proteins assigned to existing ortholog groups based on best DIAMOND hit
+   - MGE proteins assigned to existing ortholog groups based on their best DIAMOND hit
    - Unassigned MGE proteins remain as singletons
    - Modified ortholog tables include MGE columns
 
-**Directory Structure** (after prep with `-emg`):
-```
-prep_output/
-├── Genome_Processing/
-│   ├── Genomes/          # All genomes (bacterial + MGE)
-│   ├── Proteomes/        # All proteomes (bacterial + MGE)
-│   └── BEDs/             # All coordinate files (bacterial + MGE)
-├── Domain_and_Interdomain_FASTAs/   # ALL samples in common directory
-│   ├── sample1.ccds.faa
-│   ├── sample2.ccds.faa
-│   ├── plasmid_X.ccds.faa           # MGE files mixed with bacterial
-│   └── phage_Y.ccds.faa
-├── Domain_and_Interdomain_Coordinates/   # ALL samples in common directory
-│   ├── sample1.domain_coords.txt
-│   ├── sample2.domain_coords.txt
-│   ├── plasmid_X.domain_coords.txt
-│   └── phage_Y.domain_coords.txt
-└── Sample_MGE_Metadata.txt          # Tracks which samples are MGEs
-```
-
-**Note**: Prior to recent updates, MGE files were stored in separate `Bacterial_Genomes/` and `MGEs/` subdirectories. The unified structure simplifies processing while maintaining logical separation via metadata.
-
 ---
 
-## Analysis Phase (bofasa run)
+## Analysis Phase (`bofasa run`)
 
 The analysis phase performs hierarchical ortholog inference using the prepared domain and protein data.
 
