@@ -72,24 +72,8 @@ Gene Calling (if FASTA) or CDS Extraction (if GenBank)
 - `-gcm, --gene-calling-method`: Choice between `pyrodigal` (default) or `prodigal`
 - `-m, --meta-mode`: Enables meta-genomic gene calling mode (useful for draft genomes or metagenomes)
 - `-rlt, --rename-locus-tags`: Forces regeneration of locus tags in GenBank files
-
-**Effects:**
-- **Using annotation directories** (`-a`):
-  - ✓ Leverages existing high-quality annotations (Prokka/Bakta)
-  - ✓ Preserves original locus tags and functional annotations
-  - ✓ Faster (skips gene calling step)
-  - ✗ Requires pre-processing with Prokka/Bakta
-  - **Use when**: You have existing annotations OR want to preserve annotation metadata
-
-- **Meta-mode** (`-m`):
-  - ✓ More sensitive gene prediction for draft/incomplete genomes
-  - ✗ May introduce false positives
-  - **Use when**: Working with draft assemblies or metagenomes
-
-- **Locus tag renaming** (`-rlt`):
-  - ✓ Ensures consistency across all input files
-  - ✗ Loses original annotation IDs
-  - **Use when**: Input files have conflicting or missing locus tags
+- `-rg, --run-genomad`: Run geNomad for annotation of phages and plasmids
+- `-emg, --extract-mge-genomes`: Extracts phages/plasmids to use as individual genomes (to use this option, your genomes should be complete)
 
 #### 2. Protein Extraction
 ```
@@ -105,27 +89,25 @@ Quality Filtering
 - Filter incomplete or invalid sequences
 - Create sample-specific protein FASTA files
 
-#### 3. Domain Identification (via InterProScan/Pfam)
+#### 3. Domain Identification (via PyHMMER+Pfam)
 ```
 Protein Sequences
   ↓
-Pfam Domain Scanning
+Pfam Domain Annotation
   ↓
-Domain Extraction
+Delineation of Proteins by Domain Coordinates
 ```
 
 **Actions:**
-- Scan proteins against Pfam-A database
+- Use PyHMMER to search for Pfam-A domains in proteins
 - Extract domain sequences
-- Create separate FASTA files for:
-  - Individual domains
-  - Full proteins
-  - Inter-domain regions (proteins without detected domains)
+- Create "chopped-up" protein FASTA per input genome where each protein is split up into "chunks" based on domain boundary coordinates.
 
-**Effects:**
+**Reasons:**
 - Increases accuracy by analyzing homology at domain resolution
 - Domains from the same protein family can be properly compared
-- Reduces false negatives from domain shuffling/fusion events
+- Allows for domain shuffling/fusion events
+- Downstream we will be using OrthoFinder to determine course domain ortholog groups, which standardizes for differences in protein-chunk length
 
 #### 4. Optional: Mobile Genetic Element Detection
 ```
