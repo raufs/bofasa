@@ -129,19 +129,6 @@ Optional Extraction (if -emg)
 **Rational:**
 - Useful to understand how ortholog groups are distributed across autonomous mobile elements
 - Can improve resolution of single-copy-core ortholog groups if paralogs exist on MGEs in some genomes
-  
-**Notes on `-emg` workflow**:
-1. **Prep**:
-   - MGEs are extracted as separate genome files with annotations
-   - All samples (bacterial + MGE) are processed together into common directories
-2. **Run - Step 1**:
-   - OrthoFinder is run on bacterial chromosomes only (MGEs excluded)
-3. **Run - Step 2**: MGE
-   - MGE proteins are clustered among themselves via reflexive DIAMOND blastp alignment
-   - MGE protein clusters are aligned against bacterial genome proteins
-   - MGE proteins assigned to existing ortholog groups based on their best DIAMOND hit
-   - Unassigned MGE proteins remain as singletons
-   - Modified ortholog tables include MGE columns
 
 ---
 
@@ -149,111 +136,66 @@ Optional Extraction (if -emg)
 
 The analysis phase performs hierarchical ortholog inference using the prepared domain and protein data.
 
-### Step 1: Coarse Ortholog Inference (OrthoFinder)
+### Step 1: Inference of Coarse Domain-Resolution Ortholog Groups using OrthoFinder
 
 ```
 Domain & Inter-domain FASTAs (Bacterial Genomes Only)
-  ↓
-Temporary Directory Creation (copies of bacterial genome files)
   ↓
 OrthoFinder (MCL-based clustering)
   ↓
 Coarse Domain Ortholog Groups (DOGs)
 ```
 
-**Algorithm:**
-1. **File Filtering**: Create temporary directory with copies of bacterial genome files only (MGEs excluded via `Sample_MGE_Metadata.txt`)
-2. All-vs-all DIAMOND BLAST searches on bacterial genomes
-3. Graph construction based on sequence similarity
-4. MCL clustering to identify ortholog groups
-5. Output: Initial domain ortholog groups (bacterial genomes only)
-
-**Key Parameters:**
+**Key Parameters for OrthoFinder:**
 - `-mi, --mcl-inflation` (default: 1.2): MCL inflation parameter
-  - Lower values (1.0-1.4): More coarse clustering, larger ortholog groups
-  - Higher values (1.5-3.0): Finer clustering, more granular groups
+  - Lower values (0.8-1.2): More coarse clustering, larger ortholog groups
+  - Higher values (1.2-5.0): Finer clustering, more granular groups
 - `-us, --ultra-sens`: Use DIAMOND ultra-sensitive mode
-  - Slower but finds more distant homologs
-  - Recommended for divergent species
+  - Recommended for highly divergent species
 
-**Effects:**
-- **Lower MCL inflation**:
-  - ✓ Groups more distant homologs together
-  - ✓ Better for highly divergent species
-  - ✗ May group paralogs together
-  - ✗ Larger, less specific ortholog groups
+> [!NOTE]
+> When MGEs are present (from `bofasa prep -emg`), they are **excluded** from OrthoFinder to prevent biasing the core ortholog group structure. MGEs are integrated in Step 1b.
 
-- **Higher MCL inflation**:
-  - ✓ Stricter ortholog boundaries
-  - ✓ Reduces false positives
-  - ✗ May split true orthologs
-  - ✗ More singleton genes
-
-- **Ultra-sensitive mode**:
-  - ✓ Detects remote homology
-  - ✓ Better for ancient gene families
-  - ✗ 3-10x slower
-  - ✗ May increase false positives
-
-**Note**: When MGEs are present (from `bofasa prep -emg`), they are **excluded** from OrthoFinder to prevent biasing the core ortholog group structure. MGEs are integrated in Step 1b.
-
-### Step 1b: MGE Integration (if -emg used in prep)
+### Step 2: MGE Integration (_auxiliary_; if `-emg` used in prep)
 
 ```
 MGE Protein Chunks
   ↓
-Reflexive DIAMOND Alignment (MGE vs MGE)
+Reflexive DIAMOND blastp Alignment (MGE protein chunks vs. MGE protein chunks)
   ↓
-Single-Linkage Clustering (slclust)
+Single-Linkage Clustering (using slclust by Brian Haas)
   ↓
 MGE Homology Clusters
   ↓
-DIAMOND Alignment (MGE vs Bacterial Genomes)
+DIAMOND Alignment (MGE protein chunks vs bacterial chromosome protein chunks)
   ↓
 OG Assignment (best hit or singleton)
   ↓
-Modified Orthogroups.tsv (with MGE columns)
+Construction of Modified  Domain-Resolution Coarse Ortholog Group by Genome/MGE Matrix
 ```
 
 **Algorithm:**
-1. **Concatenate MGE proteins**: All MGE protein chunks into single FASTA
-2. **Concatenate bacterial proteins**: All bacterial genome protein chunks into single FASTA
+1. **Concatenate MGE protein chunks**: All MGE protein chunks into single FASTA
+2. **Concatenate bacterial protein chunks**: All bacterial chromosome protein chunks into single FASTA
 3. **Create DIAMOND databases**: Separate databases for MGE and bacterial proteins
 4. **Reflexive MGE alignment**: DIAMOND blastp of MGEs against themselves
-   - Filter hits: require ≥50% query coverage AND ≥50% subject coverage
+   - Filter hits: require ≥50% query coverage AND ≥50% subject coverage AND E-value < 1e-3
    - Purpose: Identify MGE protein chunks that are homologous to each other
-5. **Cluster MGE proteins**: Single-linkage clustering (slclust) on filtered hits
-   - Groups MGE proteins into homology clusters
-6. **MGE vs Bacterial alignment**: DIAMOND blastp of MGEs against bacterial genome database
-   - Sorted by bitscore (descending) using multi-threaded Unix `sort`
-   - Each MGE protein assigned to OG of its best bacterial genome hit
+5. **Cluster MGE protein chunks**: Single-linkage clustering (using slclust) on filtered pairs are used to groups them into homologous clusters
+6. **MGE vs chromosomal protein chunk alignment**: DIAMOND blastp of MGE protein chunks against bacterial chromosome protein chunks database
+   - Sorted by bitscore (descending) using the commandline program `sort`
+   - Each MGE protein chunk assigned to OG of its best chromosomal hit
 7. **Cluster consensus**: For each MGE homology cluster:
    - If all members map to same OG → assign all to that OG
-   - If members map to different OGs → leave as singletons (conservative approach)
-8. **Output modified tables**:
-   - `Orthogroups_Modified.tsv`: Original OGs + MGE columns
+   - If members map to different OGs → leave OG assignments based on best hits for individual protein chunks and leave the rest of the protein chunks in the MGE homologous cluster as singletons
+8. **Output modified tables**: Modified files can be found under the `OrthoFinder_Results/` directory.
+   - `Orthogroups_Modified.tsv`: Original OGs + MGE columns (includes some previously single (aka "unassigned") protein chunks that are homologous to protein chunks from MGEs)
    - `Orthogroups_UnassignedGenes_Modified.tsv`: Singletons + new MGE singletons
 
-**Key Features:**
-- **Conservative assignment**: Prioritizes accuracy over completeness
-- **Homology-aware**: MGE proteins that cluster together are handled consistently
-- **Sorted by quality**: Best alignments processed first
-- **Efficient**: Unix `sort` with `--parallel` for large files
-
-**Outputs:**
-- `MGE_protein_chunks_concatenated.faa`: All MGE proteins
-- `Bacterial_genome_protein_chunks_concatenated.faa`: All bacterial proteins
-- `MGE_vs_MGE_diamond.tsv`: Reflexive MGE alignment results
-- `Homologous_MGE_pairs.txt`: Filtered MGE homology pairs
-- `Homologous_MGE_slclusters.txt`: MGE homology clusters
-- `MGE_vs_BacterialGenomes_diamond_sorted.tsv`: MGE-bacterial alignments (sorted)
-- `Orthogroups_Modified.tsv`: Updated ortholog groups with MGE columns
-- `Orthogroups_UnassignedGenes_Modified.tsv`: Updated singletons with MGE columns
-
-### Step 2: Phylogenetic Refinement
+### Step 2: Phylogenetic Refinement of Domain-Resolution Ortholog Groups
 
 ```
-Coarse Ortholog Groups
+Coarse Domain-Resolution Ortholog Groups from OrthoFinder
   ↓
 Per-Group Multiple Sequence Alignment
   ↓
@@ -737,18 +679,6 @@ where p_i = proportion of times OG_i appears as a neighbor
 ## Parameter Effects
 
 ### Computational Resource Parameters
-
-#### Threads (`-c`)
-- **Effect**: Linear speedup for parallelizable steps
-- **Optimal**: Set to available CPU cores (but leave 1-2 for system)
-- **Memory impact**: Higher thread counts increase peak memory
-
-#### Memory Limit (`-mm`)
-- **Effect**: Caps virtual memory usage
-- **Recommendation**: 
-  - 8GB per thread for small genomes (<5 Mb)
-  - 16GB per thread for large genomes (>5 Mb)
-  - 32GB minimum for typical runs
 
 #### Max Recursion Depth (`-mrd`)
 - **Effect**: Limits phylogenetic tree recursion depth
