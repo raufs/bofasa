@@ -175,9 +175,7 @@ bofasa also provides several additional utility scripts:
 
 ## Documentation
 
-For detailed documentation, see:
-- [Structure Refactor Guide](STRUCTURE_REFACTOR.md) - Information about the new modular structure
-- [Migration Guide](STRUCTURE_REFACTOR.md#migration-guide) - How to migrate from older versions
+For detailed information on bofasa, see the `ALGORITHM.md` document.
 
 ## Citation
 
