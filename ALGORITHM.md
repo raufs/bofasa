@@ -197,54 +197,104 @@ Construction of Modified  Domain-Resolution Coarse Ortholog Group by Genome/MGE 
 ```
 Coarse Domain-Resolution Ortholog Groups from OrthoFinder
   ↓
-Per-Group Multiple Sequence Alignment
+Per-Group Multiple Sequence Alignment using MUSCLE super5
   ↓
-Phylogenetic Tree Construction
+Phylogenetic Tree Construction using FastTree2
   ↓
-Tree Analysis & Splitting
+Tree Analysis to Split Paralogs
   ↓
 Refined Domain Ortholog Groups
 ```
 
 **Algorithm:**
-1. For each coarse ortholog group:
-   - Build multiple sequence alignment (MUSCLE)
-   - Construct phylogenetic tree (FastTree2 or IQ-TREE)
-   - Root the tree using multiple outgroup strategies
-   - Identify duplication nodes (gene duplications)
-   - Split groups at duplication nodes
-   - Assign sequences to refined ortholog groups
+1. For each **coarse domain-resolution ortholog group**:
+   - Build multiple sequence alignment (MUSCLE).
+   - Construct phylogenetic tree (FastTree2 or IQ-TREE).
+   - Apply midpoint-rooting. If `-rs N` flag is specified, then root the tree randomly _N_-1 amount of times and once using midpoint. 
+   - Partition phylogeny into **refined domain-resolution ortholog groups** using using bofasa's recursive algorithm.
+   - Further refine/adjust delineations of refined ortholog groups: (1) further split up disjoint ortholog groups [*see note* :scissors:] and (2) fixation index calculation to assess whether split partitions should be merged back [*see note* :tent:].
 
-2. Fixation index calculation:
-   - For each potential split, calculate fixation index (Fst)
-   - Fst measures genetic differentiation between groups
-   - Higher Fst = stronger evidence for distinct ortholog groups
+### Overview of bofasa's recursive algorithm:
 
-3. Merge-back assessment (optional):
-   - Check if split groups should be reunited
-   - Prevents over-splitting of true orthologs
+Goal: Split a phylogenetic tree into ortholog groups by minimizing gene duplications per sample
+
+#### Scoring System:
+
+- ***Tree score*** = sum of (|copies per sample| - 1) across all samples
+   - Score of 0 = perfect single-copy ortholog group (one gene per sample)
+   - Higher scores = more duplications/paralogs present 
+   - Also considers total branch length as a secondary criterion
+
+#### Return: List of partitions (sets of sequences)
+
+#### Recursive Logic:
+- Base cases (stop splitting):
+   - For proteins: if total branch length = 0
+   - For domains: if branch length ≤ minimum threshold
+   - If only one sample present
+   - If no split reduces the score
+
+- To find the best split(s) each iteration:
+   - Calculate score for entire tree
+   - Calculate score for every subtree (traverse preorder)
+   - Identify subtree(s) with minimum score
+   - Select non-overlapping subtrees that minimize duplication
+
+#### Handle remaining sequences:
+- Create "complement" partition (sequences not in best subtrees)
+- ***If complement has ≥2 samples, recursively split it***
+- Combine best subtrees + complement splits
+  
+### Details on addition refinement steps:
+
+#### :scissors: Further split up disjoint ortholog groups
+
+Ensures each final ortholog group form clear evolutionary units (monophyletic):
+
+```
+For each split group G:
+  if G forms a monophyletic clade:
+    accept G
+  else:
+    # G is paraphyletic or polyphyletic
+    # Split into largest monophyletic sub-clades
+    extract maximal monophyletic subsets
+```
+
+This prevents ortholog groups from spanning multiple independent evolutionary lineages.
+
+#### :tent: Fixation index calculation of innernodes of coarse ortholog group phylogeny to assess whether split partitions should be merged back 
+
+Re-assesses each internal node of coarse ortholog group phylogenies that include multiple refined ortholog groups to see if they are evolutionarily more appropriate to group together.
+
+- Uses largest-to-smallest node traversion
+- Calculates fixation index (FST) between split groups
+- If FST < threshold → merge groups back together (default threshold = 0.25)
+- Prevents over-splitting of true orthologs
 
 **Key Parameters:**
 - `-spr, --skip-phylo-refine`: Skip phylogenetic refinement entirely
   - Uses OrthoFinder results directly
   - Much faster but less accurate
   
-- `-fic, --fixation-index-cutoff` (default: 0.25): Minimum Fst to accept a split
-  - Lower values (0.1-0.2): More aggressive splitting
-  - Higher values (0.3-0.5): Conservative splitting
+- `-fic`, `--fixation-index-cutoff` (default: 0.25): Minimum FST to accept a split
+  - Lower values (0.1-0.24): More re-merging
+  - Higher values (0.26-1.0): Less re-merging
   
 - `-smb, --skip-merge-back`: Skip merge-back assessment
   - Faster but may over-split ortholog groups
   
 - `-rs, --rooting-seeds` (default: 1): Number of outgroup rooting attempts
   - Higher values: More robust rooting but slower
-  - 1: Fastest, usually sufficient
-  - 3-5: Better for complex paralog situations
+  - 1 (default): Fastest, uses midpoint rooting
+  - 100: Tries midpoint rooting + 99 random nodes as roots to see if they result in higher quality refined ortholog groups
+  - Best partioning is selected based on scoring:
+     - Sort by: (1) tree score, (2) number of groups, (3) total branch length and choose partition with lowest combined score
   
 - `-qa, --quality-alignments`: Use high-quality alignment settings
   - MAFFT instead of MUSCLE
   - IQ-TREE instead of FastTree2
-  - Much slower but better for challenging cases
+  - Much slower but should lead to higher quality results
 
 **Effects:**
 - **Skip phylogenetic refinement** (`-spr`):
@@ -627,6 +677,7 @@ Final refined protein ortholog groups
 **Outlier Artifact Removal:**
 
 Prevents tree artifacts from creating spurious groups:
+
 ```python
 For each protein P in split group G:
   max_internal_similarity = max(Jaccard(P, X) for X in G, X ≠ P)
@@ -959,33 +1010,7 @@ BOFASA uses a unified directory structure for all domain and coordinate files:
 - Bitscore-sorted results for quality-first processing
 - Efficient set operations for sample filtering
 
-### Code Quality and Error Handling
-
-**Exception Handling Pattern:**
-```python
-try:
-    # Operation
-    pass
-except Exception as e:
-    log_object.error(f"Context: {str(e)}")
-    log_object.error(traceback.format_exc())
-    raise  # Re-raise with context logged
-```
-
-**Benefits:**
-- Logs error context before propagating
-- Preserves original exception and traceback
-- Follows Python best practices (PEP8-compliant)
-
-**OG Name Generation:**
-- Centralized function: `generate_og_name(i)`
-- Zero-padded formatting: `OG00001`, `OG00042`, etc.
-- Ensures proper alphabetical sorting
-- Used consistently across codebase
-
----
-
-## Citation
+## Key Citations
 
 When using BOFASA, please cite:
 
