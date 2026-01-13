@@ -218,7 +218,7 @@ Goal: Split a phylogenetic tree into ortholog groups by minimizing gene duplicat
 
 #### Scoring System:
 
-- ***Tree score*** = sum of (|copies per sample| - 1) across all samples
+- ***Tree score*** = $\sum_{i=1}^{n} |(x_i)-1|$, where _n_ is the number of genomes/samples and $x_i$ is the copy count of proteins from genome _i_ at the particular node being assessed of the ortholog group phylogeny/tree.
    - Score of 0 = perfect single-copy ortholog group (one gene per sample)
    - Higher scores = more duplications/paralogs present 
    - Also considers total branch length as a secondary criterion
@@ -267,7 +267,7 @@ Re-assesses each internal node of coarse ortholog group phylogenies that include
 
 - Uses largest-to-smallest node traversion
 - Calculates fixation index (FST) between split groups
-- If FST < threshold → merge groups back together (default threshold = 0.25)
+- If FST < threshold → merge groups back together (default threshold = 0.1)
 - Prevents over-splitting of true orthologs
 
 **Key Parameters:**
@@ -275,7 +275,7 @@ Re-assesses each internal node of coarse ortholog group phylogenies that include
   - Uses OrthoFinder results directly
   - Much faster but less accurate
   
-- `-fic`, `--fixation-index-cutoff` (default: 0.25): Minimum FST to accept a split
+- `-fic`, `--fixation-index-cutoff` (default: 0.1): Minimum FST to accept a split
   - Lower values (0.1-0.24): More re-merging
   - Higher values (0.26-1.0): Less re-merging
   
@@ -337,15 +337,18 @@ For protein ortholog groups meeting refinement criteria (≥2 copies in any geno
 
 3. **Tree-based splitting**:
    - Root tree at midpoint
-   - Apply recursive splitting at duplication nodes (same as domain OG refinement)
-   - Identify paralogs vs orthologs based on tree topology
+   - Apply recursive splitting at duplication nodes (uses same recusive function as for domain-resolution OG splitting)
+       - Note, however, that there is a slight difference for domain-resolution and protein-resolution recursive splitting. Namely, for proteins, we stop only if the branch length sum = 0 (identical) whereas for domains we stop if branch length ≤ threshold. This is inorder to account for pseudovalues added by FastTree 2.          
 
 4. **Outlier artifact removal**:
    - For each protein in a split group:
      - Calculate max Jaccard similarity to proteins within the group
      - Calculate max Jaccard similarity to proteins outside the group
      - If external similarity ≥ internal similarity → remove as singleton
-   - Prevents misplaced proteins from remaining in inappropriate groups
+   - Prevents misplaced proteins from remaining in inappropriate groups - could result from nesting pattern in FastME tree that arises akin to similar artifacts in neighbor-joining trees for instance.
+
+> [!NOTE]
+> When calculating Jaccard similarity between proteins based on domain-resolution ortholog groups (DOGs) for outlier detection, DOGs that are largely (>80%) inter-domain regions (IDR) are included to provide higher resolution. However, for initial aggregation of proteins into coarse protein ortholog groups, the Jaccard similarity indices measured does not account for DOGs as they might contribute noise.
 
 5. **Monophyletic enforcement**:
    - Check if each split group forms a monophyletic clade
@@ -354,36 +357,8 @@ For protein ortholog groups meeting refinement criteria (≥2 copies in any geno
 
 **Key Parameters:**
 - `-dj, --dog-jaccard` (default: 0.5): Jaccard similarity threshold for initial clustering
-  - Lower values (0.1-0.2): More permissive, allows domain rearrangements
-  - Higher values (0.3-0.5): Stricter, requires more domain conservation
-
-**Effects:**
-- **Lower Jaccard threshold** (e.g., 0.15):
-  - ✓ Groups proteins with domain rearrangements
-  - ✓ Better for multi-domain protein families
-  - ✓ Captures domain shuffling events
-  - ✗ May group functionally distinct proteins
-  - ✗ Requires more refinement splitting
-  - **Use when**: Studying multi-domain proteins OR domain evolution
-
-- **Higher Jaccard threshold** (e.g., 0.4):
-  - ✓ Stricter domain architecture conservation
-  - ✓ More functionally coherent groups
-  - ✓ Less refinement needed
-  - ✗ May split orthologs with minor domain differences
-  - ✗ More singleton proteins
-  - **Use when**: Analyzing single-domain proteins OR requiring high confidence
-
-**Why Phylogenetic Refinement is Necessary:**
-
-Even after Jaccard-based clustering, protein ortholog groups can contain paralogs because:
-1. Paralogs may share similar domain architectures (especially recent duplications)
-2. Jaccard threshold may be permissive to avoid splitting true orthologs
-3. Domain rearrangements can create misleading similarity patterns
-
-The phylogenetic refinement step uses evolutionary relationships to distinguish:
-- **True orthologs**: Descended from speciation events, form species-congruent clades
-- **Paralogs**: Descended from duplication events, show within-species clustering
+  - Lower values (0.1-0.49): More permissive, allows for more domain composition differences
+  - Higher values (0.51-1.0): Stricter, requires domain compositions between proteins to be high
 
 ## Step 5: Syntenic Context Analysis
 
@@ -392,30 +367,17 @@ Protein Ortholog Groups
   ↓
 Extract Genomic Neighborhoods
   ↓
-Calculate Neighborhood Conservation
-  ↓
-Compute Context Entropy
+Calculate Context Conservation Score
   ↓
 Ortholog Groups + Synteny Metrics
 ```
 
-**Algorithm:**
-1. For each ortholog group occurrence:
-   - Extract upstream and downstream neighbors
-   - Identify their ortholog group assignments
-   - Calculate neighborhood conservation metrics
+### Context Conservation Score
 
-2. Metrics calculated:
-   - **Neighborhood entropy**: Shannon entropy of neighboring OG composition
-     - Low entropy = conserved synteny
-     - High entropy = variable synteny
-   - **Neighbor presence/absence matrix**: Which OGs appear as neighbors
-   - **Directional conservation**: Strand orientation patterns
 
-**Key Parameters:**
-- `-sr, --surrounding-bp` (default: 10000): Base pairs to analyze around each gene
-  - Smaller values (5000-7500): Immediate neighbors only
-  - Larger values (15000-25000): Extended chromosomal context
+
+#### Key Parameters:
+- `-sr, --surrounding-bp` (default: 10,000): Base pairs to analyze around each gene
 
 **Effects:**
 - **Smaller surrounding region** (e.g., 5000 bp):
