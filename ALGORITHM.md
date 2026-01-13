@@ -44,7 +44,7 @@ BOFASA operates in two distinct phases:
 
 ---
 
-## Preparation Phase (`bofasa prep`)
+# Preparation Phase (`bofasa prep`)
 
 The preparation phase processes raw genome data into a format suitable for orthology analysis.
 
@@ -132,11 +132,11 @@ Optional Extraction (if -emg)
 
 ---
 
-## Analysis Phase (`bofasa run`)
+# Analysis Phase (`bofasa run`)
 
 The analysis phase performs hierarchical ortholog inference using the prepared domain and protein data.
 
-### Step 1: Inference of Coarse Domain-Resolution Ortholog Groups using OrthoFinder
+## Step 1: Inference of Coarse Domain-Resolution Ortholog Groups using OrthoFinder
 
 ```
 Domain & Inter-domain FASTAs (Bacterial Genomes Only)
@@ -156,7 +156,7 @@ Coarse Domain Ortholog Groups (DOGs)
 > [!NOTE]
 > When MGEs are present (from `bofasa prep -emg`), they are **excluded** from OrthoFinder to prevent biasing the core ortholog group structure. MGEs are integrated in Step 1b.
 
-### Step 2: MGE Integration (_auxiliary_; if `-emg` used in prep)
+## Step 2: MGE Integration (_auxiliary_; if `-emg` used in prep)
 
 ```
 MGE Protein Chunks
@@ -192,7 +192,7 @@ Construction of Modified  Domain-Resolution Coarse Ortholog Group by Genome/MGE 
    - `Orthogroups_Modified.tsv`: Original OGs + MGE columns (includes some previously single (aka "unassigned") protein chunks that are homologous to protein chunks from MGEs)
    - `Orthogroups_UnassignedGenes_Modified.tsv`: Singletons + new MGE singletons
 
-### Step 2: Phylogenetic Refinement of Domain-Resolution Ortholog Groups
+## Step 3: Phylogenetic Refinement of Domain-Resolution Ortholog Groups
 
 ```
 Coarse Domain-Resolution Ortholog Groups from OrthoFinder
@@ -208,8 +208,8 @@ Refined Domain Ortholog Groups
 
 **Algorithm:**
 1. For each **coarse domain-resolution ortholog group**:
-   - Build multiple sequence alignment (MUSCLE).
-   - Construct phylogenetic tree (FastTree2 or IQ-TREE).
+   - Build multiple sequence alignment (default: MUSCLE).
+   - Construct phylogenetic tree (default: FastTree2).
    - Apply midpoint-rooting. If `-rs N` flag is specified, then root the tree randomly _N_-1 amount of times and once using midpoint. 
    - Partition phylogeny into **refined domain-resolution ortholog groups** using using bofasa's recursive algorithm.
    - Further refine/adjust delineations of refined ortholog groups: (1) further split up disjoint ortholog groups [*see note* :scissors:] and (2) fixation index calculation to assess whether split partitions should be merged back [*see note* :tent:].
@@ -296,45 +296,7 @@ Re-assesses each internal node of coarse ortholog group phylogenies that include
   - IQ-TREE instead of FastTree2
   - Much slower but should lead to higher quality results
 
-**Effects:**
-- **Skip phylogenetic refinement** (`-spr`):
-  - ✓ 5-10x faster
-  - ✓ Deterministic results
-  - ✗ May include paralogs in ortholog groups
-  - ✗ Lower accuracy for recently duplicated genes
-  - **Use when**: Species are very closely related OR speed is critical
-
-- **Lower fixation index cutoff** (e.g., 0.15):
-  - ✓ More aggressive paralog detection
-  - ✓ Better separation of gene families
-  - ✗ May split true orthologs
-  - ✗ More fragmentation
-  - **Use when**: Analyzing genomes with many recent duplications
-
-- **Higher fixation index cutoff** (e.g., 0.35):
-  - ✓ Conservative splitting
-  - ✓ Fewer false splits
-  - ✗ May retain some paralogs
-  - **Use when**: Analyzing ancient orthologs with strong conservation
-
-- **Skip merge-back** (`-smb`):
-  - ✓ Faster
-  - ✗ May over-split reciprocal best hit relationships
-  - **Use when**: Groups are well-separated OR computational time is limited
-
-- **Multiple rooting seeds** (e.g., `-rs 5`):
-  - ✓ More robust to outgroup selection
-  - ✓ Better handling of complex gene families
-  - ✗ Significantly slower (linear with number of seeds)
-  - **Use when**: Working with complex multi-domain proteins OR paralog-rich families
-
-- **Quality alignments** (`-qa`):
-  - ✓ Better phylogenetic accuracy
-  - ✓ More reliable for divergent sequences
-  - ✗ 10-50x slower depending on group size
-  - **Use when**: Final publication-quality analysis OR very divergent species
-
-### Step 3: Protein Ortholog Group Determination
+## Step 4: Protein Ortholog Group Determination
 
 ```
 Refined Domain Ortholog Groups
@@ -349,7 +311,7 @@ Coarse Protein Ortholog Groups
   ↓
 Phylogenetic Refinement (for multi-copy groups)
   ↓
-Final Protein Ortholog Groups (POGs)
+Final Protein Ortholog Groups
 ```
 
 **Algorithm:**
@@ -840,175 +802,34 @@ bofasa run -i prep/ -o out/ \
 - Modified ortholog tables include MGE columns (`.ccds` suffix)
 - Unassigned MGE proteins remain as singletons in modified tables
 
-### Troubleshooting
-
-#### Issue: OrthoFinder fails or hangs
-**Causes:**
-- Symlink issues on some filesystems
-- Too many/too large input files
-- Insufficient disk space
-
-**Solutions:**
-- BOFASA now copies files instead of symlinking (automatic)
-- Temporary directories created: `OrthoFinder_Input_Bacterial_Genomes/`
-- Check disk space in output directory
-- Reduce number of input genomes if memory-limited
-
-#### Issue: Too many singleton ortholog groups
-**Causes:**
-- MCL inflation too high
-- Jaccard threshold too high
-- Species too divergent
-
-**Solutions:**
-- Decrease `-mi` to 1.0-1.1
-- Decrease `-dj` to 0.15-0.20
-- Enable `-us` for ultra-sensitive mode
-- Skip phylogenetic refinement (`-spr`) as a test
-
-#### Issue: Ortholog groups contain obvious paralogs
-**Causes:**
-- MCL inflation too low (domain-level clustering too coarse)
-- Fixation index cutoff too high (domain-level refinement too conservative)
-- Phylogenetic refinement skipped (domain-level)
-- Jaccard threshold too low (protein-level clustering too permissive)
-- Multi-copy groups not meeting refinement criteria (<4 proteins or <2 genomes)
-
-**Solutions:**
-- Increase `-mi` to 1.3-1.5 (stricter domain clustering)
-- Decrease `-fic` to 0.15-0.20 (more aggressive domain splitting)
-- Add `-qa` for better tree quality (domain-level)
-- Increase `-rs` to 3-5 (more robust domain-level rooting)
-- Increase `-dj` to 0.30-0.35 (stricter protein clustering)
-
-**Note:** Protein ortholog group refinement is automatic for qualifying groups (≥2 copies in any genome, ≥2 genomes, ≥4 total proteins). If paralogs persist, they may be in groups that don't meet these criteria or have very similar domain architectures.
-
-#### Issue: Analysis too slow
-**Causes:**
-- Too many genomes
-- Quality alignment mode enabled
-- Large proteins/many domains
-
-**Solutions:**
-- Use `-spr` to skip phylogenetic refinement
-- Remove `-qa` if enabled
-- Reduce `-rs` to 1
-- Consider subsampling genomes
-
-#### Issue: High memory usage
-**Causes:**
-- Too many threads
-- Large ortholog groups
-- Many genomes
-
-**Solutions:**
-- Reduce `-c` threads
-- Increase `-mm` memory limit (if available)
-- Use `-spr` to reduce memory in refinement step
 
 ---
 
-## Output Interpretation
+# Output Interpretation
 
 ### Key Output Files
 
 1. **`Final_Results/Protein_Ortholog_Groups.tsv`**
-   - Tab-delimited ortholog group matrix
-   - Rows = ortholog groups
+   - Tab-delimited protein-resolution ortholog group matrix
+   - Rows = refined protein-resolution ortholog groups
    - Columns = genomes
    - Values = comma-separated protein IDs
 
-2. **`Final_Results/Orthogroup_Overview.xlsx`**
-   - Multi-sheet Excel workbook
-   - Sheet 1: Summary statistics per OG
-   - Sheet 2: Presence/absence matrix
-   - Sheet 3: Synteny metrics
+2. **`Final_Results/Domain_Ortholog_Groups.tsv`**
+   - Tab-delimited domain-resolution ortholog group matrix
+   - Rows = refined domain-resolution ortholog groups
+   - Columns = genomes
+   - Values = comma-separated protein IDs
 
-3. **`Final_Results/Orthogroup_Conservation_vs_ContextEntropy.html`**
+3. **`Final_Results/Orthogroup_Overview.xlsx`**
+   - Summary statistics are shown per protein ortholog group
+
+4. **`Final_Results/Orthogroup_Conservation_vs_ContextEntropy.html`**
    - Interactive scatter plot
    - Identify core vs accessory genes
    - Find syntenic vs mobile genes
 
-### Interpreting Results
-
-#### Core vs Accessory Genes
-- **Core genes** (present in >95% genomes):
-  - Low conservation score variation
-  - Usually low syntenic entropy
-  - Essential functions
-
-- **Accessory genes** (present in <50% genomes):
-  - Variable presence
-  - Often high syntenic entropy
-  - Niche-specific adaptations
-
-#### Syntenic Conservation Patterns
-- **High conservation (low entropy)**:
-  - Operonic organization
-  - Co-regulated genes
-  - Essential pathways
-
-- **Low conservation (high entropy)**:
-  - Recently acquired genes
-  - Mobile genetic elements
-  - Genes under relaxed selection
-
 ---
-
-## Technical Implementation Notes
-
-### File Organization and Workflow Optimizations
-
-#### Unified Directory Structure
-BOFASA uses a unified directory structure for all domain and coordinate files:
-- **Before**: Separate subdirectories (`Bacterial_Genomes/`, `MGEs/`)
-- **After**: Common directory with metadata-based filtering
-
-**Benefits:**
-- ✓ Simpler file organization
-- ✓ Easier checkpoint recovery
-- ✓ More maintainable code
-- ✓ Logical separation maintained via `Sample_MGE_Metadata.txt`
-
-#### File Handling for OrthoFinder
-- **Approach**: Copies files instead of symlinks
-- **Reason**: Better compatibility across filesystems
-- **Implementation**: `shutil.copy2()` preserves metadata
-- **Location**: Temporary directory `OrthoFinder_Input_Bacterial_Genomes/`
-
-#### Large File Processing
-**DIAMOND Output Sorting:**
-- **Challenge**: DIAMOND output can be millions of lines
-- **Solution**: Unix `sort` with multi-threading
-- **Command**: `sort -t $'\t' -k12,12 -n -r --parallel={threads}`
-- **Benefits**:
-  - Disk-based external sorting (handles files larger than RAM)
-  - Parallel processing for speed
-  - Sorted by bitscore (descending) for quality-first assignment
-
-**slclust Integration:**
-- **Challenge**: Shell redirection operators (`<`, `>`) don't work with `subprocess.run()` without `shell=True`
-- **Solution**: Explicit file handle redirection
-- **Implementation**: `stdin=file_handle`, `stdout=file_handle`
-- **Benefits**: Safer than shell=True, portable, proper error handling
-
-#### MGE Integration Algorithm
-**Homology Clustering:**
-1. Reflexive DIAMOND alignment (MGE vs MGE)
-2. Coverage filtering (≥50% query and subject coverage)
-3. Single-linkage clustering (slclust)
-4. Cluster-aware OG assignment
-
-**Conservative Assignment Strategy:**
-- Single OG consensus → Assign all cluster members
-- Multiple OG assignments → Leave as singletons
-- Rationale: Prioritizes accuracy over completeness
-
-**Performance Optimizations:**
-- Concatenated FASTA files for batch processing
-- Separate DIAMOND databases for MGEs and bacterial genomes
-- Bitscore-sorted results for quality-first processing
-- Efficient set operations for sample filtering
 
 ## Key Citations
 
