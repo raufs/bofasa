@@ -48,9 +48,7 @@ BOFASA operates in two distinct phases:
 
 The preparation phase processes raw genome data into a format suitable for orthology analysis.
 
-### Step-by-Step Process
-
-#### 1. Genome Input Processing
+## 1. Genome Input Processing
 
 ```
 Input: FASTA or GenBank files
@@ -75,7 +73,7 @@ Gene Calling (if FASTA) or CDS Extraction (if GenBank)
 - `-rg, --run-genomad`: Run geNomad for annotation of phages and plasmids
 - `-emg, --extract-mge-genomes`: Extracts phages/plasmids to use as individual genomes (to use this option, your genomes should be complete)
 
-#### 2. Protein Extraction
+## 2. Protein Extraction
 ```
 Gene Predictions
   ↓
@@ -89,7 +87,7 @@ Quality Filtering
 - Filter incomplete or invalid sequences
 - Create sample-specific protein FASTA files
 
-#### 3. Domain Identification (via PyHMMER+Pfam)
+## 3. Domain Identification (via PyHMMER+Pfam)
 ```
 Protein Sequences
   ↓
@@ -108,7 +106,7 @@ Delineation of Proteins by Domain Coordinates
 - Accounts for domain shuffling/fusion/loss events
 - Downstream we will be using OrthoFinder to determine course domain ortholog groups, which standardizes for differences in protein-chunk length
 
-#### 4. Optional: Mobile Genetic Element Detection
+## 4. Optional: Mobile Genetic Element Detection
 
 ```
 Genomes (if -rg specified)
@@ -207,7 +205,7 @@ Refined Domain Ortholog Groups
 ```
 
 **Algorithm:**
-1. For each **coarse domain-resolution ortholog group**:
+For each **coarse domain-resolution ortholog group**:
    - Build multiple sequence alignment (default: MUSCLE).
    - Construct phylogenetic tree (default: FastTree2).
    - Apply midpoint-rooting. If `-rs N` flag is specified, then root the tree randomly _N_-1 amount of times and once using midpoint. 
@@ -303,30 +301,29 @@ Refined Domain Ortholog Groups
   ↓
 Protein-to-Domain Mapping
   ↓
-Domain Jaccard Similarity Calculation
+Jaccard Similarity Calculation Between Proteins Based on Domain Ortholog Groups Composition
   ↓
-Graph-based Protein Clustering
+MCL (Graph-Based) Protein Clustering
   ↓
 Coarse Protein Ortholog Groups
   ↓
-Phylogenetic Refinement (for multi-copy groups)
+Distance Based Tree Construction using FastME
+  ↓
+Tree Refinement (for multi-copy groups)
   ↓
 Final Protein Ortholog Groups
 ```
 
-**Algorithm:**
-
-#### Part A: Initial Jaccard-Based Clustering
+### Part A: Initial Jaccard-Based Clustering
 1. For each protein, identify its domain ortholog group memberships
 2. Calculate Jaccard similarity between proteins:
    ```
    J(A,B) = |DOGs(A) ∩ DOGs(B)| / |DOGs(A) ∪ DOGs(B)|
    ```
-3. Create protein similarity graph (edges = similarity ≥ threshold)
+3. Create protein similarity graph (edges = similarity ≥ threshold; default threshold is )
 4. Identify connected components = coarse protein ortholog groups
-5. Handle single-domain proteins and proteins without domains
 
-#### Part B: Phylogenetic Refinement of Multi-Copy Groups
+### Part B: Phylogenetic Refinement of Multi-Copy Groups
 For protein ortholog groups meeting refinement criteria (≥2 copies in any genome, ≥2 genomes, ≥4 proteins total):
 
 1. **Domain-based distance calculation**:
@@ -356,7 +353,7 @@ For protein ortholog groups meeting refinement criteria (≥2 copies in any geno
    - Ensures evolutionary coherence within final ortholog groups
 
 **Key Parameters:**
-- `-dj, --dog-jaccard` (default: 0.25): Jaccard similarity threshold for initial clustering
+- `-dj, --dog-jaccard` (default: 0.5): Jaccard similarity threshold for initial clustering
   - Lower values (0.1-0.2): More permissive, allows domain rearrangements
   - Higher values (0.3-0.5): Stricter, requires more domain conservation
 
@@ -388,7 +385,7 @@ The phylogenetic refinement step uses evolutionary relationships to distinguish:
 - **True orthologs**: Descended from speciation events, form species-congruent clades
 - **Paralogs**: Descended from duplication events, show within-species clustering
 
-### Step 4: Syntenic Context Analysis
+## Step 5: Syntenic Context Analysis
 
 ```
 Protein Ortholog Groups
