@@ -5,9 +5,6 @@
 2. [Workflow Architecture](#workflow-architecture)
 3. [Preparation Phase (`bofasa prep`)](#preparation-phase)
 4. [Analysis Phase (`bofasa run`)](#analysis-phase)
-5. [Algorithm Details](#algorithm-details)
-6. [Parameter Effects](#parameter-effects)
-7. [Best Practices](#best-practices)
 
 ---
 
@@ -426,13 +423,6 @@ You can also use the option `-ogc` option to generate a multi-FASTA containing c
 ### Algorithm:
 1. Align all sequences in each ortholog group
 2. Determine consensus sequence + profile HMM for each ortholog group
-
-**Effects:**
-- ✓ Enables downstream searching/annotation
-- ✓ Profile HMMs useful for finding orthologs in new genomes
-- ✗ Significantly increases runtime (proportional to # of OGs)
-- ✗ Large disk space requirement
-- **Use when**: Planning to annotate new genomes OR need representative sequences
 
 ## Optional Step 8: Core Genome Alignment
 
