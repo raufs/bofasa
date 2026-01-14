@@ -398,7 +398,7 @@ Score = 3/5 = 0.6 (moderately conserved context)
 #### Key Parameters:
 - `-sr, --surrounding-bp` (default: 10000): Base pairs to analyze around each gene
 
-### Step 6: Final Report Generation
+## Step 6: Final Report Generation
 
 ```
 All Analysis Results
