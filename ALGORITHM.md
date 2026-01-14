@@ -48,7 +48,7 @@ BOFASA operates in two distinct phases:
 
 The preparation phase processes raw genome data into a format suitable for orthology analysis.
 
-## 1. Genome Input Processing
+## Step 1. Genome Input Processing
 
 ```
 Input: FASTA or GenBank files
@@ -73,7 +73,7 @@ Gene Calling (if FASTA) or CDS Extraction (if GenBank)
 - `-rg, --run-genomad`: Run geNomad for annotation of phages and plasmids
 - `-emg, --extract-mge-genomes`: Extracts phages/plasmids to use as individual genomes (to use this option, your genomes should be complete)
 
-## 2. Protein Extraction
+## Step 2. Protein Extraction
 ```
 Gene Predictions
   ↓
@@ -87,7 +87,7 @@ Quality Filtering
 - Filter incomplete or invalid sequences
 - Create sample-specific protein FASTA files
 
-## 3. Domain Identification (via PyHMMER+Pfam)
+## Step 3. Domain Identification (via PyHMMER+Pfam)
 ```
 Protein Sequences
   ↓
@@ -106,7 +106,7 @@ Delineation of Proteins by Domain Coordinates
 - Accounts for domain shuffling/fusion/loss events
 - Downstream we will be using OrthoFinder to determine course domain ortholog groups, which standardizes for differences in protein-chunk length
 
-## 4. Optional: Mobile Genetic Element Detection
+## Optional Step 4: Mobile Genetic Element Detection
 
 ```
 Genomes (if -rg specified)
@@ -374,70 +374,58 @@ Ortholog Groups + Synteny Metrics
 
 ### Context Conservation Score
 
+#### Formula:
 
+$Context\ Conservation\ Score = Avg.\ Neighbor\ Count/Total\ Distinct\ Neighbors$
+
+- **Avg. Neighbor Count**: The average of the number of unique OGs that appear as neighbors to the focal OG ***per*** context.
+- **Total Distinct Neighbors**: Total number of unique OGs that ever appear as neighbors to the focal OG across ***gall*** context.
+
+#### Interpretation:
+- Score → 1: High conservation (same neighbors always present)
+- Score → 0: Low conservation (many different neighbors, the focal ortholog group is found in very different contexts)
+
+#### Example:
+- OG appears 10 times
+- Has 5 unique neighbor OGs across all instances
+- Average of 3 neighbors per instance
+Score = 3/5 = 0.6 (moderately conserved context)
+
+#### Two versions:
+- Standard: All contexts (including near scaffold/contig edges)
+- Complete: Only complete contexts (away from scaffold/contig edges)
 
 #### Key Parameters:
-- `-sr, --surrounding-bp` (default: 10,000): Base pairs to analyze around each gene
+- `-sr, --surrounding-bp` (default: 10000): Base pairs to analyze around each gene
 
-**Effects:**
-- **Smaller surrounding region** (e.g., 5000 bp):
-  - ✓ Faster computation
-  - ✓ Focus on immediate operonic structure
-  - ✗ May miss larger syntenic patterns
-  - ✗ Less context for sparse genomes
-  - **Use when**: Analyzing operon structure OR gene-dense genomes
-
-- **Larger surrounding region** (e.g., 20000 bp):
-  - ✓ Captures broader chromosomal organization
-  - ✓ Better for sparse genomes
-  - ✓ More robust to local rearrangements
-  - ✗ Slower computation
-  - ✗ May include unrelated genes
-  - **Use when**: Studying genomic islands OR large-scale synteny
-
-### Step 5: Final Report Generation
+### Step 6: Final Report Generation
 
 ```
 All Analysis Results
   ↓
 Data Integration
   ↓
-Excel Spreadsheet Generation
+Excel Spreadsheet Generation & HTML Visualization
 ```
 
-**Outputs:**
-- Multi-sheet Excel workbook with:
-  - Ortholog group summary (presence/absence, copy numbers)
-  - Synteny conservation metrics
-  - Per-sample statistics
-  - Functional annotations (if available)
-
-### Step 6: Visualization
-
-```
-Synteny + Conservation Data
-  ↓
-Interactive Plotting
-  ↓
-HTML Visualization
-```
-
-**Output:**
+### Visualization Overview:
 - Interactive HTML plot showing:
-  - X-axis: Ortholog group conservation (% genomes)
-  - Y-axis: Neighborhood entropy (syntenic conservation)
-  - Hover: Detailed OG information
+  - X-axis: Ortholog group conservation (conservation across genomes)
+  - Y-axis: Context conservation score (syntenic conservation)
+  - ***Hover***: Detailed OG information
 
-### Optional Step 7: Consensus Sequence Generation
+## Optional Step 7: Consensus Sequence + Profile HMM Generation for Protein Ortholog Groups
 
-**Key Parameter:**
+### Premise:
+
+You can also use the option `-ogc` option to generate a multi-FASTA containing consensus sequences of each ortholog groups as well as profile HMMs for them. 
+
+### Key Parameter:
 - `-ogc, --og-consensus`: Generate consensus sequences for each ortholog group
 
-**Algorithm:**
+### Algorithm:
 1. Align all sequences in each ortholog group
-2. Call consensus at each position (majority rule)
-3. Create consensus FASTA file
-4. Build profile HMMs for each ortholog group
+2. Determine consensus sequence + profile HMM for each ortholog group
 
 **Effects:**
 - ✓ Enables downstream searching/annotation
@@ -446,349 +434,26 @@ HTML Visualization
 - ✗ Large disk space requirement
 - **Use when**: Planning to annotate new genomes OR need representative sequences
 
-### Optional Step 8: Core Genome Alignment
+## Optional Step 8: Core Genome Alignment
 
-**Key Parameter:**
+### Premise:
+
+Construct a concatenated multi-FASTA alignment of the strict or loose single-copy-core genome for downstream phylogenomics.
+
+### Key Parameter:
 - `-cg, --core-genome`: Construct concatenated core genome alignment
-
-**Algorithm:**
-1. Identify single-copy core ortholog groups (SCC-OGs)
-   - Present in ≥95% of genomes (default)
-   - Exactly one copy per genome
-2. Align each SCC-OG
-3. Concatenate alignments
-4. Output multi-FASTA suitable for phylogenomics
-
-**Key Parameters:**
-- `-ns, --near-scc-prop` (default: 0.95): Minimum proportion of genomes for "core"
+- `-ns, --near-scc-prop` (default: 0.95): Minimum proportion of genomes for an ortholog group to be considered part of the single-copy-core.
   - Lower values (0.80-0.90): More permissive, more genes
-  - Higher values (0.98-1.00): Strict core, fewer genes
+  - Higher values (0.98-1.00): Stricter core, fewer genes
 
-**Effects:**
-- **Lower near-SCC proportion** (e.g., 0.85):
-  - ✓ More genes in core genome alignment
-  - ✓ More phylogenetic signal
-  - ✗ May include non-universal genes
-
-- **Higher near-SCC proportion** (e.g., 0.98):
-  - ✓ Very strict core genome
-  - ✓ Suitable for diverse species sets
-  - ✗ Fewer genes, less phylogenetic signal
-
----
-
-## Algorithm Details
-
-### Domain Orthology vs Protein Orthology
-
-BOFASA's hierarchical approach offers advantages over protein-only methods:
-
-```
-Traditional Approach:
-Protein A1 [Domain1-Domain2-Domain3]  ─┐
-Protein B1 [Domain1-Domain2]           ├─ May or may not cluster together
-Protein C1 [Domain1-Domain3]          ─┘
-
-BOFASA Approach:
-Step 1 - Domain level orthology:
-  Domain1: A1, B1, C1 → Ortholog Group 1
-  Domain2: A1, B1     → Ortholog Group 2
-  Domain3: A1, C1     → Ortholog Group 3
-
-Step 2 - Jaccard-based protein clustering:
-  Jaccard(A1, B1) = 2/3 = 0.67 → Link
-  Jaccard(A1, C1) = 2/3 = 0.67 → Link
-  Jaccard(B1, C1) = 1/3 = 0.33 → Link (if threshold ≤0.33)
-
-Step 3 - Phylogenetic refinement (if multi-copy):
-  Build tree based on domain composition distances
-  Split at duplication nodes
-  Remove misplaced proteins
-  Enforce monophyletic property
-```
-
-**Advantages:**
-- Handles domain shuffling elegantly
-- More sensitive for multi-domain proteins
-- Reduces false negatives from domain rearrangements
-- Phylogenetic refinement catches paralogs missed by Jaccard clustering
-- Two-stage approach balances sensitivity and specificity
-
-**Trade-offs:**
-- More complex pipeline
-- Longer runtime
-- Depends on domain prediction accuracy
-
-### Phylogenetic Refinement Details
-
-The phylogenetic refinement step is critical for distinguishing orthologs from paralogs at both the domain and protein levels.
-
-#### Domain-Level Phylogenetic Refinement
-
-Applied to coarse domain ortholog groups from OrthoFinder:
-
-**Rooting Strategy:**
-```
-Unrooted Tree
-  ↓
-Try multiple rooting strategies:
-  1. Minimize tree depth variance
-  2. Balance by species representation
-  3. Outgroup selection (if available)
-  ↓
-Select best rooting (highest confidence)
-```
-
-**Duplication Detection:**
-```
-For each internal node:
-  1. Check if children have overlapping species
-  2. If yes → duplication node
-  3. Calculate Fst between child clades
-  4. If Fst ≥ threshold → accept split
-```
-
-**Fixation Index (Fst) Interpretation:**
-- **Fst = 0**: No differentiation (likely one ortholog group)
-- **Fst = 0.1-0.25**: Moderate differentiation (borderline)
-- **Fst = 0.25-0.5**: Strong differentiation (likely distinct orthologs)
-- **Fst > 0.5**: Very strong differentiation (clear paralogs)
-
-#### Protein-Level Phylogenetic Refinement
-
-Applied to coarse protein ortholog groups from Jaccard clustering:
-
-**Refinement Criteria:**
-Protein ortholog groups are refined if they meet ALL of:
-- At least 2 copies present in any single genome (indicates potential paralogs)
-- Present in at least 2 different genomes
-- Contains at least 4 proteins total
-
-**Distance Calculation:**
-Unlike domain-level refinement (which uses sequence alignment), protein-level refinement uses domain architecture:
-```
-For proteins P1 and P2:
-  1. Create domain composition vectors:
-     V(P1) = [count(DOG_1), count(DOG_2), ..., count(DOG_n)]
-     V(P2) = [count(DOG_1), count(DOG_2), ..., count(DOG_n)]
+> [!IMPORTANT]
+> An ortholog group can still be considered part of the loose single-copy-core (`-ns` <1.0) when genomes have multiple copies of it. These are ignored similar to the absence of the gene in other genomes. For instance, if your dataset has 100 genomes and 97 of the genomes have the focal ortholog group in single-copy, but 2 genomes lack it and 1 genome has two copies of the ortholog group, if `-ns` >= 0.97, then it is still considered part of the scc and treated as absent in that 1 genome with paralogs. **Also, if you are _not_ using a strict core genome (`-ns` set to 1.0), we recommend that you use a partition-based approach for phylogeny modeling and using the individual ortholog group alignments folder as input to IQ-TREE instead of the concatenated multi-FASTA file..**
   
-  2. Calculate cosine distance:
-     dist(P1, P2) = 1 - (V(P1) · V(P2)) / (||V(P1)|| × ||V(P2)||)
-```
-
-This approach is faster than full sequence alignment and captures evolutionary relationships based on domain gain/loss events.
-
-**Tree Construction and Splitting:**
-```
-Distance Matrix (PHYLIP format)
-  ↓
-FastME (neighbor-joining)
-  ↓
-Midpoint rooting
-  ↓
-Recursive splitting at duplication nodes
-  ↓
-Outlier artifact removal
-  ↓
-Monophyly enforcement
-  ↓
-Final refined protein ortholog groups
-```
-
-**Outlier Artifact Removal:**
-
-Prevents tree artifacts from creating spurious groups:
-
-```python
-For each protein P in split group G:
-  max_internal_similarity = max(Jaccard(P, X) for X in G, X ≠ P)
-  max_external_similarity = max(Jaccard(P, Y) for Y not in G)
-  
-  if max_external_similarity >= max_internal_similarity:
-    # P is more similar to proteins outside G than inside
-    # Likely misplaced due to tree artifact → extract as singleton
-    remove P from G
-```
-
-This catches cases where midpoint rooting or tree topology artifacts cause unrelated proteins to cluster together.
-
-**Monophyly Enforcement:**
-
-Ensures each final ortholog group forms a coherent evolutionary unit:
-```
-For each split group G:
-  if G forms a monophyletic clade:
-    accept G
-  else:
-    # G is paraphyletic or polyphyletic
-    # Split into largest monophyletic sub-clades
-    extract maximal monophyletic subsets
-```
-
-This prevents ortholog groups from spanning multiple independent evolutionary lineages.
-
-### Syntenic Context Entropy
-
-Neighborhood entropy quantifies syntenic conservation:
-
-```
-H = -Σ(p_i * log(p_i))
-
-where p_i = proportion of times OG_i appears as a neighbor
-```
-
-**Interpretation:**
-- **H ≈ 0**: Highly conserved synteny (same neighbors always)
-- **H = 1-2**: Moderate conservation (few common arrangements)
-- **H > 3**: High variability (many different neighbors)
-
-**Biological Interpretation:**
-- Low entropy: Core metabolic genes, essential operons
-- High entropy: Accessory genes, mobile elements, recently acquired
-
----
-
-## Parameter Effects
-
-### Computational Resource Parameters
-
-#### Max Recursion Depth (`-mrd`)
-- **Effect**: Limits phylogenetic tree recursion depth
-- **When to adjust**: 
-  - Increase (>5000) for very large ortholog groups
-  - Decrease (<3000) if experiencing stack overflow
-
-### Quality vs Speed Trade-offs
-
-#### Fast Mode
-```bash
-bofasa run -i prep/ -o out/ -c 16 -spr
-```
-- Skips phylogenetic refinement
-- ~5-10x faster
-- Lower accuracy for paralogs
-- **Use for**: Exploratory analyses, very close species
-
-#### Balanced Mode (Default)
-```bash
-bofasa run -i prep/ -o out/ -c 16
-```
-- Standard phylogenetic refinement
-- Good accuracy/speed balance
-- **Use for**: Most analyses
-
-#### High Quality Mode
-```bash
-bofasa run -i prep/ -o out/ -c 16 -qa -rs 5 -fic 0.30
-```
-- Best accuracy
-- 10-50x slower
-- **Use for**: Publication analyses, divergent species
-
----
-
-## Best Practices
-
-### Genome Selection
-
-1. **Minimum genomes**: 4 (algorithm requirement)
-2. **Maximum genomes**: 200 (performance degradation above this)
-3. **Optimal range**: 10-50 genomes
-4. **Species diversity**: 
-   - Works best within a genus
-   - Can handle multiple genera if relatively related
-   - Not recommended for cross-phylum analyses
-
-### Parameter Selection Guidelines
-
-#### For Closely Related Species (ANI > 95%)
-```bash
-# Prep
-bofasa prep -i *.fasta -o prep/
-
-# Run
-bofasa run -i prep/ -o out/ \
-  -mi 1.4 \           # Higher MCL inflation
-  -fic 0.20 \         # Lower fixation cutoff
-  -dj 0.30 \          # Higher Jaccard threshold
-  -sr 15000           # Larger syntenic window
-```
-
-**Note:** Closely related species often have recent gene duplications with high sequence similarity. The protein-level phylogenetic refinement step is particularly important here, as paralogs may share nearly identical domain architectures. The automatic refinement will split these based on phylogenetic relationships.
-
-#### For Divergent Species (ANI < 85%)
-```bash
-# Prep  
-bofasa prep -i *.fasta -o prep/
-
-# Run
-bofasa run -i prep/ -o out/ \
-  -mi 1.1 \           # Lower MCL inflation
-  -us \               # Ultra-sensitive DIAMOND
-  -fic 0.30 \         # Higher fixation cutoff
-  -dj 0.20 \          # Lower Jaccard threshold
-  -qa \               # Quality alignments
-  -rs 3               # Multiple rooting attempts
-```
-
-#### For Draft/Incomplete Genomes
-```bash
-# Prep
-bofasa prep -i *.fasta -o prep/ -m  # Meta-mode
-
-# Run
-bofasa run -i prep/ -o out/ \
-  -fic 0.25 \         # Standard fixation cutoff
-  -sr 7500            # Smaller syntenic window
-```
-
-#### For Mobile Genetic Element Analysis
-```bash
-# Prep - Extract MGEs as separate entities
-bofasa prep -i *.fasta -o prep/ -rg -emg
-
-# Run - MGEs integrated via Step 1b
-bofasa run -i prep/ -o out/ \
-  -mi 1.0 \           # Lower inflation for distant MGE homologs
-  -fic 0.15 \         # More aggressive splitting
-  -sr 5000            # Smaller window (MGEs often lack synteny)
-```
-
-**MGE Analysis Notes:**
-- MGEs are excluded from initial OrthoFinder run (Step 1)
-- MGEs integrated in Step 1b via DIAMOND alignment against bacterial OGs
-- Conservative approach: conflicting assignments → singletons
-- Modified ortholog tables include MGE columns (`.ccds` suffix)
-- Unassigned MGE proteins remain as singletons in modified tables
-
-
----
-
-# Output Interpretation
-
-### Key Output Files
-
-1. **`Final_Results/Protein_Ortholog_Groups.tsv`**
-   - Tab-delimited protein-resolution ortholog group matrix
-   - Rows = refined protein-resolution ortholog groups
-   - Columns = genomes
-   - Values = comma-separated protein IDs
-
-2. **`Final_Results/Domain_Ortholog_Groups.tsv`**
-   - Tab-delimited domain-resolution ortholog group matrix
-   - Rows = refined domain-resolution ortholog groups
-   - Columns = genomes
-   - Values = comma-separated protein IDs
-
-3. **`Final_Results/Orthogroup_Overview.xlsx`**
-   - Summary statistics are shown per protein ortholog group
-
-4. **`Final_Results/Orthogroup_Conservation_vs_ContextEntropy.html`**
-   - Interactive scatter plot
-   - Identify core vs accessory genes
-   - Find syntenic vs mobile genes
-
----
+### Algorithm:
+1. Identify single-copy core ortholog groups (SCC-OGs)
+   - Present in ≥95% of genomes by default unless `-ns` modified.
+2. Align each SCC-OG
+3. Concatenate alignments and output multi-FASTA suitable for phylogenomics
 
 ## Key Citations
 
@@ -802,4 +467,3 @@ And the underlying tools:
 - **FastTree**: Price, M.N. et al. (2010) PLoS One (domain-level phylogeny)
 - **FastME**: Lefort, V. et al. (2015) Molecular Biology and Evolution (protein-level phylogeny)
 - **MUSCLE**: Edgar, R.C. (2022) Nature Communications
-
