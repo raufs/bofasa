@@ -11,7 +11,7 @@ dependencies = [
     "rich-argparse>=1.0.0",
     "plotly>=5.0.0",
     "xlsxwriter>=3.0.0",
-    "pyhmmer>=0.10.0",
+    "pyhmmer==0.11.1",
     "ete3>=3.1.0",
     "pyrodigal>=2.0.0",
 ]
