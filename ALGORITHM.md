@@ -328,9 +328,8 @@ For protein ortholog groups meeting refinement criteria (≥2 copies in any geno
    - Calculate pairwise cosine distances between protein domain vectors
    - Create distance matrix in PHYLIP format
 
-2. **Neighbor-joining tree construction**:
+2. **Coarse protein ortholog group tree construction**:
    - Build phylogenetic tree using FastME
-   - Tree reflects evolutionary relationships based on domain architecture
 
 3. **Tree-based splitting**:
    - Root tree at midpoint
