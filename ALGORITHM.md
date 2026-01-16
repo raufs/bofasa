@@ -326,7 +326,7 @@ For protein ortholog groups meeting refinement criteria (≥2 copies in any geno
 1. **Domain-based distance calculation**:
    - Represent each protein as a vector of domain ortholog group counts
    - Calculate pairwise cosine distances between protein domain vectors
-   - Create distance matrix in PHYLIP format
+   - Create cosine-distance matrix in PHYLIP format
 
 2. **Coarse protein ortholog group tree construction**:
    - Build phylogenetic tree using FastME
