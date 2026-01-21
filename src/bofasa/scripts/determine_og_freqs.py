@@ -401,7 +401,7 @@ def extract_og_pairs():
                     tot_samples += 1
                     if lts.strip() != '':
                         og_samples += 1
-                    if ',' in lts or ':' in lts:
+                    if ';' in lts or ':' in lts:
                         sc_flag = False
                         og_copy_counts.append(
                             len(
