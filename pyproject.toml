@@ -16,10 +16,6 @@ dependencies = [
     "pyrodigal>=2.0.0",
 ]
 
-[project.scripts]
-bofasa = "bofasa.main:main"
-extract_og_pairs = "bofasa.scripts.extract_og_pairs:extract_og_pairs"
-
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
@@ -31,7 +27,8 @@ script-files=["src/bofasa/scripts/extract_og_pairs.py",
               "src/bofasa/scripts/extract_genomad_proteomes.py",
               "src/bofasa/scripts/compare_og_pairs.py",
               "src/bofasa/scripts/determine_og_freqs.py",
-              "src/bofasa/scripts/list_og_matrix.py"]
+              "src/bofasa/scripts/list_og_matrix.py",
+              "src/bofasa/scripts/extract_focal_protein_dogs.py"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
