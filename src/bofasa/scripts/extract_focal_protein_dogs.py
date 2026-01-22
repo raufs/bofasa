@@ -223,14 +223,30 @@ def extract_focal_protein_dogs():
         sample_proteins_list = dog_data[dog_id]
         filtered_sample_data = []
 
-        for sample_proteins in sample_proteins_list:
+        for i, sample_proteins in enumerate(sample_proteins_list):
+            sample_name = samples[i]
+            # Remove any suffix from sample name (e.g., .ccds) to get base sample name
+            base_sample_name = sample_name.split('.')[0]
+            
             # Get domain chunks in this sample for this DOG
             domain_chunks = [p.strip() for p in sample_proteins.split(',') if p.strip()]
 
-            # Keep only domain chunks that have at least one focal DOG
-            filtered_chunks = [
-                dc for dc in domain_chunks if dc in domain_chunks_with_focal_dogs
-            ]
+            # Keep only domain chunks that:
+            # 1. Have at least one focal DOG
+            # 2. Belong to the current sample (first field matches base sample name)
+            filtered_chunks = []
+            for dc in domain_chunks:
+                if dc in domain_chunks_with_focal_dogs:
+                    # Verify the domain chunk belongs to this sample
+                    dc_parts = dc.split('|')
+                    if len(dc_parts) >= 1 and dc_parts[0] == base_sample_name:
+                        filtered_chunks.append(dc)
+                    else:
+                        # This shouldn't happen in properly formatted data, but log it
+                        sys.stderr.write(
+                            f"Warning: Domain chunk '{dc}' in column for sample '{sample_name}' "
+                            f"(base: '{base_sample_name}') has mismatched sample prefix '{dc_parts[0]}'\n"
+                        )
 
             # Join back with comma separation
             filtered_sample_data.append(', '.join(filtered_chunks))
