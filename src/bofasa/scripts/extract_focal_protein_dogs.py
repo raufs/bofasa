@@ -204,19 +204,23 @@ def extract_focal_protein_dogs():
             f"Found {len(focal_dogs)} domain ortholog groups containing the focal protein\n"
         )
 
-    # Step 2: Find all domain chunks that have at least one of the focal DOGs
-    domain_chunks_with_focal_dogs = set()
+    # Step 2: Find all base proteins (sample|protein) that have at least one of the focal DOGs
+    proteins_with_focal_dogs = set()  # Store as (sample, protein) tuples
     for dog_id in focal_dogs:
         sample_proteins_list = dog_data[dog_id]
         for sample_proteins in sample_proteins_list:
             domain_chunks = [p.strip() for p in sample_proteins.split(',') if p.strip()]
-            domain_chunks_with_focal_dogs.update(domain_chunks)
+            for dc in domain_chunks:
+                dc_parts = dc.split('|')
+                if len(dc_parts) >= 2:
+                    # Store the sample and protein name as a tuple
+                    proteins_with_focal_dogs.add((dc_parts[0], dc_parts[1]))
 
     sys.stderr.write(
-        f"Found {len(domain_chunks_with_focal_dogs)} domain chunks with at least one focal DOG\n"
+        f"Found {len(proteins_with_focal_dogs)} unique proteins with at least one focal DOG\n"
     )
 
-    # Step 3: Filter DOGs to only include those with focal DOGs and domain chunks with focal DOGs
+    # Step 3: Filter DOGs to only include domain chunks from proteins with focal DOGs
     filtered_dogs = {}
 
     for dog_id in focal_dogs:
@@ -231,22 +235,17 @@ def extract_focal_protein_dogs():
             # Get domain chunks in this sample for this DOG
             domain_chunks = [p.strip() for p in sample_proteins.split(',') if p.strip()]
 
-            # Keep only domain chunks that:
-            # 1. Have at least one focal DOG
-            # 2. Belong to the current sample (first field matches base sample name)
+            # Keep only domain chunks whose base protein has at least one focal DOG
             filtered_chunks = []
             for dc in domain_chunks:
-                if dc in domain_chunks_with_focal_dogs:
-                    # Verify the domain chunk belongs to this sample
-                    dc_parts = dc.split('|')
-                    if len(dc_parts) >= 1 and dc_parts[0] == base_sample_name:
+                dc_parts = dc.split('|')
+                if len(dc_parts) >= 2:
+                    dc_sample = dc_parts[0]
+                    dc_protein = dc_parts[1]
+                    
+                    # Only keep if this protein has at least one focal DOG
+                    if (dc_sample, dc_protein) in proteins_with_focal_dogs:
                         filtered_chunks.append(dc)
-                    else:
-                        # This shouldn't happen in properly formatted data, but log it
-                        sys.stderr.write(
-                            f"Warning: Domain chunk '{dc}' in column for sample '{sample_name}' "
-                            f"(base: '{base_sample_name}') has mismatched sample prefix '{dc_parts[0]}'\n"
-                        )
 
             # Join back with comma separation
             filtered_sample_data.append(', '.join(filtered_chunks))
