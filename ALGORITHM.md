@@ -203,7 +203,8 @@ Refined Domain Ortholog Groups
 
 **Algorithm:**
 For each **coarse domain-resolution ortholog group**:
-   - Build multiple sequence alignment (default: MUSCLE).
+   - Build multiple sequence alignment (default: MUSCLE in `super5` mode).
+   - Trim MSA using trimAl (in `strict` mode).
    - Construct phylogenetic tree (default: FastTree2).
    - Apply midpoint-rooting. If `-rs N` flag is specified, then root the tree randomly _N_-1 amount of times and once using midpoint. 
    - Partition phylogeny into **refined domain-resolution ortholog groups** using using bofasa's recursive algorithm.
