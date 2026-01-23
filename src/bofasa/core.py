@@ -252,6 +252,7 @@ def determine_protein_orthogroups(
                             tot += 1
                             if lt.split('|')[2] == 'inter-domain_region':
                                 idr += 1
+                                
                     idr_prop = idr/float(tot)
                     if idr_prop >= 0.8:
                         largely_idr_dogs.add(dog)
@@ -1001,18 +1002,18 @@ def split_njt(input: List[Any]) -> None:
                 samples_with_og.add(s)
                 leafs.add(n.name)
 
-        if len(leafs) < 3: 
+        if len(leafs) < 3:
             return
-        if len(samples_with_og) == 1: 
+        if len(samples_with_og) == 1:
             return
 
         R = t.get_midpoint_outgroup()
         t.set_outgroup(R)
         sp = recursive_splitting(t, samples_with_og, are_proteins=True)
-        sp_refined = further_split_outlier_artifact_groups(t, sp)
-        sp_further_split = further_split_disjoint_dog_partitions(t, sp_refined)
+        sp_further_split = further_split_disjoint_dog_partitions(t, sp)
+        sp_refined = further_split_outlier_artifact_groups(t, sp_further_split)
         spl_outf = open(spl_file, 'w')
-        for spi in sp_further_split:
+        for spi in sp_refined:
             spl_outf.write(' '.join(sorted(spi)) + '\n')
         spl_outf.close()
         return
@@ -1053,8 +1054,14 @@ def further_split_outlier_artifact_groups(rooted_t: Tree, sps: List[Set[str]]) -
                     union_count = 0
                     intersect_count = 0
                     for d in union_dogs:
-                        union_count += p1dogs[d] + p2dogs[d] - min([p1dogs[d], p2dogs[d]])
-                        intersect_count += min([p1dogs[d], p2dogs[d]])
+                        p1dc = 0
+                        p2dc = 0
+                        if d in p1dogs:
+                            p1dc = p1dogs[d]
+                        if d in p2dogs:
+                            p2dc = p2dogs[d]
+                        union_count += p1dc + p2dc - min([p1dc, p2dc])
+                        intersect_count += min([p1dc, p2dc])
 
                     if union_count > 0:
                         jaccard_index = intersect_count/union_count
@@ -1071,8 +1078,14 @@ def further_split_outlier_artifact_groups(rooted_t: Tree, sps: List[Set[str]]) -
                     union_count = 0
                     intersect_count = 0
                     for d in union_dogs:
-                        union_count += p1dogs[d] + p2dogs[d] - min([p1dogs[d], p2dogs[d]])
-                        intersect_count += min([p1dogs[d], p2dogs[d]])
+                        p1dc = 0
+                        p2dc = 0
+                        if d in p1dogs:
+                            p1dc = p1dogs[d]
+                        if d in p2dogs:
+                            p2dc = p2dogs[d]
+                        union_count += p1dc + p2dc - min([p1dc, p2dc])
+                        intersect_count += min([p1dc, p2dc])
 
                     if union_count > 0:
                         jaccard_index = intersect_count/union_count
