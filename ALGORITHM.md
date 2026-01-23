@@ -336,7 +336,12 @@ For protein ortholog groups meeting refinement criteria (≥2 copies in any geno
    - Apply recursive splitting at duplication nodes (uses same recusive function as for domain-resolution OG splitting)
        - Note, however, that there is a slight difference for domain-resolution and protein-resolution recursive splitting. Namely, for proteins, we stop only if the branch length sum = 0 (identical) whereas for domains we stop if branch length ≤ threshold. This is inorder to account for pseudovalues added by FastTree 2.          
 
-4. **Outlier artifact removal**:
+4. **Monophyletic enforcement**:
+   - Check if each split group forms a monophyletic clade
+   - If non-monophyletic, further split into largest monophyletic sub-clades
+   - Ensures evolutionary coherence within final ortholog groups
+
+5. **Outlier artifact removal**:
    - For each protein in a split group:
      - Calculate max Jaccard similarity to proteins within the group
      - Calculate max Jaccard similarity to proteins outside the group
@@ -345,11 +350,6 @@ For protein ortholog groups meeting refinement criteria (≥2 copies in any geno
 
 > [!NOTE]
 > When calculating Jaccard similarity between proteins based on domain-resolution ortholog groups (DOGs) for outlier detection, DOGs that are largely (>80%) inter-domain regions (IDR) are included to provide higher resolution. However, for initial aggregation of proteins into coarse protein ortholog groups, the Jaccard similarity indices measured does not account for DOGs as they might contribute noise.
-
-5. **Monophyletic enforcement**:
-   - Check if each split group forms a monophyletic clade
-   - If non-monophyletic, further split into largest monophyletic sub-clades
-   - Ensures evolutionary coherence within final ortholog groups
 
 **Key Parameters:**
 - `-dj, --dog-jaccard` (default: 0.5): Jaccard similarity threshold for initial clustering
