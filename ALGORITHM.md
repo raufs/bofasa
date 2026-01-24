@@ -287,10 +287,7 @@ Re-assesses each internal node of coarse ortholog group phylogenies that include
   - Best partioning is selected based on scoring:
      - Sort by: (1) tree score, (2) number of groups, (3) total branch length and choose partition with lowest combined score
   
-- `-qa, --quality-alignments`: Use high-quality alignment settings
-  - MAFFT instead of MUSCLE
-  - IQ-TREE instead of FastTree2
-  - Much slower but should lead to higher quality results
+- `--more-deterministic`: Run sequence alignments via MUSCLE sequentially using 1 thread to make more deterministic, based on discussion: https://github.com/rcedgar/muscle/issues/95
 
 ## Step 4: Protein Ortholog Group Determination
 
