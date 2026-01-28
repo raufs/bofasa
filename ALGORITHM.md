@@ -274,8 +274,8 @@ Re-assesses each internal node of coarse ortholog group phylogenies that include
   - Much faster but less accurate
   
 - `-fic`, `--fixation-index-cutoff` (default: 0.1): Minimum FST to accept a split
-  - Lower values (0.1-0.24): More re-merging
-  - Higher values (0.26-1.0): Less re-merging
+  - Lower values (0.0-0.09): More re-merging
+  - Higher values (0.11-1.0): Less re-merging
   
 - `-smb, --skip-merge-back`: Skip merge-back assessment
   - Faster but may over-split ortholog groups
