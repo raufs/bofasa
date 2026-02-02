@@ -414,6 +414,7 @@ def extract_og_pairs():
                     elif lts.strip() != '':
                         og_copy_counts.append(1)
                 tot_proteins = sum(og_copy_counts)
+                proteins_in_ogs += tot_proteins
                 median_proteins = statistics.median(og_copy_counts)
                 scc_flag = False
                 if sc_flag == True and og_samples / tot_samples == 1.0:
