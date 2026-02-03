@@ -2,3 +2,4 @@ High-priority changes for next version:
 
 - make clear in manuscript that deterministic behavior relies on constant Pfam database (download release notes for version tracking https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/relnotes.txt)
 - restrict thread usage for hmmbuild when using -ogc
+- bring back filtering of Accessory Genes in ISFinder database to avoid false positives
