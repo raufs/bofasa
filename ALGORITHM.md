@@ -425,11 +425,11 @@ You can also use the option `-ogc` option to generate a multi-FASTA containing c
 
 ### Premise:
 
-Construct a concatenated multi-FASTA alignment of the strict or loose single-copy-core genome for downstream phylogenomics.
+Construct a concatenated multi-FASTA alignment of the strict or loose single-copy-core genome for downstream phylogenomics. It uses domain-resolution ortholog groups. 
 
 ### Key Parameter:
 - `-cg, --core-genome`: Construct concatenated core genome alignment
-- `-ns, --near-scc-prop` (default: 0.95): Minimum proportion of genomes for an ortholog group to be considered part of the single-copy-core.
+- `-ns, --near-scc-prop` (default: 0.95): Minimum proportion of genomes for a domain ortholog group to be considered part of the single-copy-core.
   - Lower values (0.80-0.90): More permissive, more genes
   - Higher values (0.98-1.00): Stricter core, fewer genes
 
@@ -446,7 +446,7 @@ Construct a concatenated multi-FASTA alignment of the strict or loose single-cop
 
 When using BOFASA, please cite:
 
-> Salamzade, R., Kottapalli, A., & Kalan, L. (2025). bofasa: high-quality orthology inference across multiple bacterial species.
+> Salamzade, R., Yaffe E., Kottapalli, A., Relman, D. & Kalan, L. (2025). bofasa: high-quality orthology inference across multiple bacterial species.
 
 And the underlying tools:
 - **OrthoFinder**: Emms, D.M. & Kelly, S. (2019) Genome Biology
