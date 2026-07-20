@@ -434,12 +434,12 @@ Construct a concatenated multi-FASTA alignment of the strict or loose single-cop
   - Higher values (0.98-1.00): Stricter core, fewer genes
 
 > [!IMPORTANT]
-> An ortholog group can still be considered part of the loose single-copy-core (`-ns` <1.0) when genomes have multiple copies of it. These are ignored similar to the absence of the gene in other genomes. For instance, if your dataset has 100 genomes and 97 of the genomes have the focal ortholog group in single-copy, but 2 genomes lack it and 1 genome has two copies of the ortholog group, if `-ns` >= 0.97, then it is still considered part of the scc and treated as absent in that 1 genome with paralogs. **Also, if you are _not_ using a strict core genome (`-ns` set to 1.0), we recommend that you use a partition-based approach for phylogeny modeling and using the individual ortholog group alignments folder as input to IQ-TREE instead of the concatenated multi-FASTA file..**
+> An ortholog group can still be considered part of the loose single-copy-core (`-ns` <1.0) when genomes have multiple copies of it. These are ignored similar to the absence of the gene in other genomes. For instance, if your dataset has 100 genomes and 97 of the genomes have the focal ortholog group in single-copy, but 2 genomes lack it and 1 genome has two copies of the ortholog group, if `-ns` >= 0.97, then it is still considered part of the scc and treated as absent in that 1 genome with paralogs. **Also, if you are _not_ using a strict core genome (`-ns` set to 1.0), we recommend that you use a partition-based approach for phylogeny modeling and using the individual ortholog group alignments folder as input to IQ-TREE instead of the concatenated multi-FASTA file.**
   
 ### Algorithm:
-1. Identify single-copy core ortholog groups (SCC-OGs)
+1. Identify single-copy core ortholog groups (SCC-DOGs)
    - Present in ≥95% of genomes by default unless `-ns` modified.
-2. Align each SCC-OG
+2. Align each SCC-DOG
 3. Concatenate alignments and output multi-FASTA suitable for phylogenomics
 
 ## Key Citations
