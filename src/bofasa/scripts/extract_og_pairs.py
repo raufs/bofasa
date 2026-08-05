@@ -319,7 +319,7 @@ def extract_og_pairs():
 
         sample_ids_in_order = defaultdict(list)
         for f in os.listdir(pirate_input_dir):
-            s = '_'.join(f.split('.')[:-1])
+            s = '_'.join(f.split('.')[:-1]).replace('-', '_')
             with open(pirate_input_dir + f) as ogff:
                 for line in ogff:
                     if line.startswith('#'):
