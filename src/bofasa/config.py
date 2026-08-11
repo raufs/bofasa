@@ -68,9 +68,6 @@ DEFAULT_MIN_LENGTH: int = 20
 MIN_MEMORY_LIMIT: int = 4
 MAX_MEMORY_LIMIT: int = 256
 
-# File size limits (in MB)
-MAX_FILE_SIZE: int = 1024 * 1024 * 1024  # 1GB
-
 # Logging configuration
 LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 LOG_LEVEL: str = "INFO"
