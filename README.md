@@ -10,7 +10,7 @@ bofasa is specifically designed for investigating orthology between multiple-spe
 
 For single species analyses, we recommend [Panaroo](https://github.com/gtonkinhill/panaroo) or [PPanGGOLiN](https://github.com/labgem/PPanGGOLiN), which for such cases, offers considerable advantages in terms of speed, accuracy, and scalability.
 
-Comparable and good alternatives to bofasa include [PIRATE](https://github.com/SionBayliss/PIRATE) and [SCARAP](https://github.com/SWittouck/SCARAP). PIRATE performs similarly to bofasa when applied to genomes representative of different species from a single genus when using default parameters. SCARAP behaves more similar to non-bacteria specific multi-species orthology inference software such as OrthoFinder and SonicParanoid and is really fast and could be well-suited for more comprehensive and large-scale analysis.
+Comparable and good alternatives to bofasa include [PIRATE](https://github.com/SionBayliss/PIRATE) and [SCARAP](https://github.com/SWittouck/SCARAP). PIRATE performs similarly to bofasa when applied to genomes representative of different species from a single genus when using default parameters. SCARAP behaves more similar to non-bacteria specific multi-species orthology inference software such as OrthoFinder and SonicParanoid and is really fast and could be well-suited for more comprehensive and large-scale analysis. 
 
 ## Quick Start
 
@@ -80,6 +80,9 @@ Examples:
 
 For more information, visit: https://github.com/raufs/bofasa
 ```
+
+> [!NOTE]
+> The concepts in bofasa were developed over many years and the initial release (v1.1.0) developed without the use of AI. For version v1.2.0, we used AI to largely restructure the code and in the process caught some bugs and added a couple optimizations/bells and whistles. Moving forward, we will likely use some AI because its engraved into search engines but will largely try to refrain from relying on it to have a sense of the code so that it is not yet another black box.
 
 ### Subcommands
 
