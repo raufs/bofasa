@@ -10,7 +10,7 @@ bofasa is specifically designed for investigating orthology between multiple-spe
 
 For single species analyses, we recommend [Panaroo](https://github.com/gtonkinhill/panaroo) or [PPanGGOLiN](https://github.com/labgem/PPanGGOLiN), which for such cases, offers considerable advantages in terms of speed, accuracy, and scalability.
 
-Comparable and good alternatives to bofasa include [PIRATE]() and [SCARAP](). PIRATE performs similarly to bofasa when applied to genomes representative different species from a single genus with the default parameters. SCARAP performs more different than PIRATE and bofasa and behaves more similar to non-bacteria specific multi-species orthology inference software such as OrthoFinder and SonicParanoid. However, SCARAP is really fast and so if you value doing a more comprehensive and large-scale analysis it is pretty well-suited. 
+Comparable and good alternatives to bofasa include [PIRATE](https://github.com/SionBayliss/PIRATE) and [SCARAP](https://github.com/SWittouck/SCARAP). PIRATE performs similarly to bofasa when applied to genomes representative different species from a single genus with the default parameters. SCARAP performs more different than PIRATE and bofasa and behaves more similar to non-bacteria specific multi-species orthology inference software such as OrthoFinder and SonicParanoid. However, SCARAP is really fast and so if you value doing a more comprehensive and large-scale analysis it is pretty well-suited. 
 
 ## Quick Start
 
@@ -154,17 +154,6 @@ bofasa --version
 
 bofasa also provides several additional utility scripts:
 
-### Analysis Scripts
-- `extract_og_pairs` - Extract ortholog group pairs for method comparison
-- `extract_scc_og_pairs` - Extract single-copy-core ortholog group pairs
-- `compare_og_pairs` - Compare ortholog group pairs between methods
-- `determine_og_freqs` - Determine ortholog group frequencies
-- `print_og_itol_matrix` - Print ortholog group matrices for iTOL visualization
-
-### Setup Scripts
-- `setup_annotation_dbs` - Setup annotation databases
-
-### Analysis Scripts
 - `extract_og_pairs` - Extract ortholog group pairs for method comparison
 - `extract_scc_og_pairs` - Extract single-copy-core ortholog group pairs
 - `compare_og_pairs` - Compare ortholog group pairs between methods
@@ -179,13 +168,10 @@ For detailed information on bofasa, see the `ALGORITHM.md` document.
 
 ## Citation
 
-> ***bofasa: high-quality orthology inference across multiple bacterial species.*** Rauf Salamzade, Aamuktha Kottapalli, Lindsay Kalan, 2025.
+> ***High-quality and automated inference of ortholog groups across multiple bacterial species using bofasa.***
+> Rauf Salamzade, Eitan Yaffe, Aamuktha Kottapalli, David Relman, Lindsay Kalan, 2026.
 
-Please also consider citing both ***OrthoFinder2*** and ***geNomad*** which are used for determination of coarse domain ortholog groups and the annotation of phages/plasmids, respectively.
-
-## Funding acknowledgment
-
-This project has been funded in whole or in part with Federal funds from the National Institute of Allergy and Infectious Diseases, National Institutes of Health.
+Please also consider citing both ***OrthoFinder 2*** and ***geNomad*** which are used for determination of coarse domain ortholog groups and the annotation of phages/plasmids, respectively.
 
 ## License
 
