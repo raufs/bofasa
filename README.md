@@ -12,36 +12,21 @@
 <img src="https://github.com/user-attachments/assets/11fa592f-656e-4578-93b8-17f8dc36f6c2" width="400">
 </p>
 
+## Table of Contents
+
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Usage](#usage)
+- [Additional Scripts](#additional-scripts)
+- [Documentation](#documentation)
+- [Citation](#citation)
+- [License](#license)
+
 bofasa is specifically designed for investigating orthology between multiple-species of bacteria. It prioritizes high-quality orthology inference at the expense of throughput, designed to run on between 4 and 200 genomes.
 
 For single species analyses, we recommend [Panaroo](https://github.com/gtonkinhill/panaroo) or [PPanGGOLiN](https://github.com/labgem/PPanGGOLiN), which for such cases, offers considerable advantages in terms of speed, accuracy, and scalability.
 
 Comparable and good alternatives to bofasa include [PIRATE](https://github.com/SionBayliss/PIRATE) and [SCARAP](https://github.com/SWittouck/SCARAP). PIRATE performs similarly to bofasa when applied to genomes representative of different species from a single genus when using default parameters. SCARAP behaves more similar to non-bacteria specific multi-species orthology inference software such as OrthoFinder and SonicParanoid and is really fast and could be well-suited for more comprehensive and large-scale analysis. 
-
-## Quick Start
-
-bofasa provides a unified command-line interface with two main subcommands: **`bofasa prep`** and **`bofasa run`**.
-
-### 0. Setup databases (Pfam, geNomad, and ISFinder; *needs to be done only once!*)
-
-```bash
-bofasa setup
-```
-
-> [!NOTE]
-> To aid reproducability between two runs, please ensure you are using the same version of the Pfam-A database!
-
-### 1. Prepare Input Data
-
-```bash
-bofasa prep -i genome1.fasta genome2.fasta genome3.fasta genome4.fasta -o prep_output/
-```
-
-### 2. Run Analysis
-
-```bash
-bofasa run -i prep_output/ -o analysis_output/ -c 8
-```
 
 ## Installation
 
@@ -105,6 +90,31 @@ bash run_tests.sh
 > [!NOTE]
 > `bofasa setup` should already have been run. Also, the above will work for conda, but dataset can be downloaded and adapted to test docker installation too!
 
+## Quick Start
+
+bofasa provides a unified command-line interface with two main subcommands: **`bofasa prep`** and **`bofasa run`**.
+
+### 0. Setup databases (Pfam, geNomad, and ISFinder; *needs to be done only once!*)
+
+```bash
+bofasa setup
+```
+
+> [!NOTE]
+> To aid reproducability between two runs, please ensure you are using the same version of the Pfam-A database!
+
+### 1. Prepare Input Data
+
+```bash
+bofasa prep -i genome1.fasta genome2.fasta genome3.fasta genome4.fasta -o prep_output/
+```
+
+### 2. Run Analysis
+
+```bash
+bofasa run -i prep_output/ -o analysis_output/ -c 8
+```
+
 ## Usage
 
 ### Main Interface
@@ -164,6 +174,7 @@ bofasa prep -i <genome1.fasta> <genome2.gbk> ... -o <output-dir> [OPTIONS]
 - `-rg, --run-genomad`: Run genomad for phage/plasmid annotation
 - `-emg, --extract-mge-genomes`: Extract mobile genetic element (phage/plasmid) genomes identified by genomad (requires -rg)
 - `-mm, --max-memory`: Memory limit in GB (default: 32)
+- `-y, --auto`: Automatically set `y` for all interactive prompts
 
 #### `bofasa run` - Execute Analysis
 Performs the main orthology analysis on prepared data.
@@ -192,24 +203,7 @@ bofasa run -i <bofasa-prep-dir> -o <output-dir> [OPTIONS]
 - `-c, --threads`: Number of threads (default: 4)
 - `-mrd, --max-recursion-depth`: Max recursion depth (default: 5000)
 - `-mm, --max-memory`: Memory limit in GB (default: 32)
-
-### Examples
-
-```bash
-# Prepare input data
-bofasa prep -i genome1.fasta genome2.gbk genome3.fasta -o prep_output -c 8
-
-# Run analysis with custom parameters
-bofasa run -i prep_output -o analysis_output -c 8 -mm 64 -cg -ogc
-
-# Get help
-bofasa --help
-bofasa prep --help
-bofasa run --help
-
-# Get version
-bofasa --version
-```
+- `-y, --auto`: Automatically set `y` for all interactive prompts
 
 ## Additional Scripts
 
