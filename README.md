@@ -4,7 +4,7 @@
 [![Anaconda-Server Badge](https://anaconda.org/bioconda/bofasa/badges/latest_release_relative_date.svg)](https://anaconda.org/bioconda/bofasa)
 [![Anaconda-Server Badge](https://anaconda.org/bioconda/bofasa/badges/license.svg)](https://anaconda.org/bioconda/bofasa)
 [![Anaconda-Server Badge](https://anaconda.org/bioconda/bofasa/badges/downloads.svg)](https://anaconda.org/bioconda/bofasa)
-[![Docker](https://img.shields.io/badge/Docker-DockerHub-darkred?style=flat-square&maxAge=2678400)](https://quay.io/repository/biocontainers/bofasa?tab=info)
+[![Docker](https://img.shields.io/badge/Docker-Biocontainer-darkred?style=flat-square&maxAge=2678400)](https://quay.io/repository/biocontainers/bofasa?tab=info)
 
 **B**acterial **O**rthology **F**inding **A**nd **S**yntenic **A**nalysis (**bofasa**)
 
