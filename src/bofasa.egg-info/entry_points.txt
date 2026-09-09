@@ -1,0 +1,2 @@
+[console_scripts]
+bofasa = bofasa.main:main

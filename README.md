@@ -16,6 +16,15 @@ Comparable and good alternatives to bofasa include [PIRATE](https://github.com/S
 
 bofasa provides a unified command-line interface with two main subcommands:
 
+### 0. Setup databases (Pfam, geNomad, and ISFinder; *needs to be done only once!*)
+
+```bash
+bofasa setup
+```
+
+> [!NOTE]
+> To aid reproducability between two runs, please ensure you are using the same version of the Pfam-A database!
+
 ### 1. Prepare Input Data
 ```bash
 bofasa prep -i genome1.fasta genome2.fasta genome3.fasta genome4.fasta -o prep_output
