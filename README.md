@@ -53,8 +53,7 @@ bofasa -h
 
 ```bash
 pixi init /path/to/bofasa_env/
-cd /path/to/bofasa_env/
-pixi add bofasa
+pixi add -m /path/to/bofasa_env/ bofasa
 pixi shell -m /path/to/bofasa_env/
 bofasa setup
 
@@ -86,9 +85,13 @@ Here, `/path/to/dbs/` is the actual location on your computer where to store the
 
 ### Test Installation:
 
-If using conda:
+```bash
+# get test dataset and testing script from bofasa Github repo:
+wget 
+```
 
-If use 
+> [!NOTE]
+> `bofasa setup` should already have been run. Also, the above will work for conda, but dataset can be downloaded and adapted to test docker installation too!
 
 ## Usage
 
