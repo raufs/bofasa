@@ -1,6 +1,10 @@
 # bofasa
 [![Anaconda-Server Badge](https://anaconda.org/bioconda/bofasa/badges/version.svg)](https://anaconda.org/bioconda/bofasa)
 [![Anaconda-Server Badge](https://anaconda.org/bioconda/bofasa/badges/latest_release_date.svg)](https://anaconda.org/bioconda/bofasa)
+[![Anaconda-Server Badge](https://anaconda.org/bioconda/bofasa/badges/latest_release_relative_date.svg)](https://anaconda.org/bioconda/bofasa)
+[![Anaconda-Server Badge](https://anaconda.org/bioconda/bofasa/badges/license.svg)](https://anaconda.org/bioconda/bofasa)
+[![Anaconda-Server Badge](https://anaconda.org/bioconda/bofasa/badges/downloads.svg)](https://anaconda.org/bioconda/bofasa)
+[![Docker](https://img.shields.io/badge/Docker-DockerHub-darkred?style=flat-square&maxAge=2678400)](https://quay.io/repository/biocontainers/bofasa?tab=info)
 
 **B**acterial **O**rthology **F**inding **A**nd **S**yntenic **A**nalysis (**bofasa**)
 
@@ -64,7 +68,7 @@ bofasa -h
 
 ### Docker (*via Biocondainters*)
 
-*In process of being developed.*
+*In the process of being developed.*
 
 <!-- 
 To get a Docker image from Quay.IO/Biocontainers, you can do something like the following, *note the platform designation might need to be adapted to your particular machine.* 
