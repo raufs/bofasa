@@ -13,13 +13,17 @@ import statistics
 import subprocess
 import sys
 import traceback
+import warnings
 from collections import defaultdict
 from operator import itemgetter
 from typing import Any, Dict, List, Set, Tuple, Union
 import concurrent.futures
 import numpy as np
 from Bio import SeqIO
-from ete3 import Tree
+with warnings.catch_warnings():
+    # ete3 3.1.3 emits SyntaxWarnings for invalid escape sequences on Python 3.12+
+    warnings.simplefilter('ignore', SyntaxWarning)
+    from ete3 import Tree
 from scipy.spatial import distance
 from . import config
 from .utils import get_version, setup_ready_directory, run_cmd, _iter_progress

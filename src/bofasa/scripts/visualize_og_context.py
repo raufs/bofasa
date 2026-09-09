@@ -40,6 +40,7 @@ import subprocess
 import sys
 import pickle
 import re
+import warnings
 from collections import defaultdict
 from typing import Dict, List, Set, Tuple, Optional
 
@@ -812,7 +813,9 @@ def modify_tree_for_paralogs(tree_file: str, context_data: Dict, output_file: st
         # Write modified tree, then midpoint-root it via ete3
         Phylo.write(tree, output_file, 'newick')
         try:
-            from ete3 import Tree as EteTree
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', SyntaxWarning)
+                from ete3 import Tree as EteTree
             _et = EteTree(output_file)
             _et.set_outgroup(_et.get_midpoint_outgroup())
             _et.write(outfile=output_file, format=1)
@@ -851,7 +854,9 @@ def write_context_heatmap(context_data: Dict, og_colors: Dict, focal_og: str,
                             those present in context_data.
     """
     try:
-        from ete3 import Tree as EteTree, TreeStyle, RectFace, TextFace, NodeStyle, faces
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', SyntaxWarning)
+            from ete3 import Tree as EteTree, TreeStyle, RectFace, TextFace, NodeStyle, faces
     except ImportError:
         sys.stderr.write("Warning: ete3 not available. Skipping heatmap PNG.\n")
         return

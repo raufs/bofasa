@@ -16,7 +16,8 @@ from .utils import setup_ready_directory
 
 
 def setup_annotation_databases(
-    output_dir: str, threads: int = config.DEFAULT_THREADS, force: bool = False
+    output_dir: str, threads: int = config.DEFAULT_THREADS, force: bool = False,
+    auto: bool = False
 ) -> None:
     """
     Setup annotation databases.
@@ -25,6 +26,7 @@ def setup_annotation_databases(
         output_dir: Output directory for databases
         threads: Number of threads to use
         force: Whether to force overwrite existing databases
+        auto: Whether to automatically answer 'yes' to interactive prompts
 
     Returns:
         None: Creates databases in output directory
@@ -36,7 +38,9 @@ def setup_annotation_databases(
         )
         sys.stdout.write("This setup process may overwrite existing database files.\n")
 
-        if not force:
+        if auto and not force:
+            sys.stdout.write("--auto specified: continuing with setup...\n")
+        elif not force:
             while True:
                 response = (
                     input(

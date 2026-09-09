@@ -372,6 +372,13 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
         "--more-deterministic",
         action="store_true",
         help="Use more deterministic settings for reproducible results.")
+    parser.add_argument(
+        "-y",
+        "--auto",
+        action="store_true",
+        help="Automatically answer 'yes' to all interactive prompts. Useful for\n"
+        "non-interactive/batch execution.",
+    )
 
 
 def add_prep_arguments(parser: argparse.ArgumentParser) -> None:
@@ -461,6 +468,13 @@ def add_prep_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Extract plasmids and phages identified by geNomad as separate genome files for downstream analysis.",
     )
+    parser.add_argument(
+        "-y",
+        "--auto",
+        action="store_true",
+        help="Automatically answer 'yes' to all interactive prompts. Useful for\n"
+        "non-interactive/batch execution.",
+    )
 
 
 def add_setup_annotation_dbs_arguments(parser: argparse.ArgumentParser) -> None:
@@ -482,6 +496,13 @@ def add_setup_annotation_dbs_arguments(parser: argparse.ArgumentParser) -> None:
         "Use with caution as this will delete existing data.",
         required=False,
         default=False,
+    )
+    parser.add_argument(
+        "-y",
+        "--auto",
+        action="store_true",
+        help="Automatically answer 'yes' to all interactive prompts. Useful for\n"
+        "non-interactive/batch execution.",
     )
 
 
@@ -519,17 +540,20 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
         sys.stdout.write(f"\nWARNING: The output directory '{args.output_dir}' already exists and contains files!\n")
         sys.stdout.write("This process may overwrite existing files.\n")
-        
-        while True:
-            response = input("Do you want to continue and potentially overwrite existing files? (y/N): ").strip().lower()
-            if response in ['y', 'yes']:
-                sys.stdout.write("Continuing with existing output directory...\n")
-                break
-            elif response in ['n', 'no', '']:
-                sys.stdout.write("Exiting. Please choose a different output directory or remove existing files.\n")
-                sys.exit(1)
-            else:
-                sys.stdout.write("Please enter 'y' for yes or 'n' for no.\n")
+
+        if args.auto:
+            sys.stdout.write("--auto specified: continuing with existing output directory...\n")
+        else:
+            while True:
+                response = input("Do you want to continue and potentially overwrite existing files? (y/N): ").strip().lower()
+                if response in ['y', 'yes']:
+                    sys.stdout.write("Continuing with existing output directory...\n")
+                    break
+                elif response in ['n', 'no', '']:
+                    sys.stdout.write("Exiting. Please choose a different output directory or remove existing files.\n")
+                    sys.exit(1)
+                else:
+                    sys.stdout.write("Please enter 'y' for yes or 'n' for no.\n")
 
     # Debug: print(args.threads)  # Removed debug print
 
@@ -1087,17 +1111,20 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
         sys.stdout.write(f"\nWARNING: The output directory '{args.output_dir}' already exists and contains files!\n")
         sys.stdout.write("This process may overwrite existing files.\n")
-        
-        while True:
-            response = input("Do you want to continue and potentially overwrite existing files? (y/N): ").strip().lower()
-            if response in ['y', 'yes']:
-                sys.stdout.write("Continuing with existing output directory...\n")
-                break
-            elif response in ['n', 'no', '']:
-                sys.stdout.write("Exiting. Please choose a different output directory or remove existing files.\n")
-                sys.exit(1)
-            else:
-                sys.stdout.write("Please enter 'y' for yes or 'n' for no.\n")
+
+        if args.auto:
+            sys.stdout.write("--auto specified: continuing with existing output directory...\n")
+        else:
+            while True:
+                response = input("Do you want to continue and potentially overwrite existing files? (y/N): ").strip().lower()
+                if response in ['y', 'yes']:
+                    sys.stdout.write("Continuing with existing output directory...\n")
+                    break
+                elif response in ['n', 'no', '']:
+                    sys.stdout.write("Exiting. Please choose a different output directory or remove existing files.\n")
+                    sys.exit(1)
+                else:
+                    sys.stdout.write("Please enter 'y' for yes or 'n' for no.\n")
 
     # Check genomad setup early in the workflow
     sys.stdout.write("Checking genomad setup...\n")
@@ -1106,10 +1133,13 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
         sys.stdout.write(f"Warning: {genomad_message}\n")
         sys.stdout.write("genomad is required for phage/plasmid annotation in the analysis step.\n")
         sys.stdout.write("You can continue with prep, but the analysis step may fail.\n")
-        response = input("Do you want to continue with prep anyway? (y/N): ")
-        if response.lower() not in ['y', 'yes']:
-            sys.stdout.write("Exiting. Please run 'bofasa setup' first to configure genomad.\n")
-            sys.exit(1)
+        if args.auto:
+            sys.stdout.write("--auto specified: continuing with prep.\n")
+        else:
+            response = input("Do you want to continue with prep anyway? (y/N): ")
+            if response.lower() not in ['y', 'yes']:
+                sys.stdout.write("Exiting. Please run 'bofasa setup' first to configure genomad.\n")
+                sys.exit(1)
         sys.stdout.write("Continuing with prep despite genomad issues...\n")
     else:
         sys.stdout.write("✓ genomad is properly set up\n")
@@ -1721,7 +1751,7 @@ def run_setup_annotation_dbs(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     try:
-        setup_annotation_databases(output_dir, args.threads, args.force)
+        setup_annotation_databases(output_dir, args.threads, args.force, args.auto)
     except Exception as e:
         sys.stdout.write(f"Error during setup annotation databases: {str(e)}\n")
         raise
