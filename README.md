@@ -1,4 +1,6 @@
 # bofasa
+[![Anaconda-Server Badge](https://anaconda.org/bioconda/bofasa/badges/version.svg)](https://anaconda.org/bioconda/bofasa)
+[![Anaconda-Server Badge](https://anaconda.org/bioconda/bofasa/badges/latest_release_date.svg)](https://anaconda.org/bioconda/bofasa)
 
 **B**acterial **O**rthology **F**inding **A**nd **S**yntenic **A**nalysis (**bofasa**)
 
@@ -14,7 +16,7 @@ Comparable and good alternatives to bofasa include [PIRATE](https://github.com/S
 
 ## Quick Start
 
-bofasa provides a unified command-line interface with two main subcommands:
+bofasa provides a unified command-line interface with two main subcommands: **`bofasa prep`** and **`bofasa run`**.
 
 ### 0. Setup databases (Pfam, geNomad, and ISFinder; *needs to be done only once!*)
 
@@ -39,22 +41,54 @@ bofasa run -i prep_output -o analysis_output -c 8
 
 ### Bioconda
 
-**_Coming soon ..._**
+```bash
+conda create -c conda-forge -c bioconda -p /path/to/bofasa_env/ bofasa
+conda activate /path/to/bofasa_env/
+bofasa setup
 
-### Conda 
+bofasa -h
+```
+
+### Pixi 
 
 ```bash
-# git clone repository
-git clone https://github.com/your-repo/bofasa.git
-cd bofasa
+pixi init /path/to/bofasa_env/
+cd /path/to/bofasa_env/
+pixi add bofasa
+pixi shell -m /path/to/bofasa_env/
+bofasa setup
 
-# create conda environment and activate it
-conda env create -f bofasa_env.yml -n bofasa
-conda activate bofasa
-
-# pip install the program
-pip install -e .
+bofasa -h
 ```
+
+### Docker (*via Biocondainters*)
+
+To get a Docker image from Quay.IO/Biocontainers, you can do something like the following, *note the platform designation might need to be adapted to your particular machine.* 
+
+```bash
+docker pull quay.io/biocontainers/bofasa:1.2.0--pyh106432d_0
+```
+
+Next, setup databases:
+
+```bash
+docker run -v /path/to/dbs/:/data/dbs/ -e BOFASA_DB_PATH=/data/dbs/ --platform linux/amd64 quay.io/biocontainers/bofasa:1.2.0--pyh106432d_0 bofasa setup
+```
+
+Here, `/path/to/dbs/` is the actual location on your computer where to store the databases and `/data/dbs/` is the location on the container it maps to. 
+
+> [!IMPORTANT]
+> When running `bofasa prep` and `bofasa run`, please issue the `-auto` flag to overcome interactive prompts. However, caution, this will lead to overwriting output directories!
+
+> [!NOTE]
+> You can also use Docker images via Singularity/Apptainer, can probably ask some AI agent how to do this. 
+
+
+### Test Installation:
+
+If using conda:
+
+If use 
 
 ## Usage
 
@@ -96,7 +130,7 @@ For more information, visit: https://github.com/raufs/bofasa
 ### Subcommands
 
 #### `bofasa prep` - Prepare Input Data
-Processes input genomes (FASTA or GenBank files) for analysis.
+Processes input genomes (FASTA or GenBank files) for analysis. Can also take in [Prokka](https://github.com/tseemann/prokka) and [bakta](https://github.com/oschwengers/bakta) directories!
 
 ```bash
 bofasa prep -i <genome1.fasta> <genome2.gbk> ... -o <output-dir> [OPTIONS]
@@ -166,12 +200,13 @@ bofasa --version
 
 bofasa also provides several additional utility scripts:
 
-- `extract_og_pairs` - Extract ortholog group pairs for method comparison
-- `extract_scc_og_pairs` - Extract single-copy-core ortholog group pairs
-- `compare_og_pairs` - Compare ortholog group pairs between methods
-- `determine_og_freqs` - Determine ortholog group frequencies
-- `print_og_itol_matrix` - Print ortholog group matrices for iTOL visualization
-
+- `extract_og_pairs.py` - Extract ortholog group pairs for method comparison
+- `extract_scc_og_pairs.py` - Extract single-copy-core ortholog group pairs
+- `compare_og_pairs.py` - Compare ortholog group pairs between methods
+- `determine_og_freqs.py` - Determine ortholog group frequencies
+- `print_og_itol_matrix.py` - Print ortholog group matrices for iTOL visualization
+- `visualize_og_context.py` - Visualize the context of focal ortholog groups of interest. ***Is still experimental!***
+  
 **Note:** GenBank processing and Prodigal gene calling functionality is now integrated into the main `bofasa prep` command and no longer requires separate scripts.
 
 ## Documentation
