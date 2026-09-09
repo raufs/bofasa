@@ -28,13 +28,15 @@ bofasa setup
 > To aid reproducability between two runs, please ensure you are using the same version of the Pfam-A database!
 
 ### 1. Prepare Input Data
+
 ```bash
-bofasa prep -i genome1.fasta genome2.fasta genome3.fasta genome4.fasta -o prep_output
+bofasa prep -i genome1.fasta genome2.fasta genome3.fasta genome4.fasta -o prep_output/
 ```
 
 ### 2. Run Analysis
+
 ```bash
-bofasa run -i prep_output -o analysis_output -c 8
+bofasa run -i prep_output/ -o analysis_output/ -c 8
 ```
 
 ## Installation
@@ -62,6 +64,9 @@ bofasa -h
 
 ### Docker (*via Biocondainters*)
 
+*In process of being developed.*
+
+<!-- 
 To get a Docker image from Quay.IO/Biocontainers, you can do something like the following, *note the platform designation might need to be adapted to your particular machine.* 
 
 ```bash
@@ -81,13 +86,16 @@ Here, `/path/to/dbs/` is the actual location on your computer where to store the
 
 > [!NOTE]
 > You can also use Docker images via Singularity/Apptainer, can probably ask some AI agent how to do this. 
-
+-->
 
 ### Test Installation:
 
 ```bash
 # get test dataset and testing script from bofasa Github repo:
-wget 
+wget https://github.com/raufs/bofasa/raw/refs/heads/main/test_case.tar.gz
+wget https://raw.githubusercontent.com/raufs/bofasa/refs/heads/main/run_tests.sh
+
+bash run_tests.sh
 ```
 
 > [!NOTE]
