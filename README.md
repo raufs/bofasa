@@ -225,7 +225,7 @@ For detailed information on bofasa, see the `ALGORITHM.md` document.
 ## Citation
 
 > ***High-quality and automated inference of ortholog groups across multiple bacterial species using bofasa.***
-> Rauf Salamzade, Eitan Yaffe, Aamuktha Kottapalli, David Relman, Lindsay Kalan, 2026.
+> Rauf Salamzade, Eitan Yaffe, Aamuktha Kottapalli, Lindsay Kalan, David Relman, 2026.
 
 Please also consider citing both ***OrthoFinder 2*** and ***geNomad*** which are used for determination of coarse domain ortholog groups and the annotation of phages/plasmids, respectively.
 
