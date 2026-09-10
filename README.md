@@ -163,6 +163,7 @@ bofasa prep -i <genome1.fasta> <genome2.gbk> ... -o <output-dir> [OPTIONS]
 
 **Required Arguments:**
 - `-i, --input-genomes`: Input genomes (FASTA or GenBank files)
+- `-a` --annotation-dirs`: Annotation directories (Prokka or Bakta output directories). Required if no input genomes are provided.
 - `-o, --output-dir`: Output directory for prepared data
 
 **Optional Arguments:**
@@ -170,10 +171,13 @@ bofasa prep -i <genome1.fasta> <genome2.gbk> ... -o <output-dir> [OPTIONS]
 - `-gcm, --gene-calling-method`: Gene calling method (pyrodigal/prodigal, default: pyrodigal)
 - `-l, --locus-tag-length`: Length of locus tags (default: 3)
 - `-m, --meta-mode`: Use meta-mode for gene calling
-- `-rlt, --rename-locus-tags`: Rename locus tags in GenBank files
+- `-ml, --min-length`: Minimum length of domain/inter-domain unit to consider (default: 20)
+- `-rlt, --rename-locus-tags`: Rename locus tags in GenBank files and annotation directories (Prokka/Bakta)
 - `-rg, --run-genomad`: Run genomad for phage/plasmid annotation
 - `-emg, --extract-mge-genomes`: Extract mobile genetic element (phage/plasmid) genomes identified by genomad (requires -rg)
+- `-sds, --skip-domain-splitting`: Skip domain-annotation based splitting of coding sequences
 - `-mm, --max-memory`: Memory limit in GB (default: 32)
+- `x, --ignore-upperbound-limit`: Ignore the upper bound limit for the number of genomes to process (default: 200)
 - `-y, --auto`: Automatically set `y` for all interactive prompts
 
 #### `bofasa run` - Execute Analysis
@@ -191,12 +195,11 @@ bofasa run -i <bofasa-prep-dir> -o <output-dir> [OPTIONS]
 - `-sr, --surrounding-bp`: Base pairs for syntenic analysis (default: 10000)
 - `-ogc, --og-consensus`: Determine consensus sequences
 - `-cg, --core-genome`: Construct core genome alignment
-- `-dj, --dog-jaccard`: Jaccard index threshold (default: 0.25)
-- `-fic, --fixation-index-cutoff`: Fixation index cutoff (default: 0.25)
+- `-dj, --dog-jaccard`: Jaccard index threshold (default: 0.5)
+- `-fic, --fixation-index-cutoff`: Fixation index cutoff (default: 0.1)
 - `-smb, --skip-merge-back`: Skip merge back assessment
 - `-spr, --skip-phylo-refine`: Skip phylogenetic refinement
 - `-rs, --rooting-seeds`: Rooting seeds (default: 1)
-- `-qa, --quality-alignments`: Use high-quality alignments
 - `-us, --ultra-sens`: Use ultra-sensitivity mode
 - `-mi, --mcl-inflation`: MCL inflation parameter (default: 1.2)
 - `-ns, --near-scc-prop`: Near SCC proportion (default: 0.95)
