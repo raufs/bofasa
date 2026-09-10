@@ -163,7 +163,7 @@ bofasa prep -i <genome1.fasta> <genome2.gbk> ... -o <output-dir> [OPTIONS]
 
 **Required Arguments:**
 - `-i, --input-genomes`: Input genomes (FASTA or GenBank files)
-- `-a` --annotation-dirs`: Annotation directories (Prokka or Bakta output directories). Required if no input genomes are provided.
+- `-a, --annotation-dirs`: Annotation directories (Prokka or Bakta output directories). Required if no input genomes are provided.
 - `-o, --output-dir`: Output directory for prepared data
 
 **Optional Arguments:**
