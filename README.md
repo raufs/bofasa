@@ -53,6 +53,8 @@ bofasa -h
 
 ### Docker (*via Biocontainers*)
 
+Check out [this Wiki page](https://github.com/raufs/bofasa/wiki/0.-Docker-Installation-via-Biocontainers) for information on how to install/run bofasa via Docker.  
+
 To get a Docker image from Quay.IO/Biocontainers, you can do something like the following, 
 
 ```bash
