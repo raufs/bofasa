@@ -55,61 +55,6 @@ bofasa -h
 
 Check out [this Wiki page](https://github.com/raufs/bofasa/wiki/0.-Docker-Installation-via-Biocontainers) for information on how to install/run bofasa via Docker.  
 
-To get a Docker image from Quay.IO/Biocontainers, you can do something like the following, 
-
-```bash
-docker pull quay.io/biocontainers/bofasa:1.2.0--pyh106432d_0
-```
-
-Next, setup databases:
-
-```bash
-docker run -v /path/to/dbs/:/usr/local/share/bofasa/db/ --platform linux/amd64 quay.io/biocontainers/bofasa:1.2.1--pyh106432d_0 bofasa setup
-```
-
-Here, `/path/to/dbs/` is the actual location on your computer where to store the databases and `/data/dbs/` is the location on the container it maps to. 
-
-Next, prepare the genomes for `bofasa run` analysis using `bofasa prep`. Here, I basically downloaded the test dataset from the bofasa Github, uncompressed it, and changed directories to it to be my workspace for the following showcase:
-
-```
-wget https://github.com/raufs/bofasa/raw/refs/heads/main/test_case.tar.gz
-tar -zxvf test_case.tar.gz
-cd test_case/
-```
-
-```
-docker run \
-  -v /path/to/dbs/:/usr/local/share/bofasa/db \
-  -v "$PWD":/work \
-  -w /work \
-  --platform linux/amd64 \
-  quay.io/biocontainers/bofasa:1.2.1--pyh106432d_0 \
-  bash -c 'bofasa prep -i Genomes/* -o Bofasa_Prep_Docker_Results/ -c 4 --auto'
-```
-
-Here, `/work` is the current workspace on the user's system. 
-
-Finally, run `bofasa run`:
-
-```
-docker run \
-  -v /path/to/dbs/:/usr/local/share/bofasa/db \
-  -v "$PWD":/work \
-  -w /work \
-  --platform linux/amd64 \
-  quay.io/biocontainers/bofasa:1.2.1--pyh106432d_0 \
-  bash -c 'bofasa run -i Bofasa_Prep_Docker_Results/ -o Bofasa_Run_Docker_Results/ -c 4 --auto'
-```
-
-> [!IMPORTANT]
-> When running `bofasa prep` and `bofasa run`, please issue the `-auto` flag to overcome interactive prompts. However, caution, this will lead to overwriting output directories!
-
-> [!NOTE]
-> You can also use Docker images via Singularity/Apptainer, can probably ask some AI agent how to do this.
-
-> [!NOTE]
-> The platform designation might need to be adapted to your particular machine.
-
 ### Test Conda/Pixi Installation:
 
 ```bash
@@ -125,7 +70,7 @@ bash run_tests.sh
 
 ## Quick Start
 
-bofasa provides a unified command-line interface with two main subcommands: **`bofasa prep`** and **`bofasa run`**.
+bofasa provides a unified command-line interface with two main subcommands: **`bofasa prep`** and **`bofasa run`**. For a more detailed look at the algorithms behind bofasa, check out the `ALGORITHM.md` document or [this Wiki page](https://github.com/raufs/bofasa/wiki/1.-Algorithm-Overview).
 
 ### 0. Setup databases (Pfam, geNomad, and ISFinder; *needs to be done only once!*)
 
