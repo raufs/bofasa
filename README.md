@@ -35,7 +35,7 @@ Comparable and good alternatives to bofasa include [PIRATE](https://github.com/S
 ```bash
 conda create -c conda-forge -c bioconda -p /path/to/bofasa_env/ bofasa
 conda activate /path/to/bofasa_env/
-bofasa setup
+bofasa setup --force
 
 bofasa -h
 ```
@@ -46,7 +46,7 @@ bofasa -h
 pixi init /path/to/bofasa_env/
 pixi add -m /path/to/bofasa_env/ bofasa
 pixi shell -m /path/to/bofasa_env/
-bofasa setup
+bofasa setup --force
 
 bofasa -h
 ```
