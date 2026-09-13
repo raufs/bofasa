@@ -51,12 +51,9 @@ bofasa setup --force
 bofasa -h
 ```
 
-### Docker (*via Biocondainters*)
+### Docker (*via Biocontainers*)
 
-*In the process of being developed.*
-
-<!-- 
-To get a Docker image from Quay.IO/Biocontainers, you can do something like the following, *note the platform designation might need to be adapted to your particular machine.* 
+To get a Docker image from Quay.IO/Biocontainers, you can do something like the following, 
 
 ```bash
 docker pull quay.io/biocontainers/bofasa:1.2.0--pyh106432d_0
@@ -65,19 +62,53 @@ docker pull quay.io/biocontainers/bofasa:1.2.0--pyh106432d_0
 Next, setup databases:
 
 ```bash
-docker run -v /path/to/dbs/:/data/dbs/ -e BOFASA_DB_PATH=/data/dbs/ --platform linux/amd64 quay.io/biocontainers/bofasa:1.2.0--pyh106432d_0 bofasa setup
+docker run -v /path/to/dbs/:/usr/local/share/bofasa/db/ --platform linux/amd64 quay.io/biocontainers/bofasa:1.2.1--pyh106432d_0 bofasa setup
 ```
 
 Here, `/path/to/dbs/` is the actual location on your computer where to store the databases and `/data/dbs/` is the location on the container it maps to. 
+
+Next, prepare the genomes for `bofasa run` analysis using `bofasa prep`. Here, I basically downloaded the test dataset from the bofasa Github, uncompressed it, and changed directories to it to be my workspace for the following showcase:
+
+```
+wget https://github.com/raufs/bofasa/raw/refs/heads/main/test_case.tar.gz
+tar -zxvf test_case.tar.gz
+cd test_case/
+```
+
+```
+docker run \
+  -v /path/to/dbs/:/usr/local/share/bofasa/db \
+  -v "$PWD":/work \
+  -w /work \
+  --platform linux/amd64 \
+  quay.io/biocontainers/bofasa:1.2.1--pyh106432d_0 \
+  bash -c 'bofasa prep -i Genomes/* -o Bofasa_Prep_Docker_Results/ -c 4 --auto'
+```
+
+Here, `/work` is the current workspace on the user's system. 
+
+Finally, run `bofasa run`:
+
+```
+docker run \
+  -v /path/to/dbs/:/usr/local/share/bofasa/db \
+  -v "$PWD":/work \
+  -w /work \
+  --platform linux/amd64 \
+  quay.io/biocontainers/bofasa:1.2.1--pyh106432d_0 \
+  bash -c 'bofasa run -i Bofasa_Prep_Docker_Results/ -o Bofasa_Run_Docker_Results/ -c 4 --auto'
+```
 
 > [!IMPORTANT]
 > When running `bofasa prep` and `bofasa run`, please issue the `-auto` flag to overcome interactive prompts. However, caution, this will lead to overwriting output directories!
 
 > [!NOTE]
-> You can also use Docker images via Singularity/Apptainer, can probably ask some AI agent how to do this. 
--->
+> You can also use Docker images via Singularity/Apptainer, can probably ask some AI agent how to do this.
 
-### Test Installation:
+> [!NOTE]
+> The platform designation might need to be adapted to your particular machine.
+
+### Test Conda/Pixi Installation:
 
 ```bash
 # get test dataset and testing script from bofasa Github repo:
