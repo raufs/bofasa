@@ -202,7 +202,8 @@ def create_main_parser() -> BofasaArgumentParser:
         "Examples:\n"
         "  export BOFASA_DB_PATH=/path/to/databases\n"
         "  bofasa setup\n"
-        "  bofasa setup --threads 8 --force"
+        "  bofasa setup --threads 8 --force\n"
+        "  bofasa setup --skip-genomad"
     )
 
 
@@ -494,6 +495,16 @@ def add_setup_annotation_dbs_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Force overwrite existing databases if they already exist.\n"
         "Use with caution as this will delete existing data.",
+        required=False,
+        default=False,
+    )
+    parser.add_argument(
+        "-sg",
+        "--skip-genomad",
+        action="store_true",
+        help="Skip downloading the geNomad database. The geNomad database is\n"
+        "downloaded by default, but it is large and only needed for\n"
+        "'bofasa run --run-genomad'.",
         required=False,
         default=False,
     )
@@ -1751,7 +1762,9 @@ def run_setup_annotation_dbs(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     try:
-        setup_annotation_databases(output_dir, args.threads, args.force, args.auto)
+        setup_annotation_databases(
+            output_dir, args.threads, args.force, args.auto, args.skip_genomad
+        )
     except Exception as e:
         sys.stdout.write(f"Error during setup annotation databases: {str(e)}\n")
         raise

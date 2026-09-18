@@ -35,6 +35,7 @@ Comparable and good alternatives to bofasa include [PIRATE](https://github.com/S
 ```bash
 conda create -c conda-forge -c bioconda -p /path/to/bofasa_env/ bofasa
 conda activate /path/to/bofasa_env/
+export PATH=$CONDA_PREFIX/bin:$PATH
 bofasa setup --force
 
 bofasa -h
@@ -46,6 +47,7 @@ bofasa -h
 pixi init /path/to/bofasa_env/
 pixi add -m /path/to/bofasa_env/ bofasa
 pixi shell -m /path/to/bofasa_env/
+export PATH=$CONDA_PREFIX/bin:$PATH
 bofasa setup --force
 
 bofasa -h
@@ -76,6 +78,12 @@ bofasa provides a unified command-line interface with two main subcommands: **`b
 
 ```bash
 bofasa setup
+```
+
+The geNomad database is downloaded by default. It is large and only needed for `bofasa run --run-genomad`, so it can be skipped:
+
+```bash
+bofasa setup --skip-genomad
 ```
 
 > [!NOTE]

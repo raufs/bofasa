@@ -17,7 +17,7 @@ from .utils import setup_ready_directory
 
 def setup_annotation_databases(
     output_dir: str, threads: int = config.DEFAULT_THREADS, force: bool = False,
-    auto: bool = False
+    auto: bool = False, skip_genomad: bool = False
 ) -> None:
     """
     Setup annotation databases.
@@ -27,10 +27,14 @@ def setup_annotation_databases(
         threads: Number of threads to use
         force: Whether to force overwrite existing databases
         auto: Whether to automatically answer 'yes' to interactive prompts
+        skip_genomad: Whether to skip downloading the geNomad database
 
     Returns:
         None: Creates databases in output directory
     """
+    # Use an absolute path so all recorded database locations are absolute
+    output_dir = os.path.abspath(output_dir)
+
     # Check if output directory already exists and has content
     if os.path.exists(output_dir) and os.listdir(output_dir):
         sys.stdout.write(
@@ -74,43 +78,64 @@ def setup_annotation_databases(
         sys.stdout.write("Database paths file already exists. Use --force to overwrite.\n")
         return
 
-    # Setup geNomad database
-    sys.stdout.write("Setting up geNomad database...\n")
+    # Setup geNomad database (downloaded by default, skipped with --skip-genomad)
+    # The geNomad database path should include the genomad_db subdirectory created
+    # by 'genomad download-database'.
     genomad_db_dir = os.path.join(output_dir, "genomad_db")
-    
-    # If force is True and directory exists, remove it
-    if force and os.path.exists(genomad_db_dir):
-        sys.stdout.write(f"Removing existing geNomad database directory: {genomad_db_dir}\n")
-        shutil.rmtree(genomad_db_dir)
-    
-    setup_ready_directory([genomad_db_dir], overwrite_mode="overwrite")
+    genomad_db_path = os.path.join(genomad_db_dir, "genomad_db")
 
-    # Download geNomad database
-    genomad_cmd = ["genomad", "download-database", genomad_db_dir]
+    if skip_genomad:
+        sys.stdout.write(
+            "Skipping geNomad database setup (--skip-genomad specified).\n"
+            "Note: 'bofasa run --run-genomad' will not be usable until the geNomad\n"
+            "database is set up.\n"
+        )
+        genomad_db_path = None
+    else:
+        sys.stdout.write("Setting up geNomad database...\n")
 
-    try:
-        result = subprocess.run(genomad_cmd, capture_output=True, text=True)
-        if result.returncode != 0:
+        # If force is True and directory exists, remove it
+        if force and os.path.exists(genomad_db_dir):
+            sys.stdout.write(f"Removing existing geNomad database directory: {genomad_db_dir}\n")
+            shutil.rmtree(genomad_db_dir)
+
+        setup_ready_directory([genomad_db_dir], overwrite_mode="overwrite")
+
+        # Download geNomad database
+        genomad_cmd = ["genomad", "download-database", genomad_db_dir]
+
+        try:
+            result = subprocess.run(genomad_cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                sys.stdout.write(
+                    f"Error setting up geNomad database: Command returned exit status {result.returncode}\n"
+                )
+                sys.stdout.write(f"Command: {' '.join(genomad_cmd)}\n")
+                sys.stdout.write(f"stdout: {result.stdout}\n")
+                sys.stdout.write(f"stderr: {result.stderr}\n")
+                sys.stdout.write("\nPlease ensure geNomad is installed and accessible.\n")
+                sys.stdout.write("You can install geNomad with: conda install -c bioconda genomad\n")
+                sys.stdout.write(
+                    "Alternatively, rerun with --skip-genomad to set up the other databases only.\n"
+                )
+                return
+            sys.stdout.write("geNomad database setup completed\n")
+        except FileNotFoundError:
+            sys.stdout.write("Error: 'genomad' command not found.\n")
+            sys.stdout.write("Please install geNomad first:\n")
+            sys.stdout.write("  conda install -c bioconda genomad\n")
+            sys.stdout.write("  or visit: https://github.com/apcamargo/genomad\n")
             sys.stdout.write(
-                f"Error setting up geNomad database: Command returned exit status {result.returncode}\n"
+                "Alternatively, rerun with --skip-genomad to set up the other databases only.\n"
             )
-            sys.stdout.write(f"Command: {' '.join(genomad_cmd)}\n")
-            sys.stdout.write(f"stdout: {result.stdout}\n")
-            sys.stdout.write(f"stderr: {result.stderr}\n")
-            sys.stdout.write("\nPlease ensure geNomad is installed and accessible.\n")
-            sys.stdout.write("You can install geNomad with: conda install -c bioconda genomad\n")
             return
-        sys.stdout.write("geNomad database setup completed\n")
-    except FileNotFoundError:
-        sys.stdout.write("Error: 'genomad' command not found.\n")
-        sys.stdout.write("Please install geNomad first:\n")
-        sys.stdout.write("  conda install -c bioconda genomad\n")
-        sys.stdout.write("  or visit: https://github.com/apcamargo/genomad\n")
-        return
-    except Exception as e:
-        sys.stdout.write(f"Error setting up geNomad database: {e}\n")
-        sys.stdout.write("Please ensure geNomad is installed and accessible\n")
-        return
+        except Exception as e:
+            sys.stdout.write(f"Error setting up geNomad database: {e}\n")
+            sys.stdout.write("Please ensure geNomad is installed and accessible\n")
+            sys.stdout.write(
+                "Alternatively, rerun with --skip-genomad to set up the other databases only.\n"
+            )
+            return
 
     # Setup ISfinder database
     sys.stdout.write("Setting up ISfinder database...\n")
@@ -215,6 +240,7 @@ def setup_annotation_databases(
 
     # Download Pfam database
     pfam_url = "https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.hmm.gz"
+    pfam_z = 0
 
     try:
         sys.stdout.write(f"Downloading Pfam database from {pfam_url}...\n")
@@ -249,7 +275,6 @@ def setup_annotation_databases(
         os.remove(pfam_hmm_gz)
 
         # Count records for Z parameter
-        pfam_z = 0
         with open(pfam_hmm, 'r') as f:
             for line in f:
                 if line.startswith('NAME'):
@@ -261,16 +286,15 @@ def setup_annotation_databases(
         sys.stdout.write(f"Error setting up Pfam database: {e}\n")
         sys.stdout.write(f"Please download manually from: {pfam_url}\n")
 
-    # Write database paths file
+    # Write database paths file, recording absolute paths for every database
     with open(db_paths_file, 'w') as f:
         f.write("Database\tType\tPath\tAdditional_Info\n")
-        # geNomad database path should include the genomad_db subdirectory
-        genomad_db_path = os.path.join(genomad_db_dir, "genomad_db")
-        f.write(f"genomad\tgenomad\t{genomad_db_path}\t\n")
+        if genomad_db_path is not None:
+            f.write(f"genomad\tgenomad\t{os.path.abspath(genomad_db_path)}\t\n")
         if os.path.exists(isfinder_dmnd):
-            f.write(f"isfinder\tdiamond\t{isfinder_dmnd}\t\n")
+            f.write(f"isfinder\tdiamond\t{os.path.abspath(isfinder_dmnd)}\t\n")
         if os.path.exists(pfam_hmm):
-            f.write(f"pfam\thmm\t{pfam_hmm}\t{pfam_z}\n")
+            f.write(f"pfam\thmm\t{os.path.abspath(pfam_hmm)}\t{pfam_z}\n")
 
     sys.stdout.write("Annotation databases setup completed successfully\n")
     sys.stdout.write(f"Database paths saved to: {db_paths_file}\n")
