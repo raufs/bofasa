@@ -18,7 +18,6 @@
 - [Quick Start](#quick-start)
 - [Usage](#usage)
 - [Additional Scripts](#additional-scripts)
-- [Documentation](#documentation)
 - [Citation](#citation)
 - [License](#license)
 
@@ -206,10 +205,6 @@ bofasa also provides several additional utility scripts:
 - `visualize_og_context.py` - Visualize the context of focal ortholog groups of interest. ***Is still experimental!***
   
 **Note:** GenBank processing and Prodigal gene calling functionality is now integrated into the main `bofasa prep` command and no longer requires separate scripts.
-
-## Documentation
-
-For detailed information on bofasa, see the `ALGORITHM.md` document.
 
 ## Citation
 
