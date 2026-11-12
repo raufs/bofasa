@@ -214,7 +214,7 @@ bofasa also provides several additional utility scripts:
 Please also consider citing both ***OrthoFinder 2*** and ***geNomad*** which are used for determination of coarse domain ortholog groups and the annotation of phages/plasmids, respectively:
 
 > ***OrthoFinder: phylogenetic orthology inference for comparative genomics.***
-> David Emms, Steve Kelly
+> David Emms, Steven Kelly
 
 > ***Identification of mobile genetic elements with geNomad.***
 > Antonio Camargo, Simon Roux, Frederik Schulz, Michal Babinski, Yan Xu, Bin Hu, Patrick Chain, Stephen Nayfach, Nikos Kyrpides 
