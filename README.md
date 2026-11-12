@@ -208,7 +208,7 @@ bofasa also provides several additional utility scripts:
 
 ## Citation
 
-> ***bofasa enables quality orthology inference across high-diversity, multi-species bacterial genome sets.***
+> ***bofasa enables high-quality orthology inference across diverse multi-species bacterial genome sets.***
 > Rauf Salamzade, Eitan Yaffe, Aamuktha Kottapalli, Lindsay Kalan, David Relman, 2026.
 
 Please also consider citing both ***OrthoFinder 2*** and ***geNomad*** which are used for determination of coarse domain ortholog groups and the annotation of phages/plasmids, respectively:
