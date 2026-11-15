@@ -174,7 +174,7 @@ Construction of Modified  Domain-Resolution Coarse Ortholog Group by Genome/MGE 
 2. **Concatenate bacterial protein chunks**: All bacterial chromosome protein chunks into single FASTA
 3. **Create DIAMOND databases**: Separate databases for MGE and bacterial proteins
 4. **Reflexive MGE alignment**: DIAMOND blastp of MGEs against themselves
-   - Filter hits: require ≥50% query coverage AND ≥50% subject coverage AND E-value < 1e-3
+   - Filter hits: require E-value < 1e-3
    - Purpose: Identify MGE protein chunks that are homologous to each other
 5. **Cluster MGE protein chunks**: Single-linkage clustering (using slclust) on filtered pairs are used to groups them into homologous clusters
 6. **MGE vs chromosomal protein chunk alignment**: DIAMOND blastp of MGE protein chunks against bacterial chromosome protein chunks database
