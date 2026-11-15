@@ -128,7 +128,7 @@ def extract_sample_name(genomad_dir):
     # Use the directory name as the sample name
     return Path(genomad_dir).name
 
-def split_genomad_virus_file(genomad_virus_protein_file, output_dir, sample_name):
+def split_genomad_virus_file(genomad_virus_protein_file, output_dir, sample_name, written_files=None):
     """
     Split a geNomad virus protein file into multiple files - one for each virus/phage.
     
@@ -136,10 +136,16 @@ def split_genomad_virus_file(genomad_virus_protein_file, output_dir, sample_name
         genomad_virus_protein_file (str): Path to geNomad virus protein file
         output_dir (Path): Path to output directory
         sample_name (str): Sample name
+        written_files (set): Output files already written to during this run;
+            files not in it are truncated on first use so reruns do not
+            duplicate proteins.
         
     Returns:
         None
     """
+
+    if written_files is None:
+        written_files = set([])
 
     prophage_name_to_id = {}
     prophage_id = 1
@@ -155,7 +161,11 @@ def split_genomad_virus_file(genomad_virus_protein_file, output_dir, sample_name
             prophage_name = '_'.join(rec.id.split('_')[:-1])
             prophage_id = prophage_name_to_id[prophage_name]
             output_faa = output_dir / (sample_name + '_' + prophage_id + '.faa')
-            of_handle = open(output_faa, 'a+')
+            if output_faa in written_files:
+                of_handle = open(output_faa, 'a')
+            else:
+                of_handle = open(output_faa, 'w')
+                written_files.add(output_faa)
             of_handle.write('>' + rec.description + '\n' + str(rec.seq) + '\n')
             of_handle.close()
 
@@ -211,8 +221,9 @@ def main():
 
     else:        
         sys.stdout.write(f"Splitting genomad virus protein files into individual files for each virus/phage\n")        
+        written_files = set([])
         for sample_name, proteome_file in all_proteome_files:
-            split_genomad_virus_file(proteome_file, output_dir, sample_name)
+            split_genomad_virus_file(proteome_file, output_dir, sample_name, written_files)
         sys.stdout.write(f"Successfully split {len(all_proteome_files)} genomad virus protein files into individual files for each virus/phage\n")
     
     sys.stdout.write("=" * 80 + "\n")

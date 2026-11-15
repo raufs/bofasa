@@ -7,9 +7,9 @@ generating reports, and performing various analyses on the results.
 
 from logging import warn
 from math import log
-import multiprocessing
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import traceback
@@ -21,8 +21,8 @@ import pandas as pd
 from Bio import SeqIO
 import plotly.express as px
 import pyhmmer
-from .utils import _iter_progress, multi_process, setup_ready_directory, load_table_in_pandas_dataframe, run_cmd
-from .processing import create_chopped_proteomes, extract_gene_contexts
+from .utils import _iter_progress, multi_process, setup_ready_directory, load_table_in_pandas_dataframe, run_cmd, thread_imap
+from .processing import extract_gene_contexts
 from .core import generate_og_name
 from . import config
 from scipy import stats 
@@ -154,15 +154,15 @@ def determine_ortholog_group_contexts(
                     log_object.error(msg)
                     raise RuntimeError(msg)
 
-        # Process in parallel
-        with multiprocessing.Pool(threads) as pool:
-            list(
-                _iter_progress(
-                    pool.imap_unordered(extract_gene_contexts, genome_params),
-                    total=len(genome_params),
-                    description="Extracting gene contexts",
-                )
+        # Process in parallel (threads: gene_to_og/og_genes are shared read-only
+        # rather than pickled into every task)
+        list(
+            _iter_progress(
+                thread_imap(extract_gene_contexts, genome_params, threads),
+                total=len(genome_params),
+                description="Extracting gene contexts",
             )
+        )
 
         # Process results and calculate entropy
         og_surrounding_nogs: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
@@ -199,6 +199,9 @@ def determine_ortholog_group_contexts(
                     context_ogs = set([])
                     complete_context_ogs = set([])
                     for ogc in upstream_ogs.split(', '):
+                        # ''.split(', ') -> [''] when there are no upstream OGs
+                        if ogc == '':
+                            continue
                         if nse == 'False':
                             complete_context_ogs.add(ogc)
                         if not ogc in context_ogs:
@@ -207,6 +210,9 @@ def determine_ortholog_group_contexts(
                                 og_completed_surrounding_nogs[og][ogc] += 1
                         context_ogs.add(ogc)
                     for ogc in downstream_ogs.split(', '):
+                        # ''.split(', ') -> [''] when there are no downstream OGs
+                        if ogc == '':
+                            continue
                         if nse == 'False':
                             complete_context_ogs.add(ogc)
                         if not ogc in context_ogs:
@@ -355,10 +361,9 @@ def create_profile_hmms_and_consensus_seqs(
             msg = f"Running {len(hmmbuild_cmds)} hmmbuild jobs"
             log_object.info(msg)
             
-            p = multiprocessing.Pool(threads)
             try:
                 for _ in _iter_progress(
-                    p.imap_unordered(multi_process, hmmbuild_cmds),
+                    thread_imap(multi_process, hmmbuild_cmds, threads),
                     total=len(hmmbuild_cmds),
                     description="Running hmmbuild",
                 ):
@@ -367,18 +372,22 @@ def create_profile_hmms_and_consensus_seqs(
                 log_object.error("Error in hmmbuild multiprocessing")
                 log_object.error(str(e))
                 log_object.error(traceback.format_exc())
-            finally:
-                p.close()
+
+            # multi_process does not propagate failures - verify outputs exist
+            missing = [cmd[4] for cmd in hmmbuild_cmds if not os.path.isfile(cmd[4]) or os.path.getsize(cmd[4]) == 0]
+            if missing:
+                msg = f"hmmbuild failed to produce {len(missing)} profile HMM(s), e.g.: {', '.join(missing[:5])}"
+                log_object.error(msg)
+                raise RuntimeError(msg)
 
         # Run hmmemit commands in parallel
         if hmmemit_cmds:
             msg = f"Running {len(hmmemit_cmds)} hmmemit jobs"
             log_object.info(msg)
             
-            p = multiprocessing.Pool(threads)
             try:
                 for _ in _iter_progress(
-                    p.imap_unordered(multi_process, hmmemit_cmds),
+                    thread_imap(multi_process, hmmemit_cmds, threads),
                     total=len(hmmemit_cmds),
                     description="Running hmmemit",
                 ):
@@ -387,8 +396,13 @@ def create_profile_hmms_and_consensus_seqs(
                 log_object.error("Error in hmmemit multiprocessing")
                 log_object.error(str(e))
                 log_object.error(traceback.format_exc())
-            finally:
-                p.close()
+
+            # multi_process does not propagate failures - verify outputs exist
+            missing = [cmd[3] for cmd in hmmemit_cmds if not os.path.isfile(cmd[3]) or os.path.getsize(cmd[3]) == 0]
+            if missing:
+                msg = f"hmmemit failed to produce {len(missing)} consensus sequence(s), e.g.: {', '.join(missing[:5])}"
+                log_object.error(msg)
+                raise RuntimeError(msg)
 
         log_object.info("Profile HMMs and consensus sequences created successfully")
 
@@ -398,6 +412,7 @@ def create_profile_hmms_and_consensus_seqs(
         log_object.error("Error creating profile HMMs and consensus sequences")
         log_object.error(str(e))
         log_object.error(traceback.format_exc())
+        raise
 
 def concatenate_consensus_sequences(
     og_cons_dir: str, 
@@ -779,11 +794,12 @@ def determine_phages_and_plasmids(
                 ])
                 
                 try:
-                    run_cmd(genomad_cmd, log_object)
+                    run_cmd(genomad_cmd, log_object, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
                 except subprocess.CalledProcessError as e:
                     log_object.error(f"geNomad failed with unknown error for sample {sample}")
                     log_object.error(f"Command: {' '.join(genomad_cmd)}")
                     log_object.error(f"Full error output: {e.output}")
+                    sys.stderr.write(f"geNomad output for sample {sample}:\n{e.output}\n")
                     raise RuntimeError(f"geNomad failed with unknown error for sample {sample}")
                 
                 # Extract phage and plasmid proteins
@@ -1105,6 +1121,10 @@ def extract_mge_annotations_from_parent_genomes(
         wgs_dir = os.path.join(gp_dir, "Genomes/")
         faa_dir = os.path.join(gp_dir, "Proteomes/")
         bed_dir = os.path.join(gp_dir, "BEDs/")
+        # Untouched copies of parent proteome/BED files made before MGE genes are filtered
+        # out of them in place - used on reruns so an interrupted run does not lose MGE genes.
+        pre_filter_dir = os.path.join(gp_dir, "Pre_MGE_Filtering_Backups/")
+        os.makedirs(pre_filter_dir, exist_ok=True)
         
         msg = "Extracting plasmid and phage sequences with annotations from parent genomes..."
         log_object.info(msg)
@@ -1130,6 +1150,13 @@ def extract_mge_annotations_from_parent_genomes(
             # Note: sample_proteomes and sample_beds already contain full paths
             parent_proteome = sample_proteomes[sample]
             parent_bed = sample_beds[sample]
+            # Read from the unfiltered backups if a previous (interrupted) run already filtered the parents
+            backup_proteome = os.path.join(pre_filter_dir, os.path.basename(parent_proteome))
+            backup_bed = os.path.join(pre_filter_dir, os.path.basename(parent_bed))
+            if os.path.isfile(backup_proteome) and os.path.isfile(backup_bed):
+                log_object.info(f"Using unfiltered backup parent proteome/BED files for {sample}")
+                parent_proteome = backup_proteome
+                parent_bed = backup_bed
             
             if not os.path.isfile(parent_proteome) or not os.path.isfile(parent_bed):
                 log_object.warning(f"Parent genome annotations not found for {sample}")
@@ -1253,8 +1280,8 @@ def extract_mge_annotations_from_parent_genomes(
                             # geNomad full virus format: scaffold_name
                             if '|provirus_' in seq_name:
                                 # Provirus - extract scaffold and coordinates
-                                scaffold = seq_name.split('|')[0]
-                                coord_part = seq_name.split('|')[1].replace('provirus_', '')
+                                scaffold = '|'.join(seq_name.split('|')[:-1])
+                                coord_part = seq_name.split('|')[-1].replace('provirus_', '')
                                 coord_parts = coord_part.split('_')
                                 v_start = int(coord_parts[0])
                                 v_end = int(coord_parts[1])
@@ -1350,20 +1377,29 @@ def extract_mge_annotations_from_parent_genomes(
                     log_object.warning(f"Cannot filter parent genome for {sample}: files not found")
                     continue
                 
-                # Read parent proteome and filter out MGE genes
+                # Keep untouched copies of the parent files before filtering them in place
+                backup_proteome = os.path.join(pre_filter_dir, os.path.basename(parent_proteome))
+                backup_bed = os.path.join(pre_filter_dir, os.path.basename(parent_bed))
+                if not (os.path.isfile(backup_proteome) and os.path.isfile(backup_bed)):
+                    for src, dst in [(parent_proteome, backup_proteome), (parent_bed, backup_bed)]:
+                        shutil.copyfile(src, dst + '.tmp')
+                        os.replace(dst + '.tmp', dst)
+                
+                # Read parent proteome (unfiltered backup) and filter out MGE genes
                 filtered_proteins = []
-                with open(parent_proteome, 'r') as handle:
+                with open(backup_proteome, 'r') as handle:
                     for record in SeqIO.parse(handle, 'fasta'):
                         if record.id not in mge_gene_set:
                             filtered_proteins.append(record)
                 
-                # Write filtered proteome
-                with open(parent_proteome, 'w') as out_handle:
+                # Write filtered proteome (via temp file, then atomically replace)
+                with open(parent_proteome + '.tmp', 'w') as out_handle:
                     SeqIO.write(filtered_proteins, out_handle, 'fasta')
+                os.replace(parent_proteome + '.tmp', parent_proteome)
                 
-                # Read parent BED and filter out MGE genes
+                # Read parent BED (unfiltered backup) and filter out MGE genes
                 filtered_bed_lines = []
-                with open(parent_bed, 'r') as bed_handle:
+                with open(backup_bed, 'r') as bed_handle:
                     for line in bed_handle:
                         line = line.strip()
                         if not line:
@@ -1373,10 +1409,11 @@ def extract_mge_annotations_from_parent_genomes(
                         if gene_id not in mge_gene_set:
                             filtered_bed_lines.append(line)
                 
-                # Write filtered BED file
-                with open(parent_bed, 'w') as bed_handle:
+                # Write filtered BED file (via temp file, then atomically replace)
+                with open(parent_bed + '.tmp', 'w') as bed_handle:
                     for line in filtered_bed_lines:
                         bed_handle.write(line + '\n')
+                os.replace(parent_bed + '.tmp', parent_bed)
                 
                 genes_filtered = len(mge_gene_set)
                 total_filtered_genes += genes_filtered
@@ -1548,14 +1585,19 @@ def annotate_is_finder(
         
         # Run DIAMOND searches in parallel
         from .utils import multi_process
-        p = multiprocessing.Pool(threads)
         for _ in _iter_progress(
-            p.imap_unordered(multi_process, dmnd_search_cmds),
+            thread_imap(multi_process, dmnd_search_cmds, threads),
             total=len(dmnd_search_cmds),
             description="Running DIAMOND blastp",
         ):
             pass
-        p.close()
+        
+        # multi_process does not propagate failures - verify outputs exist (may be empty if no hits)
+        missing = [cmd[cmd.index('-o') + 1] for cmd in dmnd_search_cmds if not os.path.isfile(cmd[cmd.index('-o') + 1])]
+        if missing:
+            msg = f"DIAMOND blastp failed to produce {len(missing)} ISfinder result file(s), e.g.: {', '.join(missing[:5])}"
+            log_object.error(msg)
+            raise RuntimeError(msg)
         
         # Process results and create summary file
         with open(isfinder_protein_listing_file, 'w') as outf:
@@ -1695,20 +1737,19 @@ def annotate_and_split_proteins_using_pfam(
         log_object.info(msg)
 
         # Process samples in parallel
-        p = multiprocessing.Pool(parallel_jobs)
+        # Threads: hmmsearch (pyhmmer) releases the GIL.
         for _ in _iter_progress(
-            p.imap_unordered(create_chopped_proteomes, prot_mod_inputs),
+            thread_imap(create_chopped_proteomes, prot_mod_inputs, parallel_jobs),
             total=len(prot_mod_inputs),
             description="Creating domain-chopped proteomes",
         ):
             pass
-        p.close()
         
         # Create domain coordinate info file and return sample CCDS proteomes
         sample_ccds_proteomes = {}
         with open(domain_coord_info_file, 'w') as dci_handle:
             # Write header
-            dci_handle.write('\t'.join(['Sample', 'Protein', 'Domain_Type', 'Domain_Index', 'Domain_Count', 'Length']) + '\n')
+            dci_handle.write('\t'.join(['Sample', 'Protein', 'Annotation', 'Annotation_Iterator', 'Start', 'End']) + '\n')
             
             # Process all files in the domain_coords_dir
             for f in os.listdir(domain_coords_dir):
@@ -1914,13 +1955,26 @@ def create_chopped_proteomes(inputs):
                 accounted_coords = set([])
                 
                 for dom_align_info in sorted(target_dom_hits[tg], key=itemgetter(3), reverse=True):
+                    # start/end are 1-based inclusive coordinates (pyhmmer target_from/target_to)
                     dom_name, start, end, score, i_evalue = dom_align_info
                     overlap_coords = accounted_coords.intersection(set(range(start, end+1)))
                     if len(overlap_coords)/float(end-start+1) >= 0.1 or len(overlap_coords) >= minimal_length:
                         continue
+                    if len(overlap_coords) > 0:
+                        # Trim the (minor) overlap with already accepted domains so that each
+                        # accepted domain yields exactly one, correctly labelled, chunk.
+                        while start <= end and start in accounted_coords:
+                            start += 1
+                        while end >= start and end in accounted_coords:
+                            end -= 1
+                        if end < start or len(accounted_coords.intersection(set(range(start, end+1)))) > 0:
+                            # fully covered or an accepted domain nested within this one - skip
+                            continue
                     accounted_coords = accounted_coords.union(set(range(start, end+1)))
-                    breakpoints[tg].append(start)
-                    breakpoints[tg].append(end+1)
+                    # 0-based slice breakpoints: domain spans tg_seq[start-1:end]
+                    breakpoints[tg].append(start-1)
+                    breakpoints[tg].append(end)
+                    # keyed by the 1-based start coordinate of the domain chunk
                     dom_start_names[tg + '|' + str(start)] = tg + '|' + dom_name + '|' + str(tg_dom_name_iter[dom_name]+1)
                     tg_dom_name_iter[dom_name] += 1
             
@@ -1948,8 +2002,8 @@ def create_chopped_proteomes(inputs):
                                         continue
                                     end_coord = prev_end_coord + len(tg_seq_chunk) - 1
                                     if len(tg_seq_chunk) >= minimal_length:
-                                        dn = sample + '|' + dom_start_names[tg + '|' + str(prev_end_coord-1)]
-                                        if dom_start_names[tg + '|' + str(prev_end_coord-1)] == 'NA':
+                                        dn = sample + '|' + dom_start_names[tg + '|' + str(prev_end_coord)]
+                                        if dom_start_names[tg + '|' + str(prev_end_coord)] == 'NA':
                                             dn = sample + '|' + tg + '|inter-domain_region|' + str(tg_interdomain_index)
                                             tg_interdomain_index += 1
                                         cpf_handle.write('>' + dn + '\n' + str(tg_seq_chunk) + '\n')
@@ -2002,6 +2056,7 @@ def integrate_mge_proteins_into_orthogroups(
     threads: int = 1,
     ultra_sens: bool = False,
     evalue_cutoff: float = 1e-3,
+    min_coverage: Any = None,
     log_object: Any = None,
 ) -> None:
     """
@@ -2125,7 +2180,7 @@ def integrate_mge_proteins_into_orthogroups(
             '--threads', str(threads),
             '--' + sensitivity,
             '--evalue', str(evalue_cutoff),
-            '--max-target-seqs', '10'  # Only keep best 10 hits per query
+            '--max-target-seqs', '11'  # Only keep best 11 hits per query - to account for self-hit
         ]
         run_cmd(diamond_blastp_cmd, log_object, check_files=[mge_reflexive_diamond_output])
 
@@ -2135,13 +2190,18 @@ def integrate_mge_proteins_into_orthogroups(
                 for line in of:
                     line = line.strip('\n')
                     ls = line.split('\t')
-                    if len(ls) >= 12:
+                    if len(ls) >= 14:
                         query = ls[0]
                         hit = ls[1]
                         qcovhsp = float(ls[12])
                         scovhsp = float(ls[13])
                         if query == hit: continue
-                        if qcovhsp < 0.5 or scovhsp < 0.5: continue
+                        # Optional coverage filter (off by default). qcovhsp/scovhsp are
+                        # reported by DIAMOND as percentages (0-100). Without a filter,
+                        # chained clusters spanning several OGs are left as singletons
+                        # below, which keeps false-positive assignments low.
+                        if min_coverage is not None and (qcovhsp < min_coverage or scovhsp < min_coverage):
+                            continue
                         plf.write(f"{query} {hit}\n")
 
         # Run slclust with explicit file redirection (shell operators don't work with subprocess.run without shell=True)

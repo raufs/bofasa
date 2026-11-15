@@ -2,7 +2,7 @@
 Alignment functions for bofasa.
 
 This module contains functions for creating multiple sequence alignments
-using MUSCLE super5 alignment tool.
+using FAMSA (default) or MUSCLE super5.
 """
 
 import os
@@ -13,23 +13,51 @@ from concurrent.futures import ThreadPoolExecutor
 from collections import defaultdict
 from typing import Any, Dict, List, Set
 from Bio import SeqIO
-from .utils import assess_job_intensity, setup_ready_directory, _iter_progress, multi_process
+from .utils import assess_job_intensity, setup_ready_directory, _iter_progress, multi_process, thread_imap
 from . import config
+
+
+def build_alignment_cmd(prot_file: str, prot_algn_file: str, threads: int,
+                        aligner: str = config.DEFAULT_ALIGNER) -> List[str]:
+    """
+    Build the command line for the requested multiple sequence aligner.
+
+    Parameters:
+    -----------
+    prot_file : str
+        Input (unaligned) protein FASTA file
+    prot_algn_file : str
+        Output alignment FASTA file
+    threads : int
+        Number of threads for the aligner
+    aligner : str, default=config.DEFAULT_ALIGNER
+        Either "famsa" or "muscle" (MUSCLE super5)
+    """
+    if aligner == "famsa":
+        return ["famsa", "-t", str(threads), prot_file, prot_algn_file]
+    if aligner == "muscle":
+        return ["muscle", "-super5", prot_file, "-threads", str(threads),
+                "-output", prot_algn_file]
+    raise ValueError(
+        f"Unsupported aligner '{aligner}'; choose from {config.ALIGNMENT_METHODS}"
+    )
 
 
 def run_alignment(inputs) -> None:
     """
-    Create protein alignments using MUSCLE super5.
+    Create a protein alignment using FAMSA (default) or MUSCLE super5.
 
     Parameters:
     -----------
-    inputs : list[str]
-        List of inputs for the MUSCLE super5 alignment job
+    inputs : list
+        List of inputs for the alignment job
         prot_file: str,
         prot_algn_file: str,
         threads: int,
+        aligner: str (optional, defaults to config.DEFAULT_ALIGNER)
     """
-    prot_file, prot_algn_file, threads = inputs
+    prot_file, prot_algn_file, threads = inputs[:3]
+    aligner = inputs[3] if len(inputs) > 3 else config.DEFAULT_ALIGNER
     try:
         # Check if input file exists and has sequences
         try:
@@ -41,14 +69,13 @@ def run_alignment(inputs) -> None:
             sys.stderr.write(f"Error reading input file {prot_file}: {str(e)}\n")
             return False
 
-        cmd = f"muscle -super5 {prot_file} -threads {threads} -output {prot_algn_file}"
-        
-        # Run MUSCLE super5 command with shell redirection
+        cmd = build_alignment_cmd(prot_file, prot_algn_file, threads, aligner)
+
         try:
-            subprocess.call(cmd, shell=True, executable="/bin/bash", 
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except subprocess.CalledProcessError as e:
-            sys.stderr.write(f"MUSCLE super5 command failed for {prot_file}\n")
+            subprocess.run(cmd, check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            sys.stderr.write(f"{aligner} command failed for {prot_file}\n")
             return False
 
         # Verify alignment file was created and is not empty
@@ -89,6 +116,7 @@ def create_domain_alignments(
     log_object: Any,
     threads: int = config.DEFAULT_THREADS,  
     more_deterministic: bool = False,
+    aligner: str = config.DEFAULT_ALIGNER,
 ) -> None:
     """
     Create domain alignments using parallel processing.
@@ -109,6 +137,8 @@ def create_domain_alignments(
         Number of processes to use for parallel processing (each uses 1 thread)
     more_deterministic : bool, default=False
         Whether to use more deterministic settings for reproducible results
+    aligner : str, default=config.DEFAULT_ALIGNER
+        Multiple sequence aligner to use ("famsa" or "muscle")
     """
     try:
         # Get list of DOG sequence files
@@ -130,13 +160,13 @@ def create_domain_alignments(
 
             try:
                 if more_deterministic:
-                    all_jobs.append([seq_file, algn_file, 1])
+                    all_jobs.append([seq_file, algn_file, 1, aligner])
                 else:
                     heavy_job = assess_job_intensity(seq_file)
                     if heavy_job:
-                        heavy_jobs.append([seq_file, algn_file, threads])
+                        heavy_jobs.append([seq_file, algn_file, threads, aligner])
                     else:
-                        light_jobs.append([seq_file, algn_file, 1])
+                        light_jobs.append([seq_file, algn_file, 1, aligner])
             except Exception as e:
                 skipped_files += 1
                 log_object.error(
@@ -157,7 +187,7 @@ def create_domain_alignments(
 
     except Exception as e:
         log_object.error(
-            "Issues with creating domain protein alignments using MUSCLE super5"
+            f"Issues with creating domain protein alignments using {aligner}"
         )
         log_object.error(str(e))
         log_object.error(traceback.format_exc())
@@ -172,10 +202,11 @@ def create_protein_alignments(
     log_object: Any,
     threads: int = config.DEFAULT_THREADS,
     more_deterministic: bool = False,
+    aligner: str = config.DEFAULT_ALIGNER,
 ) -> None:
     """
-    Create protein alignments using MUSCLE super5 for full 
-    protein ortholog groups.
+    Create protein alignments using FAMSA (default) or MUSCLE super5
+    for full protein ortholog groups.
 
     Parameters:
     -----------
@@ -193,6 +224,8 @@ def create_protein_alignments(
         Number of threads to use for alignment
     more_deterministic : bool, default=False
         Whether to use more deterministic settings for reproducible results
+    aligner : str, default=config.DEFAULT_ALIGNER
+        Multiple sequence aligner to use ("famsa" or "muscle")
     """
     try:
         prot_to_og: Dict[str, Dict[str, str]] = defaultdict(dict)
@@ -203,6 +236,7 @@ def create_protein_alignments(
                 ls: List[str] = line.split("\t")
                 if i == 0:
                     samples = ls[1:]
+                    continue
                 og: str = ls[0]
                 for j, lts in enumerate(ls[1:]):
                     s: str = samples[j]
@@ -260,16 +294,16 @@ def create_protein_alignments(
                 prot_algn_file: str = os.path.join(prot_algn_dir, prefix + '.msa.faa')
 
                 if more_deterministic:
-                    all_jobs.append([prot_file, prot_algn_file, 1])
+                    all_jobs.append([prot_file, prot_algn_file, 1, aligner])
                 else:
                     try:
                         # Assess job intensity
                         heavy_job: bool = assess_job_intensity(prot_file)
 
                         if heavy_job:
-                            heavy_jobs.append([prot_file, prot_algn_file, threads])
+                            heavy_jobs.append([prot_file, prot_algn_file, threads, aligner])
                         else:
-                            light_jobs.append([prot_file, prot_algn_file, 1])
+                            light_jobs.append([prot_file, prot_algn_file, 1, aligner])
                     except Exception as e:
                         log_object.error(
                             f"Error assessing job intensity for {pf}: {str(e)}"
@@ -423,9 +457,10 @@ def create_near_scc_resolved_domain_protein_alignments(
     trimal_options: str = config.DEFAULT_TRIMAL_OPTIONS,
     allow_mge: bool = False,
     more_deterministic: bool = False,
+    aligner: str = config.DEFAULT_ALIGNER,
 ) -> None:
     """
-    Create protein alignments for near single-copy-core resolved domain ortholog groups using MUSCLE super5.
+    Create protein alignments for near single-copy-core resolved domain ortholog groups using FAMSA (default) or MUSCLE super5.
 
     Parameters:
     -----------
@@ -453,6 +488,8 @@ def create_near_scc_resolved_domain_protein_alignments(
         Whether to allow mobile genetic elements
     more_deterministic : bool, default=False
         Whether to use more deterministic settings for reproducible results
+    aligner : str, default=config.DEFAULT_ALIGNER
+        Multiple sequence aligner to use ("famsa" or "muscle")
     """
     try:
         # Create output directories
@@ -556,21 +593,21 @@ def create_near_scc_resolved_domain_protein_alignments(
             prot_algn_trim_file: str = os.path.join(dogs_trim_dir, prefix + '.trimmed.msa.faa')
 
             if more_deterministic:
-                all_jobs.append([prot_file, prot_algn_file, 1])
+                all_jobs.append([prot_file, prot_algn_file, 1, aligner])
             else:   
                 # Assess job intensity to determine threading strategy
                 heavy_job: bool = assess_job_intensity(prot_file)
 
                 if heavy_job:
-                    # For heavy jobs, run MUSCLE separately
-                    heavy_jobs.append([prot_file, prot_algn_file, threads])
-                    trimal_cmd: List[str] = ['trimal', '-in', prot_algn_file, '-out', prot_algn_trim_file] + trimal_options.split() + [log_object]
-                    msa_trim_cmds.append(trimal_cmd)
+                    # For heavy jobs, run the aligner separately with all threads
+                    heavy_jobs.append([prot_file, prot_algn_file, threads, aligner])
                 else:
-                    # For light jobs, run MUSCLE in parallel
-                    light_jobs.append([prot_file, prot_algn_file, 1])
-                    trimal_cmd: List[str] = ['trimal', '-in', prot_algn_file, '-out', prot_algn_trim_file] + trimal_options.split() + [log_object]
-                    msa_trim_cmds.append(trimal_cmd)
+                    # For light jobs, run the aligner in parallel
+                    light_jobs.append([prot_file, prot_algn_file, 1, aligner])
+
+            # Trim every alignment (in all branches, including more_deterministic)
+            trimal_cmd: List[str] = ['trimal', '-in', prot_algn_file, '-out', prot_algn_trim_file] + trimal_options.split() + [log_object]
+            msa_trim_cmds.append(trimal_cmd)
         
         _perform_parallelization(
             all_jobs,
@@ -588,11 +625,9 @@ def create_near_scc_resolved_domain_protein_alignments(
             msg: str = f"Running {len(msa_trim_cmds)} alignment and trimming jobs"
             log_object.info(msg)
 
-            import multiprocessing
-            p = multiprocessing.Pool(threads)
             try:
                 for _ in _iter_progress(
-                    p.imap_unordered(multi_process, msa_trim_cmds),
+                    thread_imap(multi_process, msa_trim_cmds, threads),
                     total=len(msa_trim_cmds),
                     description="Running alignments and trimming",
                 ):
@@ -601,8 +636,6 @@ def create_near_scc_resolved_domain_protein_alignments(
                 log_object.error("Error in alignment and trimming multiprocessing")
                 log_object.error(str(e))
                 log_object.error(traceback.format_exc())
-            finally:
-                p.close()
 
         # Create merged core genome alignment
         sample_seqs: Dict[str, str] = defaultdict(lambda: "")

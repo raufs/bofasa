@@ -199,17 +199,8 @@ def extract_og_pairs():
         assert method in valid_software
     except Exception:
         msg = 'Method %s not in set of accepted methods.' % method
-        sys.stderr.write(msg)
+        sys.stderr.write(msg + '\n')
         sys.exit(1)
-
-    outf_handle = sys.stdout
-    if outfile is not None:
-        outf_handle = open(outfile, 'w')
-
-    outf_handle.write('DATASET_HEATMAP\n')
-    outf_handle.write('SEPARATOR TAB\n')
-    outf_handle.write('DATASET_LABEL\t' + str(method) + '\n')
-    outf_handle.write('COLOR\t#000000\n')
 
     select_proteins = set([])
     if select_proteins_file is not None:
@@ -229,7 +220,7 @@ def extract_og_pairs():
             assert os.path.isfile(result_file)
         except Exception:
             msg = 'Error: Issue validating the existence of file: %s' % result_file
-            sys.stderr.write(msg)
+            sys.stderr.write(msg + '\n')
             sys.exit(1)
 
         ogs = set([])
@@ -266,25 +257,13 @@ def extract_og_pairs():
                     if len(lt_list) >= 2 or include_singletons:
                         ogs.add(og)
 
-        outf_handle.write('FIELD_LABELS\t' + '\t'.join(sorted(ogs)) + '\n')
-        outf_handle.write('DATA\n')
-        for lt in sorted(prot_ogs.keys()):
-            lt_og = prot_ogs[lt]
-            printlist = [lt]
-            for og in sorted(ogs):
-                if og == lt_og:
-                    printlist.append('1')
-                else:
-                    printlist.append('0')
-            outf_handle.write('\t'.join(printlist) + '\n')
-
     elif method == 'sonicparanoid':
         info_file = input_dir + 'last_run_info.txt'
         try:
             assert os.path.isfile(info_file)
         except Exception:
             msg = 'Error: Issue validating the existence of file: %s' % info_file
-            sys.stderr.write(msg)
+            sys.stderr.write(msg + '\n')
             sys.exit(1)
 
         result_file = None
@@ -299,7 +278,7 @@ def extract_og_pairs():
             assert os.path.isfile(result_file)
         except Exception:
             msg = 'Error: Issue validating the existence of file: %s' % result_file
-            sys.stderr.write(msg)
+            sys.stderr.write(msg + '\n')
             sys.exit(1)
 
         ogs = set([])
@@ -338,18 +317,6 @@ def extract_og_pairs():
                     if len(lt_list) >= 2 or include_singletons:
                         ogs.add(og)
 
-        outf_handle.write('FIELD_LABELS\t' + '\t'.join(sorted(ogs)) + '\n')
-        outf_handle.write('DATA\n')
-        for lt in sorted(prot_ogs.keys()):
-            lt_og = prot_ogs[lt]
-            printlist = [lt]
-            for og in sorted(ogs):
-                if og == lt_og:
-                    printlist.append('1')
-                else:
-                    printlist.append('0')
-            outf_handle.write('\t'.join(printlist) + '\n')
-
     elif method == 'panaroo':
         result_file = input_dir + 'gene_presence_absence.csv'
 
@@ -357,7 +324,7 @@ def extract_og_pairs():
             assert os.path.isfile(result_file)
         except Exception:
             msg = 'Error: Issue validating the existence of file: %s' % result_file
-            sys.stderr.write(msg)
+            sys.stderr.write(msg + '\n')
             sys.exit(1)
 
         ogs = set([])
@@ -393,18 +360,6 @@ def extract_og_pairs():
                     if len(lt_list) >= 2 or include_singletons:
                         ogs.add(og)
 
-        outf_handle.write('FIELD_LABELS\t' + '\t'.join(sorted(ogs)) + '\n')
-        outf_handle.write('DATA\n')
-        for lt in sorted(prot_ogs.keys()):
-            lt_og = prot_ogs[lt]
-            printlist = [lt]
-            for og in sorted(ogs):
-                if og == lt_og:
-                    printlist.append('1')
-                else:
-                    printlist.append('0')
-            outf_handle.write('\t'.join(printlist) + '\n')
-
     elif method == 'pirate':
         try:
             assert os.path.isdir(pirate_input_dir)
@@ -415,7 +370,7 @@ def extract_og_pairs():
 
         sample_ids_in_order = defaultdict(list)
         for f in os.listdir(pirate_input_dir):
-            s = '_'.join(f.split('.')[:-1])
+            s = '_'.join(f.split('.')[:-1]).replace('-', '_')
             with open(pirate_input_dir + f) as ogff:
                 for line in ogff:
                     if line.startswith('#'):
@@ -493,18 +448,6 @@ def extract_og_pairs():
                     if len(lt_list) >= 2 or include_singletons:
                         ogs.add(og)
 
-        outf_handle.write('FIELD_LABELS\t' + '\t'.join(sorted(ogs)) + '\n')
-        outf_handle.write('DATA\n')
-        for lt in sorted(prot_ogs.keys()):
-            lt_og = prot_ogs[lt]
-            printlist = [lt]
-            for og in sorted(ogs):
-                if og == lt_og:
-                    printlist.append('1')
-                else:
-                    printlist.append('0')
-            outf_handle.write('\t'.join(printlist) + '\n')
-
     elif method == 'scarap':
         result_file = input_dir + 'pangenome.tsv'
         try:
@@ -541,23 +484,13 @@ def extract_og_pairs():
                 if len(lt_list) >= 2 or include_singletons:
                     ogs.add(og)
 
-        outf_handle.write('FIELD_LABELS\t' + '\t'.join(sorted(ogs)) + '\n')
-        outf_handle.write('DATA\n')
-        for lt in sorted(prot_ogs.keys()):
-            lt_og = prot_ogs[lt]
-            printlist = [lt]
-            for og in sorted(ogs):
-                if og == lt_og:
-                    printlist.append('1')
-                else:
-                    printlist.append('0')
-            outf_handle.write('\t'.join(printlist) + '\n')
-
     elif method == 'orthofinder_og':
 
         subdirs = []
         for sd in os.listdir(input_dir):
-            subdirs.append(sd)
+            # ignore stray files (e.g. .DS_Store) and non-OrthoFinder dirs
+            if os.path.isdir(input_dir + sd) and sd.startswith('Results_'):
+                subdirs.append(sd)
 
         try:
             assert len(subdirs) == 1
@@ -608,23 +541,13 @@ def extract_og_pairs():
                     if len(lt_list) >= 2 or include_singletons:
                         ogs.add(og)
 
-        outf_handle.write('FIELD_LABELS\t' + '\t'.join(sorted(ogs)) + '\n')
-        outf_handle.write('DATA\n')
-        for lt in sorted(prot_ogs.keys()):
-            lt_og = prot_ogs[lt]
-            printlist = [lt]
-            for og in sorted(ogs):
-                if og == lt_og:
-                    printlist.append('1')
-                else:
-                    printlist.append('0')
-            outf_handle.write('\t'.join(printlist) + '\n')
-
     elif method == 'orthofinder_hog':
 
         subdirs = []
         for sd in os.listdir(input_dir):
-            subdirs.append(sd)
+            # ignore stray files (e.g. .DS_Store) and non-OrthoFinder dirs
+            if os.path.isdir(input_dir + sd) and sd.startswith('Results_'):
+                subdirs.append(sd)
 
         try:
             assert len(subdirs) == 1
@@ -677,17 +600,29 @@ def extract_og_pairs():
                     if len(lt_list) >= 2 or include_singletons:
                         ogs.add(og)
 
-        outf_handle.write('FIELD_LABELS\t' + '\t'.join(sorted(ogs)) + '\n')
-        outf_handle.write('DATA\n')
-        for lt in sorted(prot_ogs.keys()):
-            lt_og = prot_ogs[lt]
-            printlist = [lt]
-            for og in sorted(ogs):
-                if og == lt_og:
-                    printlist.append('1')
-                else:
-                    printlist.append('0')
-            outf_handle.write('\t'.join(printlist) + '\n')
+    # write output only after inputs have been validated and parsed
+    outf_handle = sys.stdout
+    if outfile is not None:
+        outf_handle = open(outfile, 'w')
+
+    outf_handle.write('DATASET_HEATMAP\n')
+    outf_handle.write('SEPARATOR TAB\n')
+    outf_handle.write('DATASET_LABEL\t' + str(method) + '\n')
+    outf_handle.write('COLOR\t#000000\n')
+    outf_handle.write('FIELD_LABELS\t' + '\t'.join(sorted(ogs)) + '\n')
+    outf_handle.write('DATA\n')
+    for lt in sorted(prot_ogs.keys()):
+        lt_og = prot_ogs[lt]
+        # skip proteins from OGs not reported (e.g. singletons without -is)
+        if lt_og not in ogs:
+            continue
+        printlist = [lt]
+        for og in sorted(ogs):
+            if og == lt_og:
+                printlist.append('1')
+            else:
+                printlist.append('0')
+        outf_handle.write('\t'.join(printlist) + '\n')
 
     if outfile is not None:
         outf_handle.close()

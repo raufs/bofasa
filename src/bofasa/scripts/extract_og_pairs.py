@@ -178,12 +178,10 @@ def extract_og_pairs():
         assert method in valid_software
     except Exception:
         msg = 'Method %s not in set of accepted methods.' % method
-        sys.stderr.write(msg)
+        sys.stderr.write(msg + '\n')
         sys.exit(1)
 
     outf_handle = sys.stdout
-    if outfile is not None:
-        outf_handle = open(outfile, 'w')
 
     if method == 'bofasa':
         result_file = input_dir + '/Final_Results/Protein_Ortholog_Groups.tsv'
@@ -191,8 +189,12 @@ def extract_og_pairs():
             assert os.path.isfile(result_file)
         except Exception:
             msg = 'Error: Issue validating the existence of file: %s' % result_file
-            sys.stderr.write(msg)
+            sys.stderr.write(msg + '\n')
             sys.exit(1)
+
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
 
         with open(result_file) as orf:
             for i, line in enumerate(orf):
@@ -218,8 +220,12 @@ def extract_og_pairs():
             assert os.path.isfile(result_file)
         except Exception:
             msg = 'Error: Issue validating the existence of file: %s' % result_file
-            sys.stderr.write(msg)
+            sys.stderr.write(msg + '\n')
             sys.exit(1)
+
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
 
         with open(result_file) as orf:
             for i, line in enumerate(orf):
@@ -243,7 +249,7 @@ def extract_og_pairs():
             assert os.path.isfile(info_file)
         except Exception:
             msg = 'Error: Issue validating the existence of file: %s' % info_file
-            sys.stderr.write(msg)
+            sys.stderr.write(msg + '\n')
             sys.exit(1)
 
         result_file = None
@@ -258,8 +264,12 @@ def extract_og_pairs():
             assert os.path.isfile(result_file)
         except Exception:
             msg = 'Error: Issue validating the existence of file: %s' % result_file
-            sys.stderr.write(msg)
+            sys.stderr.write(msg + '\n')
             sys.exit(1)
+
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
 
         with open(result_file) as orf:
             for i, line in enumerate(orf):
@@ -288,8 +298,12 @@ def extract_og_pairs():
             assert os.path.isfile(result_file)
         except Exception:
             msg = 'Error: Issue validating the existence of file: %s' % result_file
-            sys.stderr.write(msg)
+            sys.stderr.write(msg + '\n')
             sys.exit(1)
+
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
 
         with open(result_file) as orf:
             for i, line in enumerate(orf):
@@ -359,6 +373,10 @@ def extract_og_pairs():
             sys.stderr.write(msg + '\n')
             sys.exit(1)
 
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
+
         with open(result_file) as orf:
             for i, line in enumerate(orf):
                 if i == 0:
@@ -392,6 +410,10 @@ def extract_og_pairs():
             sys.exit(1)
 
         og_lts = defaultdict(set)
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
+
         with open(result_file) as orf:
             for i, line in enumerate(orf):
                 line = line.rstrip('\n')
@@ -408,7 +430,9 @@ def extract_og_pairs():
     elif method == 'orthofinder_og':
         subdirs = []
         for sd in os.listdir(input_dir):
-            subdirs.append(sd)
+            # ignore stray files (e.g. .DS_Store) and non-OrthoFinder dirs
+            if os.path.isdir(input_dir + sd) and sd.startswith('Results_'):
+                subdirs.append(sd)
 
         try:
             assert len(subdirs) == 1
@@ -425,6 +449,10 @@ def extract_og_pairs():
             msg = 'File not found %s' % result_file
             sys.stderr.write(msg + '\n')
             sys.exit(1)
+
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
 
         with open(result_file) as orf:
             for i, line in enumerate(orf):
@@ -447,7 +475,9 @@ def extract_og_pairs():
     elif method == 'orthofinder_hog':
         subdirs = []
         for sd in os.listdir(input_dir):
-            subdirs.append(sd)
+            # ignore stray files (e.g. .DS_Store) and non-OrthoFinder dirs
+            if os.path.isdir(input_dir + sd) and sd.startswith('Results_'):
+                subdirs.append(sd)
 
         try:
             assert len(subdirs) == 1
@@ -466,6 +496,10 @@ def extract_og_pairs():
             msg = 'File not found %s' % result_file
             sys.stderr.write(msg + '\n')
             sys.exit(1)
+
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
 
         with open(result_file) as orf:
             for i, line in enumerate(orf):

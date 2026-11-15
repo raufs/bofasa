@@ -6,7 +6,6 @@ phylogenetic refinement, and result processing.
 """
 
 import copy
-import multiprocessing
 import os
 import random
 import statistics   
@@ -26,7 +25,7 @@ with warnings.catch_warnings():
     from ete3 import Tree
 from scipy.spatial import distance
 from . import config
-from .utils import get_version, setup_ready_directory, run_cmd, _iter_progress
+from .utils import get_version, setup_ready_directory, run_cmd, _iter_progress, create_pool
 from .alignment import create_domain_alignments
 import itertools
 
@@ -37,7 +36,6 @@ single_copy_dogs: Set[str] = set([])
 largely_idr_dogs: Set[str] = set([])
 protein_dogs: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
 dog_conservation: Dict[str, Any] = {}
-tree_obj: Any = None
 
 version: str = get_version()
 
@@ -109,9 +107,8 @@ def run_set_of_protein_comparisons(inputs: Tuple[str, str, float, Dict[str, Dict
     """
     try:
         input_listing_file, result_file, dj = inputs
-        outf_handle = open(result_file, "w")
 
-        with open(input_listing_file) as oilf:
+        with open(input_listing_file) as oilf, open(result_file, "w") as outf_handle:
             for line in oilf:
                 line = line.strip()
                 p1, p2 = line.split('\t')
@@ -160,7 +157,6 @@ def run_set_of_protein_comparisons(inputs: Tuple[str, str, float, Dict[str, Dict
                     if jaccard_index >= threshold:
                         outf_handle.write(p1 + '\t' + p2 + '\t' + str(jaccard_index*100.0) + '\n')
 
-        outf_handle.close()
         return result_file
     except Exception as e:
         msg = (
@@ -170,7 +166,7 @@ def run_set_of_protein_comparisons(inputs: Tuple[str, str, float, Dict[str, Dict
         )
         sys.stderr.write(msg + '\n')
         sys.stderr.write(traceback.format_exc() + '\n')
-        return None
+        raise
 
 
 def determine_protein_orthogroups(
@@ -289,36 +285,36 @@ def determine_protein_orthogroups(
             with concurrent.futures.ThreadPoolExecutor(
                 max_workers=num_batches
             ) as executor:
-                results = []
-                future_to_input = {
-                    executor.submit(run_set_of_protein_comparisons, input_data): input_data
-                    for input_data in pairwise_assessment_inputs
+                results = {}
+                future_to_index = {
+                    executor.submit(run_set_of_protein_comparisons, input_data): idx
+                    for idx, input_data in enumerate(pairwise_assessment_inputs)
                 }
                 
                 for future in _iter_progress(
-                    concurrent.futures.as_completed(future_to_input),
+                    concurrent.futures.as_completed(future_to_index),
                     total=num_batches,
                     description="Protein comparisons",
                 ):
                     try:
                         result = future.result()
-                        if result is not None:
-                            results.append(result)
                     except Exception as e:
-                        input_data = future_to_input[future]
+                        result = None
                         msg = f'Failed during protein comparison job: {e}'
                         log_object.error(msg)
                         sys.stderr.write(msg + '\n')
-                        sys.stderr.write(traceback.format_exc() + '\n')
-                        # Continue with other jobs instead of exiting
+                    if result is None:
+                        msg = 'Protein comparison job failed for batch %d; exiting.' % future_to_index[future]
+                        log_object.error(msg)
+                        sys.stderr.write(msg + '\n')
+                        sys.exit(1)
+                    results[future_to_index[future]] = result
                 
-                # Write results in sorted order
-                for result in results:
-                    if result is not None:
-                        with open(result, 'r') as f:
-                            content = f.read()
-                            with open(pairwise_file, 'a') as out_f:
-                                out_f.write(content)
+                # Write results in batch (input) order for deterministic MCL input
+                with open(pairwise_file, 'w') as out_f:
+                    for idx in sorted(results):
+                        with open(results[idx], 'r') as f:
+                            out_f.write(f.read())
         except Exception as e:
             msg = 'Failed during threading protein comparisons'
             log_object.error(msg)
@@ -492,6 +488,7 @@ def resolve_orthogroups_using_phylogenetics(
     trimal_options: str = config.DEFAULT_TRIMAL_OPTIONS,
     threads: int = config.DEFAULT_THREADS,
     more_deterministic: bool = False,
+    aligner: str = config.DEFAULT_ALIGNER,
 ) -> None:
     """
     Resolve orthogroups using phylogenetic analysis.
@@ -509,6 +506,8 @@ def resolve_orthogroups_using_phylogenetics(
         rooting_seeds: Number of rooting seeds
         trimal_options: TrimAl options
         threads: Number of threads to use
+        more_deterministic: Whether to use more deterministic settings
+        aligner: Multiple sequence aligner to use ("famsa" or "muscle")
 
     Returns:
         None: Writes results to result_file
@@ -521,18 +520,19 @@ def resolve_orthogroups_using_phylogenetics(
         spl_full_dir = resdog_dir + 'Split_DOG_Listings/'
         setup_ready_directory([msa_dir, trim_dir, tre_dir, spl_full_dir], overwrite_mode="overwrite")
 
-        # Create protein alignments using MUSCLE super5
-        msg = 'Running multiple-sequence alignments using MUSCLE super5.'
+        # Create protein alignments
+        aligner_name = 'MUSCLE super5' if aligner == 'muscle' else 'FAMSA'
+        msg = f'Running multiple-sequence alignments using {aligner_name}.'
         sys.stderr.write(msg + '\n')
         log_object.info(msg)
 
-        # Use MUSCLE super5 for alignments
         create_domain_alignments(
             dog_seqs_dir=orthofinder_fasta_dir,
             dog_algn_dir=msa_dir,
             log_object=log_object,
             threads=threads,
             more_deterministic=more_deterministic,
+            aligner=aligner,
         )
 
         # Prepare TrimAl commands for trimming
@@ -560,38 +560,37 @@ def resolve_orthogroups_using_phylogenetics(
         
         if not trimal_cmds:
             log_object.warning("No TrimAl commands to run - no valid MSA files found")
-            return
-            
-        log_object.info(f"Running {len(trimal_cmds)} TrimAl commands with {threads} processes")
+        else:
+            log_object.info(f"Running {len(trimal_cmds)} TrimAl commands with {threads} processes")
         
-        # Run TrimAl commands using threading with reduced logging
-        successful_trimal = 0
-        failed_trimal = 0
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
-                future_to_cmd = {
-                    executor.submit(run_cmd, cmd, None): cmd for cmd in trimal_cmds
-                }
-                for future in _iter_progress(
-                    concurrent.futures.as_completed(future_to_cmd),
-                    total=len(trimal_cmds),
-                    description="Running TrimAl",
-                ):
-                    cmd = future_to_cmd[future]
-                    try:
-                        future.result()
-                        successful_trimal += 1
-                    except Exception:
-                        failed_trimal += 1
-                        cmd_str = ' '.join(cmd)
-                        log_object.error(f"TrimAl command failed: {cmd_str}")
-                        continue
-        finally:
-            # Log summary of TrimAl execution
-            log_object.info(
-                f"TrimAl summary: {successful_trimal} successful, "
-                f"{failed_trimal} failed out of {len(trimal_cmds)} total commands"
-            )
+            # Run TrimAl commands using threading with reduced logging
+            successful_trimal = 0
+            failed_trimal = 0
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
+                    future_to_cmd = {
+                        executor.submit(run_cmd, cmd, None): cmd for cmd in trimal_cmds
+                    }
+                    for future in _iter_progress(
+                        concurrent.futures.as_completed(future_to_cmd),
+                        total=len(trimal_cmds),
+                        description="Running TrimAl",
+                    ):
+                        cmd = future_to_cmd[future]
+                        try:
+                            future.result()
+                            successful_trimal += 1
+                        except Exception:
+                            failed_trimal += 1
+                            cmd_str = ' '.join(cmd)
+                            log_object.error(f"TrimAl command failed: {cmd_str}")
+                            continue
+            finally:
+                # Log summary of TrimAl execution
+                log_object.info(
+                    f"TrimAl summary: {successful_trimal} successful, "
+                    f"{failed_trimal} failed out of {len(trimal_cmds)} total commands"
+                )
 
         # Create phylogenetic trees
         fasttree_cmds = []
@@ -629,38 +628,37 @@ def resolve_orthogroups_using_phylogenetics(
         
         if not fasttree_cmds:
             log_object.warning("No FastTree commands to run - no valid alignment files found")
-            return
-            
-        log_object.info(f"Running {len(fasttree_cmds)} FastTree commands")
+        else:
+            log_object.info(f"Running {len(fasttree_cmds)} FastTree commands")
         
-        # Run FastTree commands using threading with reduced logging
-        successful_fasttree = 0
-        failed_fasttree = 0
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
-                future_to_cmd = {
-                    executor.submit(run_cmd, cmd, None): cmd for cmd in fasttree_cmds
-                }
-                for future in _iter_progress(
-                    concurrent.futures.as_completed(future_to_cmd),
-                    total=len(fasttree_cmds),
-                    description="Running FastTree",
-                ):
-                    cmd = future_to_cmd[future]
-                    try:
-                        future.result()
-                        successful_fasttree += 1
-                    except Exception:
-                        failed_fasttree += 1
-                        cmd_str = ' '.join(cmd)
-                        log_object.error(f"FastTree command failed: {cmd_str}")
-                        continue
-        finally:
-            # Log summary of FastTree execution
-            log_object.info(
-                f"FastTree summary: {successful_fasttree} successful, "
-                f"{failed_fasttree} failed out of {len(fasttree_cmds)} total commands"
-            )
+            # Run FastTree commands using threading with reduced logging
+            successful_fasttree = 0
+            failed_fasttree = 0
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
+                    future_to_cmd = {
+                        executor.submit(run_cmd, cmd, None): cmd for cmd in fasttree_cmds
+                    }
+                    for future in _iter_progress(
+                        concurrent.futures.as_completed(future_to_cmd),
+                        total=len(fasttree_cmds),
+                        description="Running FastTree",
+                    ):
+                        cmd = future_to_cmd[future]
+                        try:
+                            future.result()
+                            successful_fasttree += 1
+                        except Exception:
+                            failed_fasttree += 1
+                            cmd_str = ' '.join(cmd)
+                            log_object.error(f"FastTree command failed: {cmd_str}")
+                            continue
+            finally:
+                # Log summary of FastTree execution
+                log_object.info(
+                    f"FastTree summary: {successful_fasttree} successful, "
+                    f"{failed_fasttree} failed out of {len(fasttree_cmds)} total commands"
+                )
 
         # Read samples from OrthoFinder TSV file
         samples = []
@@ -669,7 +667,7 @@ def resolve_orthogroups_using_phylogenetics(
                 line = line.strip('\n')
                 ls = line.split('\t')
                 if i == 0:
-                    samples = ['.ccds'.join(x.split('.ccds')[:-1]) for x in ls[1:]]
+                    samples = [x[:-len('.ccds')] if x.endswith('.ccds') else x for x in ls[1:]]
                     break
 
         # Set up inputs for splitting DOGs using phylogenetics
@@ -682,10 +680,8 @@ def resolve_orthogroups_using_phylogenetics(
             if len(t.get_leaves()) < 500:
                 split_inputs.append([dog, tre_file, spl_full_file, skip_merge_back_flag, rooting_seeds, fixation_index_cutoff, 1, log_object])
             else:
-                global tree_obj
-                tree_obj = t
+                # Large trees are split serially in the main process to limit memory.
                 split_dogs([dog, tre_file, spl_full_file, skip_merge_back_flag, rooting_seeds, fixation_index_cutoff, threads, log_object])
-                tree_obj = None
                 
         # Run phylogenetic splitting of orthogroups
         msg = 'Using phylogenetics to split coarse domain resolution ortholog groups.'
@@ -693,9 +689,17 @@ def resolve_orthogroups_using_phylogenetics(
         log_object.info(msg)
         
         # Use multiprocessing for domain ortholog group splitting
-        p = multiprocessing.Pool(threads)
-        for _ in _iter_progress(p.imap_unordered(split_dogs, split_inputs), total=len(split_inputs), description="Domain OG splits"):
-            pass
+        p = create_pool(threads)
+        try:
+            for _ in _iter_progress(p.imap_unordered(split_dogs, split_inputs), total=len(split_inputs), description="Domain OG splits"):
+                pass
+        except Exception as e:
+            p.terminate()
+            msg = f"Phylogenetic splitting of a domain ortholog group failed: {e}"
+            log_object.error(msg)
+            log_object.error(traceback.format_exc())
+            sys.stderr.write(msg + '\n')
+            sys.exit(1)
         p.close()
 
         # Write final results file
@@ -780,7 +784,8 @@ def combine_orthofinder_results(
                 line = line.strip('\n')
                 ls = line.split('\t')
                 if i == 0:
-                    samples = ls[1:]
+                    # Strip trailing '.ccds' from OrthoFinder sample names (as in resolve_orthogroups_using_phylogenetics)
+                    samples = [x[:-len('.ccds')] if x.endswith('.ccds') else x for x in ls[1:]]
                     break
 
         # Combine main results and singletons
@@ -1367,7 +1372,11 @@ def merge_back_dog_partitions(
             continue
         pi_within = statistics.mean(within_dists)
         pi_between = statistics.mean(between_dists)
-        fix_index = (pi_between - pi_within) / pi_between
+        if pi_between == 0:
+            # Identical sequences (zero branch lengths): partitions are not differentiated.
+            fix_index = 0.0
+        else:
+            fix_index = (pi_between - pi_within) / pi_between
 
         if fix_index > fixation_index_cutoff:
             continue
@@ -1393,21 +1402,45 @@ def merge_back_dog_partitions(
         return split_partitions
 
 
-def pairwise_dist(inputs: List[Any]) -> None:
+def all_pairwise_leaf_distances(t: Any) -> Dict[Tuple[str, str], float]:
     """
-    Calculate pairwise distance between two tree leaves.
+    Compute patristic distances between all pairs of leaves in a single pass.
+
+    Uses dist(a, b) = depth(a) + depth(b) - 2 * depth(LCA(a, b)), where depth is
+    the summed branch length from the root. Each pair is visited exactly once, at
+    its lowest common ancestor, so this is O(n^2) in the number of leaves instead
+    of calling t.get_distance() (itself O(tree height)) for every pair. Equivalent
+    to t.get_distance(l1, l2) for all leaf pairs; no multiprocessing required.
 
     Args:
-        inputs: List containing [d, l1, l2] where d is distance dict, 
-        l1, l2 are leaves
+        t: ete3 Tree object.
 
     Returns:
-        None: Updates distance dictionary
+        Dict mapping sorted (leaf1, leaf2) name tuples to their distance, plus
+        (leaf, leaf) -> 0.0 self-distances.
     """
-    d, l1, l2 = inputs
-    dist = tree_obj.get_distance(l1, l2)
-    key = tuple(sorted([l1, l2]))
-    d[key] = dist
+    depth: Dict[Any, float] = {}
+    for n in t.traverse('preorder'):
+        depth[n] = 0.0 if n.is_root() else depth[n.up] + n.dist
+
+    pw_dists: Dict[Tuple[str, str], float] = {}
+    leaves_below: Dict[Any, List[Any]] = {}
+    for n in t.traverse('postorder'):
+        if n.is_leaf():
+            leaves_below[n] = [n]
+            pw_dists[(n.name, n.name)] = 0.0
+            continue
+        twice_lca_depth = 2.0 * depth[n]
+        child_leaf_sets = [leaves_below.pop(c) for c in n.children]
+        for ci in range(len(child_leaf_sets)):
+            for cj in range(ci + 1, len(child_leaf_sets)):
+                for a in child_leaf_sets[ci]:
+                    da = depth[a] - twice_lca_depth
+                    for b in child_leaf_sets[cj]:
+                        key = (a.name, b.name) if a.name <= b.name else (b.name, a.name)
+                        pw_dists[key] = da + depth[b]
+        leaves_below[n] = [l for ls in child_leaf_sets for l in ls]
+    return pw_dists
 
 
 def split_dogs(inputs: List[Any]) -> None:
@@ -1442,33 +1475,10 @@ def split_dogs(inputs: List[Any]) -> None:
                 samples_with_og.add(s)
                 leafs.add(n.name)
 
-        pw_dists = None
-        if threads > 1:
-            with multiprocessing.Manager() as manager:
-                d = manager.dict()
-                pairs = []
-                for i, l1 in enumerate(leafs):
-                    for j, l2 in enumerate(leafs):
-                        if i < j:
-                            pairs.append([d, l1, l2])
-
-                with manager.Pool(threads) as pool:
-                    pool.map(pairwise_dist, pairs)
-
-                pw_dists = dict(d)
-        else:
-            pw_dists = {}
-            for i, l1 in enumerate(leafs):
-                for j, l2 in enumerate(leafs):
-                    if i >= j:
-                        continue
-                    dist = t.get_distance(l1, l2)
-                    key = tuple(sorted([l1, l2]))
-                    pw_dists[key] = dist
-        
-        # Add self-distances
-        for l in leafs:
-            pw_dists[tuple([l, l])] = 0.0
+        # All pairwise leaf distances (incl. self-distances) in one pass over the
+        # tree. Previously large trees used a Manager pool reading a module-level
+        # global tree, which is None in workers under macOS's default 'spawn'.
+        pw_dists = all_pairwise_leaf_distances(t)
 
         all_rooting_partitions = []
         possible_nodes_for_rooting = set([])
@@ -1478,8 +1488,11 @@ def split_dogs(inputs: List[Any]) -> None:
             possible_nodes_for_rooting.add(n.name)
 
         if len(possible_nodes_for_rooting) > (rooting_seeds - 1):
+            # Per-OG RNG over a sorted population so results do not depend on
+            # PYTHONHASHSEED or on the order tasks are processed in worker processes.
+            rng = random.Random(f"12345:{og}")
             possible_nodes_for_rooting = set(
-                random.sample(list(possible_nodes_for_rooting), rooting_seeds - 1)
+                rng.sample(sorted(possible_nodes_for_rooting), rooting_seeds - 1)
             )
 
         if len(possible_nodes_for_rooting) > 0:
@@ -1564,10 +1577,13 @@ def split_dogs(inputs: List[Any]) -> None:
             spl_outf.close()
 
         return
-    except Exception as e:
+    except (Exception, SystemExit) as e:
+        # Helpers call sys.exit(1) on error; inside a multiprocessing pool worker a
+        # SystemExit kills the worker and the parent's imap_unordered hangs forever.
+        # Convert to a regular exception so it propagates to the parent.
         msg = (
             f'Issue with splitting ortholog group {og} - based on phylo from full MSA.'
         )
         log_object.error(msg)
         log_object.error(traceback.format_exc())
-        sys.exit(1)
+        raise RuntimeError(msg + '\n' + traceback.format_exc()) from None

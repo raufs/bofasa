@@ -4,7 +4,12 @@ Bacterial Orthology Finding And Syntenic Analysis (bofasa)
 A tool for high-quality orthology inference across multiple bacterial species.
 """
 
-__version__ = "1.2.0"
+import importlib.metadata as _importlib_metadata
+
+try:
+    __version__ = str(_importlib_metadata.version("bofasa"))
+except _importlib_metadata.PackageNotFoundError:
+    __version__ = "unknown"
 __author__ = "Rauf Salamzade"
 __email__ = "salamzader@gmail.com"
 

@@ -27,6 +27,7 @@ dependencies:
   - xlsxwriter
   - hmmer
   - trimal
+  - famsa
   - muscle=5.1
   - hmmer
   - xgboost=2.1.3

@@ -192,7 +192,7 @@ Construction of Modified  Domain-Resolution Coarse Ortholog Group by Genome/MGE 
 ```
 Coarse Domain-Resolution Ortholog Groups from OrthoFinder
   ↓
-Per-Group Multiple Sequence Alignment using MUSCLE super5
+Per-Group Multiple Sequence Alignment using FAMSA (or MUSCLE super5)
   ↓
 Phylogenetic Tree Construction using FastTree2
   ↓
@@ -203,7 +203,7 @@ Refined Domain Ortholog Groups
 
 **Algorithm:**
 For each **coarse domain-resolution ortholog group**:
-   - Build multiple sequence alignment (default: MUSCLE in `super5` mode).
+   - Build multiple sequence alignment (default: FAMSA; MUSCLE in `super5` mode can be requested via `--aligner muscle`).
    - Trim MSA using trimAl (in `strict` mode).
    - Construct phylogenetic tree (default: FastTree2).
    - Apply midpoint-rooting. If `-rs N` flag is specified, then root the tree randomly _N_-1 amount of times and once using midpoint. 
@@ -287,7 +287,9 @@ Re-assesses each internal node of coarse ortholog group phylogenies that include
   - Best partioning is selected based on scoring:
      - Sort by: (1) tree score, (2) number of groups, (3) total branch length and choose partition with lowest combined score
   
-- `--more-deterministic`: Run sequence alignments via MUSCLE sequentially using 1 thread to make more deterministic, based on discussion: https://github.com/rcedgar/muscle/issues/95
+- `-al, --aligner`: Multiple sequence aligner to use: `famsa` (default) or `muscle` (MUSCLE super5).
+
+- `--more-deterministic`: Run sequence alignments sequentially using 1 thread to make more deterministic, based on discussion: https://github.com/rcedgar/muscle/issues/95
 
 ## Step 4: Protein Ortholog Group Determination
 
@@ -453,4 +455,5 @@ And the underlying tools:
 - **geNomad**: Camargo, A.P. et al. (2023) Nature Biotechnology
 - **FastTree**: Price, M.N. et al. (2010) PLoS One (domain-level phylogeny)
 - **FastME**: Lefort, V. et al. (2015) Molecular Biology and Evolution (protein-level phylogeny)
+- **FAMSA**: Deorowicz, S. et al. (2016) Scientific Reports
 - **MUSCLE**: Edgar, R.C. (2022) Nature Communications

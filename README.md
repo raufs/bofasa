@@ -71,7 +71,7 @@ bash run_tests.sh
 
 ## Quick Start
 
-bofasa provides a unified command-line interface with two main subcommands: **`bofasa prep`** and **`bofasa run`**. For a more detailed look at the algorithms behind bofasa, check out the `ALGORITHM.md` document or [this Wiki page](https://github.com/raufs/bofasa/wiki/1.-Algorithm-Overview).
+bofasa provides a unified command-line interface with two main subcommands: **`bofasa prep`** and **`bofasa run`**. For a more detailed look at the algorithms behind bofasa, check out the `ALGORITHM.md` document or [this Wiki page](https://github.com/raufs/bofasa/wiki/1.-Algorithm-Overview). A standalone **`bofasa domscape`** subcommand is also available for quickly building a Pfam domain by genome matrix ([see below](#bofasa-domscape---pfam-domain-matrix)).
 
 ### 0. Setup databases (Pfam, geNomad, and ISFinder; *needs to be done only once!*)
 
@@ -100,6 +100,12 @@ bofasa prep -i genome1.fasta genome2.fasta genome3.fasta genome4.fasta -o prep_o
 bofasa run -i prep_output/ -o analysis_output/ -c 8
 ```
 
+### Optional: Pfam domain matrix (independent of `prep`/`run`)
+
+```bash
+bofasa domscape -i genome1.fna genome2.fna genome3.fna -o domscape_output/ -c 8
+```
+
 ## Usage
 
 ### Main Interface
@@ -124,6 +130,7 @@ Commands:
   setup    Set up annotation databases
   prep     Prepare genomic data for analysis
   run      Run the main BOFASA analysis pipeline
+  domscape Count Pfam domain-carrying proteins across genomes
 
 For detailed help on any command, use: bofasa <command> --help
 
@@ -161,8 +168,8 @@ bofasa prep -i <genome1.fasta> <genome2.gbk> ... -o <output-dir> [OPTIONS]
 - `-rg, --run-genomad`: Run genomad for phage/plasmid annotation
 - `-emg, --extract-mge-genomes`: Extract mobile genetic element (phage/plasmid) genomes identified by genomad (requires -rg)
 - `-sds, --skip-domain-splitting`: Skip domain-annotation based splitting of coding sequences
-- `-mm, --max-memory`: Memory limit in GB (default: 32)
-- `x, --ignore-upperbound-limit`: Ignore the upper bound limit for the number of genomes to process (default: 200)
+- `-mm, --max-memory`: Optional cap on virtual memory (address space) in GB, not resident RAM; it usually needs to be well above real RAM use (default: no limit)
+- `-x, --ignore-upperbound-limit`: Ignore the upper bound limit for the number of genomes to process (default: 200)
 - `-y, --auto`: Automatically set `y` for all interactive prompts
 
 #### `bofasa run` - Execute Analysis
@@ -186,12 +193,42 @@ bofasa run -i <bofasa-prep-dir> -o <output-dir> [OPTIONS]
 - `-spr, --skip-phylo-refine`: Skip phylogenetic refinement
 - `-rs, --rooting-seeds`: Rooting seeds (default: 1)
 - `-us, --ultra-sens`: Use ultra-sensitivity mode
+- `-mmc, --mge-min-coverage`: Minimum query and subject coverage (%) of MGE-vs-MGE hits used to cluster MGE proteins (only with `prep -emg`; default: off)
 - `-mi, --mcl-inflation`: MCL inflation parameter (default: 1.2)
 - `-ns, --near-scc-prop`: Near SCC proportion (default: 0.95)
 - `-c, --threads`: Number of threads (default: 4)
 - `-mrd, --max-recursion-depth`: Max recursion depth (default: 5000)
-- `-mm, --max-memory`: Memory limit in GB (default: 32)
+- `-mm, --max-memory`: Optional cap on virtual memory (address space) in GB, not resident RAM; it usually needs to be well above real RAM use (default: no limit)
+- `-al, --aligner`: Multiple sequence aligner: `famsa` (default) or `muscle` (MUSCLE super5)
+- `--more-deterministic`: Use more deterministic settings for reproducible results
 - `-y, --auto`: Automatically set `y` for all interactive prompts
+
+#### `bofasa domscape` - Pfam Domain Matrix
+A lightweight, standalone alternative to the full pipeline: annotates proteins in each genome with Pfam-A (gathering thresholds) and reports how many proteins in each genome carry each Pfam domain. A protein is counted once per domain even if it has multiple copies of it. Requires the Pfam database from `bofasa setup`. There is no upper limit on the number of genomes, and interrupted runs resume when re-run with the same output directory.
+
+```bash
+bofasa domscape -i <genome1.fna> <genome2.gbk> ... -o <output-dir> [OPTIONS]
+bofasa domscape -p <proteome1.faa> <proteome2.faa> ... -o <output-dir> [OPTIONS]
+```
+
+**Inputs (at least one required):**
+- `-i, --input-genomes`: Input genomes (FASTA or GenBank files)
+- `-p, --input-proteomes`: Input proteomes (protein FASTA; sample names are taken from file names)
+- `-a, --annotation-dirs`: Annotation directories (Prokka or Bakta output directories)
+
+**Optional Arguments:**
+- `-c, --threads`: Number of threads (default: 4)
+- `-gcm, --gene-calling-method`: Gene calling method for FASTA genomes (pyrodigal/prodigal, default: pyrodigal)
+- `-m, --meta-mode`: Use meta-mode for gene calling
+- `-ml, --min-length`: Minimum protein length to keep from genomes/annotation directories; not applied to input proteomes (default: 20)
+- `-bs, --batch-size`: Number of proteomes searched against Pfam together; larger is faster but uses more memory (default: 100)
+- `-mm, --max-memory`: Optional cap on virtual memory (address space) in GB, not resident RAM; it usually needs to be well above real RAM use (default: no limit)
+- `-y, --auto`: Automatically set `y` for all interactive prompts
+
+**Key Outputs:**
+- `Pfam_Protein_Count_Matrix.tsv`: Pfam domains (rows) by genomes (columns), with the number of proteins carrying each domain
+- `Pfam_Domain_Info.tsv`: Per-domain name, number of genomes with the domain, and total proteins with the domain
+- `Pfam_Domain_Proteins.tsv`: Listing of each protein carrying each domain in each genome
 
 ## Additional Scripts
 
@@ -202,6 +239,9 @@ bofasa also provides several additional utility scripts:
 - `compare_og_pairs.py` - Compare ortholog group pairs between methods
 - `determine_og_freqs.py` - Determine ortholog group frequencies
 - `print_og_itol_matrix.py` - Print ortholog group matrices for iTOL visualization
+- `list_og_matrix.py` - List an OrthoFinder-style ortholog group matrix in a simple two-column table format
+- `extract_focal_protein_dogs.py` - Extract the domain ortholog groups of a focal protein from bofasa results
+- `extract_genomad_proteomes.py` - Consolidate virus/prophage proteomes from multiple geNomad results directories
 - `visualize_og_context.py` - Visualize the context of focal ortholog groups of interest. ***Is still experimental!***
   
 **Note:** GenBank processing and Prodigal gene calling functionality is now integrated into the main `bofasa prep` command and no longer requires separate scripts.

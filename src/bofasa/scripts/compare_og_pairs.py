@@ -110,12 +110,16 @@ def compare_og_pairs() -> None:
     with open(method_a_file) as omaf:
         for line in omaf:
             line = line.strip()
+            if line == '':
+                continue
             ls = line.split('\t')
             method_a_set.add(tuple(sorted(ls)))
 
     with open(method_b_file) as ombf:
         for line in ombf:
             line = line.strip()
+            if line == '':
+                continue
             ls = line.split('\t')
             method_b_set.add(tuple(sorted(ls)))
 
@@ -123,7 +127,7 @@ def compare_og_pairs() -> None:
     union = len(method_a_set.union(method_b_set))
     unique_a = len(method_a_set.difference(method_b_set))
     unique_b = len(method_b_set.difference(method_a_set))
-    jaccard_index = intersection / union
+    jaccard_index = intersection / union if union > 0 else 0.0
 
     sys.stdout.write(
         '\t'.join(

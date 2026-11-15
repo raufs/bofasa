@@ -1,7 +1,7 @@
 [project]
 name = "bofasa"
 authors = [{name="Rauf Salamzade", email="salamzader@gmail.com"}]
-version = "1.2.2"
+version = "1.3.0"
 description = "Bacterial multi-species orthology inference and analysis."
 dependencies = [
     "biopython>=1.79",
@@ -31,7 +31,11 @@ script-files=["src/bofasa/scripts/extract_og_pairs.py",
               "src/bofasa/scripts/compare_og_pairs.py",
               "src/bofasa/scripts/determine_og_freqs.py",
               "src/bofasa/scripts/list_og_matrix.py",
-              "src/bofasa/scripts/extract_focal_protein_dogs.py"]
+              "src/bofasa/scripts/extract_focal_protein_dogs.py",
+              "src/bofasa/scripts/visualize_og_context.py"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+bofasa = ["data/*.html", "data/*.js"]

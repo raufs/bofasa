@@ -103,6 +103,20 @@ Options for software supported include:
         default=None,
     )
     parser.add_argument(
+        '-emg',
+        '--exclude-mge-genomes',
+        action='store_true',
+        help='Exclude MGE (mobile genetic element) samples (bofasa method only).\n'
+             'Columns of Protein_Ortholog_Groups.tsv named "<sample>_phage_N" or\n'
+             '"<sample>_plasmid_N" are ignored when counting proteins/samples and\n'
+             'determining single-copy core (OGs found only in MGE samples are\n'
+             'skipped, so -t should then count only non-MGE proteins). By default,\n'
+             'MGE columns are counted as samples. Useful when bofasa prep was run\n'
+             'with -emg flag.',
+        required=False,
+        default=False,
+    )
+    parser.add_argument(
         '-mm',
         '--max_memory',
         type=int,
@@ -156,6 +170,7 @@ def extract_og_pairs():
     method = myargs.method
     max_memory = myargs.max_memory
     total_input_proteins = myargs.total_proteins
+    exclude_mge_genomes = myargs.exclude_mge_genomes
 
     # START WORKFLOW
 
@@ -170,12 +185,10 @@ def extract_og_pairs():
         assert method in valid_software
     except Exception:
         msg = 'Method %s not in set of accepted methods.' % method
-        sys.stderr.write(msg)
+        sys.stderr.write(msg + '\n')
         sys.exit(1)
 
     outf_handle = sys.stdout
-    if outfile is not None:
-        outf_handle = open(outfile, 'w')
 
     if method == 'bofasa':
         result_file = input_dir + '/Final_Results/Protein_Ortholog_Groups.tsv'
@@ -183,23 +196,39 @@ def extract_og_pairs():
             assert os.path.isfile(result_file)
         except Exception:
             msg = 'Error: Issue validating the existence of file: %s' % result_file
-            sys.stderr.write(msg)
+            sys.stderr.write(msg + '\n')
             sys.exit(1)
 
         tot_samples = None
         proteins_in_ogs = 0
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
+
+        sample_indices_to_include = []
         with open(result_file) as orf:
             for i, line in enumerate(orf):
-                if i == 0:
-                    continue
                 line = line.rstrip('\n')
                 ls = line.split('\t')
+                if i == 0:
+                    # Header line - determine which sample columns to include
+                    for j, sample_name in enumerate(ls[1:], start=1):
+                        sample_name = '_'.join(sample_name.strip().split('_')[:-1])
+                        is_mge = (sample_name.endswith('_phage') or sample_name.endswith('_plasmid'))
+                        if exclude_mge_genomes and is_mge:
+                            continue
+                        sample_indices_to_include.append(j)
+                    if exclude_mge_genomes:
+                        num_excluded = len(ls) - 1 - len(sample_indices_to_include)
+                        if num_excluded > 0:
+                            sys.stderr.write(f"Excluding {num_excluded} MGE sample(s) from analysis\n")
+                    continue
                 og = ls[0]
                 og_samples = 0
                 tot_samples = 0
                 sc_flag = True
                 og_copy_counts = []
-                for lts in ls[1:]:
+                for lts in [ls[j] for j in sample_indices_to_include]:
                     tot_samples += 1
                     if lts.strip() != '':
                         og_samples += 1
@@ -208,6 +237,9 @@ def extract_og_pairs():
                         og_copy_counts.append(len(lts.split(',')))
                     elif lts.strip() != '':
                         og_copy_counts.append(1)
+                if len(og_copy_counts) == 0:
+                    # OG only found in excluded MGE samples
+                    continue
                 tot_proteins = sum(og_copy_counts)
                 proteins_in_ogs += tot_proteins
                 median_proteins = statistics.median(og_copy_counts)
@@ -244,7 +276,7 @@ def extract_og_pairs():
             assert os.path.isfile(info_file)
         except Exception:
             msg = 'Error: Issue validating the existence of file: %s' % info_file
-            sys.stderr.write(msg)
+            sys.stderr.write(msg + '\n')
             sys.exit(1)
 
         result_file = None
@@ -259,11 +291,15 @@ def extract_og_pairs():
             assert os.path.isfile(result_file)
         except Exception:
             msg = 'Error: Issue validating the existence of file: %s' % result_file
-            sys.stderr.write(msg)
+            sys.stderr.write(msg + '\n')
             sys.exit(1)
 
         tot_samples = None
         proteins_in_ogs = 0
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
+
         with open(result_file) as orf:
             for i, line in enumerate(orf):
                 if i == 0:
@@ -320,11 +356,15 @@ def extract_og_pairs():
             assert os.path.isfile(result_file)
         except Exception:
             msg = 'Error: Issue validating the existence of file: %s' % result_file
-            sys.stderr.write(msg)
+            sys.stderr.write(msg + '\n')
             sys.exit(1)
 
         proteins_in_ogs = 0
         tot_samples = None
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
+
         with open(result_file) as orf:
             for i, line in enumerate(orf):
                 if i == 0:
@@ -340,7 +380,7 @@ def extract_og_pairs():
                     tot_samples += 1
                     if lts.strip() != '':
                         og_samples += 1
-                    if ',' in lts:
+                    if ';' in lts:
                         sc_flag = False
                         og_copy_counts.append(len(lts.split(';')))
                     elif lts.strip() != '':
@@ -386,6 +426,10 @@ def extract_og_pairs():
 
         tot_samples = None
         proteins_in_ogs = 0
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
+
         with open(result_file) as orf:
             for i, line in enumerate(orf):
                 if i == 0:
@@ -454,6 +498,10 @@ def extract_og_pairs():
 
         samples = set([])
         og_sample_lts = defaultdict(lambda: defaultdict(set))
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
+
         with open(result_file) as orf:
             for i, line in enumerate(orf):
                 line = line.rstrip('\n')
@@ -508,7 +556,9 @@ def extract_og_pairs():
 
         subdirs = []
         for sd in os.listdir(input_dir):
-            subdirs.append(sd)
+            # ignore stray files (e.g. .DS_Store) and non-OrthoFinder dirs
+            if os.path.isdir(input_dir + sd) and sd.startswith('Results_'):
+                subdirs.append(sd)
 
         try:
             assert len(subdirs) == 1
@@ -528,6 +578,10 @@ def extract_og_pairs():
 
         tot_samples = None
         proteins_in_ogs = 0
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
+
         with open(result_file) as orf:
             for i, line in enumerate(orf):
                 if i == 0:
@@ -582,7 +636,9 @@ def extract_og_pairs():
 
         subdirs = []
         for sd in os.listdir(input_dir):
-            subdirs.append(sd)
+            # ignore stray files (e.g. .DS_Store) and non-OrthoFinder dirs
+            if os.path.isdir(input_dir + sd) and sd.startswith('Results_'):
+                subdirs.append(sd)
 
         try:
             assert len(subdirs) == 1
@@ -604,6 +660,10 @@ def extract_og_pairs():
 
         tot_samples = None
         proteins_in_ogs = 0
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
+
         with open(result_file) as orf:
             for i, line in enumerate(orf):
                 if i == 0:

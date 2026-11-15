@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-### Program: visualize_og_context.py
+### Program: visualize_og_context
 ### Author: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan
 ### Affiliation: University of Wisconsin - Madison, McMaster University
 
@@ -40,7 +40,6 @@ import subprocess
 import sys
 import pickle
 import re
-import warnings
 from collections import defaultdict
 from typing import Dict, List, Set, Tuple, Optional
 
@@ -54,6 +53,7 @@ try:
     BIOPYTHON_AVAILABLE = True
 except ImportError:
     BIOPYTHON_AVAILABLE = False
+
 
 def create_parser():
     """Parse arguments"""
@@ -70,19 +70,19 @@ The tool will:
 1. Identify all instances of the focal protein OG across samples
 2. Extract surrounding genomic context information
 3. Assign colors to neighboring OGs for visualization
-4. Create output files for visualization in R (using gggenes & ggtree) and iTOL
+4. Write an interactive HTML viewer with the gene neighborhoods aligned to the
+   tree, plus files for visualization in R (gggenes & ggtree) and iTOL
 5. Handle paralogs by duplicating tree leaves for multi-instance samples
 6. Optionally build a phylogeny from the focal OG if no tree is provided
 
 Output Files:
 =============
+- OG_Context_Tree.html: Interactive viewer (tree + colored gene neighborhoods)
 - OG_Context_Visualization.gggenes.txt: Input for gggenes R package
 - OG_Context_Visualization.iTol.txt: iTOL annotation track
 - species_tree.modified.nwk: Modified tree with duplicate leaves (if paralogs)
 - OG_info.txt: Summary information about the focal OG
 - Color_Scheme.txt: Color assignments for OGs in the context
-
-Still in testing/development, use with caution!
 """,
         formatter_class=RawTextRichHelpFormatter,
     )
@@ -172,6 +172,15 @@ Still in testing/development, use with caution!
         required=False,
     )
     parser.add_argument(
+        '-al',
+        '--aligner',
+        choices=['famsa', 'muscle'],
+        default='famsa',
+        help="Multiple sequence aligner to use: 'famsa' or 'muscle'\n"
+             "(MUSCLE super5) [Default is famsa].",
+        required=False,
+    )
+    parser.add_argument(
         '-v',
         '--version',
         action='store_true',
@@ -204,15 +213,21 @@ def load_prep_results(prep_dir: str) -> Dict:
     genbank_dir = os.path.join(prep_dir, 'Sample_Annotation_Files')
     protein_dir = os.path.join(prep_dir, 'Sample_Protein_Files')
     bed_dir = os.path.join(prep_dir, 'Genome_Processing', 'BEDs')
-    
-    if not os.path.isdir(genbank_dir):
+    proteome_dir = os.path.join(prep_dir, 'Genome_Processing', 'Proteomes')
+
+    # Current bofasa prep writes Genome_Processing/BEDs and
+    # Genome_Processing/Proteomes instead of the legacy directories.
+    if not os.path.isdir(protein_dir):
+        protein_dir = proteome_dir
+
+    if not os.path.isdir(genbank_dir) and not os.path.isdir(bed_dir):
         sys.stderr.write(
-            f"Warning: Sample_Annotation_Files directory not found in prep directory\n"
+            f"Warning: Neither Sample_Annotation_Files nor Genome_Processing/BEDs directory found in prep directory\n"
         )
     
     if not os.path.isdir(protein_dir):
         sys.stderr.write(
-            f"Warning: Sample_Protein_Files directory not found in prep directory\n"
+            f"Warning: Neither Sample_Protein_Files nor Genome_Processing/Proteomes directory found in prep directory\n"
         )
     
     # Load GenBank files
@@ -813,9 +828,7 @@ def modify_tree_for_paralogs(tree_file: str, context_data: Dict, output_file: st
         # Write modified tree, then midpoint-root it via ete3
         Phylo.write(tree, output_file, 'newick')
         try:
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore', SyntaxWarning)
-                from ete3 import Tree as EteTree
+            from ete3 import Tree as EteTree
             _et = EteTree(output_file)
             _et.set_outgroup(_et.get_midpoint_outgroup())
             _et.write(outfile=output_file, format=1)
@@ -834,193 +847,216 @@ def modify_tree_for_paralogs(tree_file: str, context_data: Dict, output_file: st
         return get_unique_sample_ids(context_data)
 
 
-def write_context_heatmap(context_data: Dict, og_colors: Dict, focal_og: str,
-                          output_file: str, unique_sample_ids: Optional[Dict[str, str]] = None,
-                          tree_file: Optional[str] = None):
-    """
-    Write a heatmap PNG showing OG presence per sample, optionally aligned to a tree.
+def _load_ete_tree(tree_file: str):
+    """Load a Newick file with ete3, accepting internal support values or names."""
+    import warnings
+    with warnings.catch_warnings():
+        # ete3 3.1.3 emits SyntaxWarnings for invalid escape sequences on Python 3.12+
+        warnings.simplefilter('ignore', SyntaxWarning)
+        from ete3 import Tree as EteTree
+    last_error = None
+    for fmt in (0, 1):
+        try:
+            return EteTree(tree_file, format=fmt)
+        except Exception as e:
+            last_error = e
+    raise last_error
 
-    Columns = unique OGs ordered by their median relative position to the focal gene.
-    Cells are coloured by OG colour when present, light grey when absent.
-    The focal OG column is outlined in black for emphasis.
+
+def _ete_tree_to_dict(etree, extra_leaves: Set[str]) -> Dict:
+    """
+    Convert an ete3 tree into nested dicts for the HTML viewer.
+
+    Iterative (post-order) so that very deep / caterpillar-shaped trees do
+    not hit Python's recursion limit.
+    """
+    converted = {}
+    for node in etree.traverse('postorder'):
+        entry = {'dist': float(node.dist) if node.up is not None else 0.0}
+        if node.is_leaf():
+            entry['name'] = node.name
+            if node.name in extra_leaves:
+                entry['extra'] = True
+        else:
+            entry['name'] = node.name or ''
+            entry['children'] = [converted.pop(id(child)) for child in node.children]
+            support = getattr(node, 'support', None)
+            if support is not None and node.up is not None:
+                entry['support'] = round(float(support), 3)
+        converted[id(node)] = entry
+    return converted[id(etree)]
+
+
+def _build_viewer_tree(tree_file: Optional[str], row_ids: Set[str]) -> Tuple[Dict, bool, str]:
+    """
+    Build the tree shown next to the neighborhoods.
+
+    The tree is pruned to the neighborhoods present, midpoint-rooted and
+    ladderized. Neighborhoods missing from the tree are appended at the root
+    (flagged so the viewer can mark them). Without a usable tree, a star
+    topology is returned.
+
+    Returns:
+        (tree_dict, has_branch_lengths, description_of_source)
+    """
+    if tree_file and os.path.isfile(tree_file):
+        try:
+            etree = _load_ete_tree(tree_file)
+            tree_tips = {leaf.name for leaf in etree.get_leaves()}
+            keep = tree_tips & row_ids
+            if not keep:
+                raise ValueError("no tree tips match any neighborhood ID")
+            if len(keep) < len(tree_tips):
+                etree.prune(list(keep), preserve_branch_length=True)
+            if len(keep) > 2:
+                try:
+                    outgroup = etree.get_midpoint_outgroup()
+                    if outgroup is not None and outgroup is not etree:
+                        etree.set_outgroup(outgroup)
+                except Exception:
+                    pass  # Non-fatal; keep the existing rooting
+            etree.ladderize()
+
+            missing = sorted(row_ids - keep)
+            for rid in missing:
+                sys.stderr.write(f"  Note: '{rid}' not in tree, appended at the root.\n")
+                etree.add_child(name=rid, dist=0.0)
+
+            has_lengths = any(n.dist > 0 for n in etree.traverse() if n.up is not None)
+            return (_ete_tree_to_dict(etree, set(missing)), has_lengths,
+                    os.path.basename(tree_file))
+        except Exception as e:
+            sys.stderr.write(f"Warning: could not use tree for context viewer ({e}). "
+                             f"Using star topology.\n")
+
+    star = {
+        'name': '', 'dist': 0.0,
+        'children': [{'name': rid, 'dist': 1.0} for rid in sorted(row_ids)],
+    }
+    return star, False, 'none (star topology)'
+
+
+def write_context_tree_html(context_data: Dict, og_colors: Dict, focal_og: str,
+                            output_file: str, unique_sample_ids: Optional[Dict[str, str]] = None,
+                            tree_file: Optional[str] = None):
+    """
+    Write an interactive HTML page showing each focal-gene neighborhood as a
+    row of gene arrows aligned to the leaves of a phylogeny.
+
+    The page is self-contained (D3 is embedded when the bundled copy is
+    available) so it opens offline. Each neighborhood is centred on the focal
+    gene and flipped so the focal gene always points right; genes are coloured
+    by OG using og_colors.
 
     Args:
         context_data:       Context information from extract_genomic_context.
         og_colors:          OG -> hex colour mapping.
-        focal_og:           The focal OG ID to centre columns around.
-        output_file:        Output PNG path.
-        unique_sample_ids:  Optional context_key -> unique sample ID mapping.
-        tree_file:          Optional Newick tree path; samples are pruned to
-                            those present in context_data.
+        focal_og:           The focal OG ID.
+        output_file:        Output HTML path.
+        unique_sample_ids:  Optional context_key -> unique sample ID mapping
+                            (these IDs must match the tree's leaf names).
+        tree_file:          Optional Newick tree; pruned to the neighborhoods.
     """
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore', SyntaxWarning)
-            from ete3 import Tree as EteTree, TreeStyle, RectFace, TextFace, NodeStyle, faces
-    except ImportError:
-        sys.stderr.write("Warning: ete3 not available. Skipping heatmap PNG.\n")
-        return
+    import json
+    import bofasa
 
     if unique_sample_ids is None:
         unique_sample_ids = get_unique_sample_ids(context_data)
 
-    # ── build per-sample OG presence + relative-position index ─────────────
-    # Each context_key must already have a unique molecule name (guaranteed by
-    # get_unique_sample_ids / modify_tree_for_paralogs upstream).  Plain dict
-    # assignment is intentional: a collision here means the ID pipeline failed.
-    sample_og_presence: Dict[str, set] = {}
-    og_rel_positions: Dict[str, List[int]] = defaultdict(list)
-
-    for context_key, context in context_data.items():
-        sample_id = unique_sample_ids.get(context_key, context['sample_id'])
+    # ── one row per neighborhood, coordinates relative to the focal gene ──
+    rows: Dict[str, Dict] = {}
+    for context_key in sorted(context_data):
+        context = context_data[context_key]
         genes = context['genes']
+        if not genes:
+            continue
 
-        focal_idx = next(
-            (i for i, g in enumerate(genes) if g['og_id'] == focal_og), None
-        )
-
-        # Strand sign: if the focal gene is on the reverse strand, flip the
-        # direction so that negative offsets always mean "upstream" and positive
-        # offsets always mean "downstream" in the biological sense.
-        if focal_idx is not None:
-            focal_strand = genes[focal_idx].get('strand', 1)
-            strand_sign  = 1 if focal_strand == 1 else -1
-        else:
-            strand_sign = 1
-
-        og_set: set = set()
-        for i, gene in enumerate(genes):
-            og_id = gene['og_id']
-            og_set.add(og_id)
-            if focal_idx is not None:
-                og_rel_positions[og_id].append(strand_sign * (i - focal_idx))
-
-        if sample_id in sample_og_presence:
+        row_id = unique_sample_ids.get(context_key, context['sample_id'])
+        if row_id in rows:
             sys.stderr.write(
-                f"Warning: duplicate molecule name '{sample_id}' in heatmap data — "
-                f"unique ID assignment may have failed.\n"
+                f"Warning: duplicate neighborhood ID '{row_id}' in context viewer data — "
+                f"unique ID assignment may have failed. Keeping both with a suffix.\n"
             )
-        sample_og_presence[sample_id] = og_set
+            suffix = 2
+            while f"{row_id}_dup{suffix}" in rows:
+                suffix += 1
+            row_id = f"{row_id}_dup{suffix}"
 
-    # ── column order: by median relative position ───────────────────────────
-    def _median(vals):
-        s = sorted(vals)
-        return s[len(s) // 2]
+        focal = (next((g for g in genes if g['is_focal']), None)
+                 or next((g for g in genes if g['og_id'] == focal_og), None)
+                 or genes[0])
+        centre = (focal['start'] + focal['end']) / 2.0
+        sign = -1 if focal.get('strand') == -1 else 1
 
-    all_ogs = sorted(
-        {og for s in sample_og_presence.values() for og in s},
-        key=lambda og: _median(og_rel_positions.get(og, [0]))
-    )
+        row_genes = []
+        for gene in genes:
+            strand = -1 if gene.get('strand') == -1 else 1
+            a = (gene['start'] - centre) * sign
+            b = (gene['end'] - centre) * sign
+            row_genes.append({
+                'id': gene['protein_id'],
+                'og': gene['og_id'],
+                'product': gene.get('product') or 'Unknown',
+                'gene': gene.get('gene', ''),
+                'start': gene['start'],
+                'end': gene['end'],
+                'strand': strand,
+                'rs': round(min(a, b), 1),
+                're': round(max(a, b), 1),
+                'rstrand': strand * sign,
+                'focal': gene is focal,
+            })
 
-    # ── build / prune tree ──────────────────────────────────────────────────
-    samples_in_data = set(sample_og_presence.keys())
+        rows[row_id] = {
+            'sample_id': context['sample_id'],
+            'contig': context['contig'],
+            'focal_protein': context['focal_protein'],
+            'genes': row_genes,
+        }
 
-    if tree_file and os.path.isfile(tree_file):
-        try:
-            etree = EteTree(tree_file)
-            tree_tips = {leaf.name for leaf in etree.get_leaves()}
-            keep = tree_tips & samples_in_data
-            if not keep:
-                raise ValueError("No tree tips match any sample ID.")
-            etree.prune(list(keep), preserve_branch_length=True)
-            etree.set_outgroup(etree.get_midpoint_outgroup())
-        except Exception as e:
-            sys.stderr.write(f"Warning: could not use tree for heatmap ({e}). "
-                             f"Using star topology.\n")
-            etree = None
-    else:
-        etree = None
+    if not rows:
+        sys.stderr.write("Warning: no neighborhoods to draw; skipping context viewer.\n")
+        return
 
-    if etree is None:
-        etree = EteTree()
-        etree.name = "root"
-        for sid in sorted(samples_in_data):
-            etree.add_child(name=sid)
-    else:
-        # Safety net: any sample present in the data but absent from the
-        # (possibly pruned) tree gets appended as an extra leaf so every
-        # row always appears in the heatmap.
-        tree_leaf_names = {leaf.name for leaf in etree.get_leaves()}
-        for sid in sorted(samples_in_data - tree_leaf_names):
-            sys.stderr.write(f"  Note: '{sid}' not in tree, appended as extra row.\n")
-            etree.add_child(name=sid)
+    tree, has_lengths, tree_source = _build_viewer_tree(tree_file, set(rows))
 
-    # ── attach heatmap faces to each leaf ───────────────────────────────────
-    CELL_W, CELL_H = 16, 16
-    ABSENT_COLOR   = '#E8E8E8'
-    FOCAL_BORDER   = '#000000'
+    used_ogs = {g['og'] for r in rows.values() for g in r['genes']}
+    data = {
+        'focal_og': focal_og,
+        'n_samples': len({r['sample_id'] for r in rows.values()}),
+        'tree': tree,
+        'has_branch_lengths': has_lengths,
+        'tree_source': tree_source,
+        'rows': rows,
+        'colors': {og: c for og, c in og_colors.items() if og in used_ogs},
+    }
 
-    for leaf in etree.get_leaves():
-        nstyle = NodeStyle()
-        nstyle['size'] = 0
-        leaf.set_style(nstyle)
-
-        og_set = sample_og_presence.get(leaf.name, set())
-
-        for col_idx, og_id in enumerate(all_ogs):
-            is_focal = (og_id == focal_og)
-            if og_id in og_set:
-                bg = og_colors.get(og_id, '#CCCCCC')
-                fg = FOCAL_BORDER if is_focal else bg
-            else:
-                bg = ABSENT_COLOR
-                fg = FOCAL_BORDER if is_focal else ABSENT_COLOR
-
-            rect = RectFace(CELL_W, CELL_H, bgcolor=bg, fgcolor=fg)
-            rect.margin_left  = 1
-            rect.margin_right = 1
-            leaf.add_face(rect, column=col_idx, position='aligned')
-
-        name_face = TextFace(f'  {leaf.name}', fsize=8)
-        leaf.add_face(name_face, column=len(all_ogs), position='aligned')
-
-    # ── tree style + column headers ─────────────────────────────────────────
-    ts = TreeStyle()
-    ts.show_leaf_name          = False
-    ts.mode                    = 'r'
-    ts.branch_vertical_margin  = 2
-    ts.show_scale              = False
-
-    # Auto-scale: fit the tree into ~180 px regardless of branch length units.
-    leaves = etree.get_leaves()
-    max_dist = max((etree.get_distance(lf) for lf in leaves), default=0)
-    ts.scale = int(180 / max_dist) if max_dist > 0 else 60
-
-    # Column headers: rotated OG ID label only (no coloured square row).
-    # rotation=270 renders text bottom-to-top so labels don't overlap.
-    for col_idx, og_id in enumerate(all_ogs):
-        lbl = TextFace(og_id, fsize=7)
-        lbl.rotation     = 270
-        lbl.margin_left  = 1
-        lbl.margin_right = 1
-        lbl.hz_align     = 1
-        ts.aligned_header.add_face(lbl, column=col_idx)
-
-    # Right margin: wide enough for the longest sample name label.
-    max_label_len = max((len(sid) for sid in sample_og_presence), default=20)
-    ts.margin_right = max_label_len * 6 + 20
-
-    # Top margin: rotated OG labels are rendered horizontally by Qt then
-    # rotated, so their effective height equals their text width (~5 px per
-    # character at fsize=7). Give the header room to show them in full.
-    max_og_name_len = max((len(og) for og in all_ogs), default=10)
-    ts.margin_top = max_og_name_len * 5 + 20
-
+    # ── fill the template ─────────────────────────────────────────────────
+    data_dir = os.path.join(os.path.dirname(os.path.abspath(bofasa.__file__)), 'data')
+    template_file = os.path.join(data_dir, 'og_context_tree.html')
+    d3_file = os.path.join(data_dir, 'd3.v7.min.js')
     try:
-        # SVG is vector-based so text and lines are always sharp regardless of
-        # zoom or print size.  The w parameter still controls the layout width
-        # that ete3 uses internally when placing faces.
-        img_w = max(800, len(all_ogs) * (CELL_W + 2) + 500)
-        etree.render(output_file, tree_style=ts, w=img_w, units='px')
-        sys.stderr.write(f"  Wrote heatmap: {output_file}\n")
+        with open(template_file, 'r', encoding='utf-8') as fh:
+            html = fh.read()
+    except OSError as e:
+        sys.stderr.write(f"Warning: context viewer template not found ({e}); skipping.\n")
+        return
 
-        # Also render PNG for smaller file size
-        png_file = output_file.replace('.svg', '.png')
-        etree.render(png_file, tree_style=ts, w=img_w, units='px')
-        sys.stderr.write(f"  Wrote heatmap PNG: {png_file}\n")
-    except Exception as e:
-        sys.stderr.write(f"Warning: ete3 render failed ({e}). "
-                         f"Is a display / Qt available?\n")
+    if os.path.isfile(d3_file):
+        with open(d3_file, 'r', encoding='utf-8') as fh:
+            d3_tag = '<script>\n' + fh.read() + '\n</script>'
+    else:
+        sys.stderr.write("  Note: bundled D3 not found; the viewer will load D3 from the web.\n")
+        d3_tag = '<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>'
+
+    # Escape '<' so sample names/products can never close the <script> block
+    data_json = json.dumps(data, separators=(',', ':')).replace('<', '\\u003c')
+    # D3 first, then data: user-derived text never passes through a later replace
+    html = html.replace('<!--__D3__-->', d3_tag, 1).replace('__DATA_JSON__', data_json, 1)
+
+    with open(output_file, 'w', encoding='utf-8') as fh:
+        fh.write(html)
+    sys.stderr.write(f"  Wrote interactive context tree: {output_file}\n")
 
 
 def write_neighborhood_genbanks(context_data: Dict, focal_og: str,
@@ -1340,17 +1376,22 @@ def _extract_og_sequences(og_id: str, og_matrix_file: str,
     return written
 
 
-def _run_muscle_trimal(in_faa: str, aligned_faa: str, trimmed_faa: str,
-                        trim_log: str, cpus: int = 1) -> Tuple[str, int]:
+def _run_align_trimal(in_faa: str, aligned_faa: str, trimmed_faa: str,
+                      trim_log: str, cpus: int = 1,
+                      aligner: str = 'famsa') -> Tuple[str, int]:
     """
-    Align with muscle super5, trim with trimAl -automated1.
+    Align with FAMSA (default) or muscle super5, trim with trimAl -automated1.
 
     Returns (path_to_use, alignment_length_aa).
     If trimmed length < 10 aa, reverts to the untrimmed file and logs a note.
     """
+    if aligner == 'muscle':
+        align_cmd = ['muscle', '-super5', in_faa, '-output', aligned_faa,
+                     '-threads', str(cpus)]
+    else:
+        align_cmd = ['famsa', '-t', str(cpus), in_faa, aligned_faa]
     subprocess.run(
-        ['muscle', '-super5', in_faa, '-output', aligned_faa,
-         '-threads', str(cpus)],
+        align_cmd,
         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
 
@@ -1375,9 +1416,10 @@ def _run_muscle_trimal(in_faa: str, aligned_faa: str, trimmed_faa: str,
 
 
 def build_gene_tree(focal_og: str, run_dir: str, prep_dir: str,
-                    output_dir: str, cpus: int = 1) -> Optional[str]:
+                    output_dir: str, cpus: int = 1,
+                    aligner: str = 'famsa') -> Optional[str]:
     """
-    Build a gene tree for focal_og using muscle super5 + trimAl + FastTree2.
+    Build a gene tree for focal_og using FAMSA (or muscle super5) + trimAl + FastTree2.
 
     Sequences are collected from the prep proteomes directory using the
     membership listed in Protein_Ortholog_Groups.tsv.
@@ -1404,8 +1446,8 @@ def build_gene_tree(focal_og: str, run_dir: str, prep_dir: str,
     sys.stderr.write(f"  Extracted {n_seqs} sequences.\n")
 
     try:
-        use_faa, aln_len = _run_muscle_trimal(
-            raw_faa, aligned_faa, trimmed_faa, trim_log, cpus
+        use_faa, aln_len = _run_align_trimal(
+            raw_faa, aligned_faa, trimmed_faa, trim_log, cpus, aligner
         )
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         sys.stderr.write(f"  Alignment failed: {e}\n")
@@ -1478,7 +1520,8 @@ def _subsample_and_fasttree(concat_faa: str, tree_nwk: str,
 
 def build_species_tree_from_scc(run_dir: str, prep_dir: str,
                                  output_dir: str, cpus: int = 1,
-                                 max_sites: int = 10000) -> Optional[str]:
+                                 max_sites: int = 10000,
+                                 aligner: str = 'famsa') -> Optional[str]:
     """
     Build a species tree from a core-genome alignment.
 
@@ -1489,7 +1532,7 @@ def build_species_tree_from_scc(run_dir: str, prep_dir: str,
       2. Otherwise, build the alignment on the fly from single-copy core (SCC)
          OGs in Protein_Ortholog_Groups.tsv:
            a. Identify SCC OGs (one protein per sample, no blanks/commas).
-           b. For each: extract → muscle super5 → trimAl.
+           b. For each: extract → FAMSA (or muscle super5) → trimAl.
            c. Concatenate horizontally; subsample to max_sites if needed.
            d. FastTree2.
 
@@ -1564,8 +1607,8 @@ def build_species_tree_from_scc(run_dir: str, prep_dir: str,
             continue
 
         try:
-            use_faa, aln_len = _run_muscle_trimal(
-                raw_faa, aligned_faa, trimmed_faa, trim_log, cpus
+            use_faa, aln_len = _run_align_trimal(
+                raw_faa, aligned_faa, trimmed_faa, trim_log, cpus, aligner
             )
         except (subprocess.CalledProcessError, FileNotFoundError):
             continue
@@ -1633,6 +1676,7 @@ def visualize_og_context():
     min_length = myargs.min_length
     sample_list = myargs.sample_list
     cpus = myargs.cpus
+    aligner = myargs.aligner
 
     # Validate inputs
     if not os.path.isdir(prep_dir):
@@ -1697,11 +1741,12 @@ def visualize_og_context():
         sys.exit(1)
 
     # ── Always build a gene tree for the focal OG ───────────────────────────
-    gene_tree_nwk = build_gene_tree(focal_og, run_dir, prep_dir, output_dir, cpus)
+    gene_tree_nwk = build_gene_tree(focal_og, run_dir, prep_dir, output_dir, cpus, aligner)
 
     # ── If no species tree provided, build one from SCC OGs ─────────────────
     if not species_tree:
-        scc_tree_nwk = build_species_tree_from_scc(run_dir, prep_dir, output_dir, cpus)
+        scc_tree_nwk = build_species_tree_from_scc(run_dir, prep_dir, output_dir, cpus,
+                                                   aligner=aligner)
         if scc_tree_nwk and os.path.isfile(scc_tree_nwk):
             sys.stderr.write(
                 f"\nNo species tree provided — using SCC-based tree: {scc_tree_nwk}\n"
@@ -1763,7 +1808,7 @@ def visualize_og_context():
                 sys.stderr.write(
                     f"\nWARNING: {len(unmatched)} sample parent name(s) not found as tree tips.\n"
                     f"  This usually means the tree has MGE-level tip labels instead of\n"
-                    f"  genome-level labels. Heatmap tree alignment will be incorrect.\n"
+                    f"  genome-level labels. Tree alignment in the context viewer will be incorrect.\n"
                     f"  Unmatched: {', '.join(sorted(unmatched)[:5])}"
                     f"{'...' if len(unmatched) > 5 else ''}\n"
                 )
@@ -1787,20 +1832,20 @@ def visualize_og_context():
         # No tree provided, just generate unique IDs
         unique_sample_ids = get_unique_sample_ids(context_data)
 
-    # Determine which tree file to use for heatmap (modified if paralogs exist)
-    heatmap_tree_file = None
+    # Determine which tree file to use for the viewer (modified if paralogs exist)
+    viewer_tree_file = None
     if species_tree and os.path.isfile(species_tree):
         if samples_with_paralogs:
-            heatmap_tree_file = os.path.join(output_dir, 'species_tree.modified.nwk')
+            viewer_tree_file = os.path.join(output_dir, 'species_tree.modified.nwk')
         else:
-            heatmap_tree_file = os.path.abspath(species_tree)
+            viewer_tree_file = os.path.abspath(species_tree)
 
     # Write output files
     sys.stderr.write("\nWriting output files...\n")
 
-    heatmap_file = os.path.join(output_dir, 'OG_Context_Heatmap.svg')
-    write_context_heatmap(context_data, og_colors, focal_og, heatmap_file,
-                          unique_sample_ids, tree_file=heatmap_tree_file)
+    viewer_file = os.path.join(output_dir, 'OG_Context_Tree.html')
+    write_context_tree_html(context_data, og_colors, focal_og, viewer_file,
+                            unique_sample_ids, tree_file=viewer_tree_file)
 
     gggenes_file = os.path.join(output_dir, 'OG_Context_Visualization.gggenes.txt')
     write_gggenes_output(context_data, og_colors, gggenes_file, unique_sample_ids)
@@ -1845,8 +1890,7 @@ def visualize_og_context():
     sys.stderr.write("\n" + "="*60 + "\n")
     sys.stderr.write("Visualization complete!\n")
     sys.stderr.write("\nOutput files:\n")
-    sys.stderr.write(f"  - {heatmap_file}  (primary visualization - SVG)\n")
-    sys.stderr.write(f"  - {heatmap_file.replace('.svg', '.png')}  (raster format - smaller file size)\n")
+    sys.stderr.write(f"  - {viewer_file}  (primary visualization; open in a web browser)\n")
     sys.stderr.write(f"  - {os.path.join(output_dir, 'Neighborhood_GenBanks')}/ (per-instance GenBank files)\n")
     if gene_tree_nwk and os.path.isfile(gene_tree_nwk):
         sys.stderr.write(f"  - {gene_tree_nwk}  (focal OG gene tree)\n")

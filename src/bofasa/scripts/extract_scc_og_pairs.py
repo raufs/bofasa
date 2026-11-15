@@ -56,7 +56,8 @@ Affiliation: University of Wisconsin - Madison, McMaster University
 
 extract_scc_og_pairs: a simple script to list pairs of proteins in the 
 same ortholog group for method comparison. Only ortholog groups 
-which are scc are regarded.
+which are scc are regarded. Output format (one tab-separated protein 
+pair per line) matches extract_og_pairs for use with compare_og_pairs.
 
 Options for software supported include:
 ===================================================================
@@ -115,9 +116,10 @@ Options for software supported include:
         '-emg',
         '--exclude-mge-genomes',
         action='store_true',
-        help='Exclude MGE (mobile genetic element) samples when determining single-copy core.\n'
-             'Filters out samples ending with "_plasmid", "_phage", or ".ccds" suffix.\n'
-             'Useful when bofasa prep was run with -emg flag.',
+        help='Exclude MGE (mobile genetic element) samples when determining single-copy core\n'
+             '(bofasa method only). Columns of Protein_Ortholog_Groups.tsv named\n'
+             '"<sample>_phage_N" or "<sample>_plasmid_N" are ignored and their proteins\n'
+             'are not reported. Useful when bofasa prep was run with -emg flag.',
         required=False,
         default=False,
     )
@@ -140,6 +142,14 @@ Options for software supported include:
 
     args = parser.parse_args()
     return args
+
+
+def write_og_pairs(outf_handle, og_lts):
+    """Write all pairs of proteins in an ortholog group, one pair per line."""
+    sorted_lts = sorted(og_lts)
+    for j, lt1 in enumerate(sorted_lts):
+        for lt2 in sorted_lts[j + 1:]:
+            outf_handle.write(lt1 + '\t' + lt2 + '\n')
 
 
 valid_software = set(
@@ -192,12 +202,10 @@ def extract_og_pairs():
         assert method in valid_software
     except Exception:
         msg = 'Method %s not in set of accepted methods.' % method
-        sys.stderr.write(msg)
+        sys.stderr.write(msg + '\n')
         sys.exit(1)
 
     outf_handle = sys.stdout
-    if outfile is not None:
-        outf_handle = open(outfile, 'w')
 
     if method == 'bofasa':
         result_file = input_dir + '/Final_Results/Protein_Ortholog_Groups.tsv'
@@ -205,11 +213,15 @@ def extract_og_pairs():
             assert os.path.isfile(result_file)
         except Exception:
             msg = 'Error: Issue validating the existence of file: %s' % result_file
-            sys.stderr.write(msg)
+            sys.stderr.write(msg + '\n')
             sys.exit(1)
 
         # Determine which sample columns to include
         sample_indices_to_include = []
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
+
         with open(result_file) as orf:
             for i, line in enumerate(orf):
                 line = line.rstrip('\n')
@@ -245,7 +257,7 @@ def extract_og_pairs():
                         og_lts.add(lt.strip())
                 
                 if scc_flag:
-                    outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
+                    write_og_pairs(outf_handle, og_lts)
 
     elif method == 'panx':
         result_file = input_dir + '/allclusters_final.tsv'
@@ -253,7 +265,7 @@ def extract_og_pairs():
             assert os.path.isfile(result_file)
         except Exception:
             msg = 'Error: Issue validating the existence of file: %s' % result_file
-            sys.stderr.write(msg)
+            sys.stderr.write(msg + '\n')
             sys.exit(1)
 
         gbk_dir = input_dir + '/input_GenBank/'
@@ -262,6 +274,10 @@ def extract_og_pairs():
         for f in os.listdir(gbk_dir):
             genome = '.'.join(f.split('.')[:-1])
             all_genomes.add(genome)
+
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
 
         with open(result_file) as orf:
             for i, line in enumerate(orf):
@@ -280,7 +296,7 @@ def extract_og_pairs():
                     if genome_counts[g] != 1:
                         scc_flag = False
                 if scc_flag:
-                    outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
+                    write_og_pairs(outf_handle, og_lts)
 
     elif method == 'sonicparanoid':
         info_file = input_dir + 'last_run_info.txt'
@@ -288,7 +304,7 @@ def extract_og_pairs():
             assert os.path.isfile(info_file)
         except Exception:
             msg = 'Error: Issue validating the existence of file: %s' % info_file
-            sys.stderr.write(msg)
+            sys.stderr.write(msg + '\n')
             sys.exit(1)
 
         result_file = None
@@ -303,8 +319,12 @@ def extract_og_pairs():
             assert os.path.isfile(result_file)
         except Exception:
             msg = 'Error: Issue validating the existence of file: %s' % result_file
-            sys.stderr.write(msg)
+            sys.stderr.write(msg + '\n')
             sys.exit(1)
+
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
 
         with open(result_file) as orf:
             for i, line in enumerate(orf):
@@ -325,7 +345,7 @@ def extract_og_pairs():
                             continue
                         og_lts.add(lt.strip())
                 if scc_flag:
-                    outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
+                    write_og_pairs(outf_handle, og_lts)
 
     elif method == 'panaroo':
         result_file = input_dir + 'gene_presence_absence.csv'
@@ -334,8 +354,12 @@ def extract_og_pairs():
             assert os.path.isfile(result_file)
         except Exception:
             msg = 'Error: Issue validating the existence of file: %s' % result_file
-            sys.stderr.write(msg)
+            sys.stderr.write(msg + '\n')
             sys.exit(1)
+
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
 
         with open(result_file) as orf:
             for i, line in enumerate(orf):
@@ -354,7 +378,7 @@ def extract_og_pairs():
                             continue
                         og_lts.add(lt)
                 if scc_flag:
-                    outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
+                    write_og_pairs(outf_handle, og_lts)
 
     elif method == 'pirate':
         try:
@@ -406,6 +430,10 @@ def extract_og_pairs():
             sys.stderr.write(msg + '\n')
             sys.exit(1)
 
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
+
         with open(result_file) as orf:
             for i, line in enumerate(orf):
                 if i == 0:
@@ -428,7 +456,7 @@ def extract_og_pairs():
                         else:
                             og_lts.add(gid_to_gname[lt.strip()])
                 if scc_flag:
-                    outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
+                    write_og_pairs(outf_handle, og_lts)
 
     elif method == 'scarap':
         result_file = input_dir + 'pangenome.tsv'
@@ -442,6 +470,10 @@ def extract_og_pairs():
         og_lts = defaultdict(set)
         all_samples = set([])
         og_sample_counts = defaultdict(lambda: defaultdict(int))
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
+
         with open(result_file) as orf:
             for i, line in enumerate(orf):
                 line = line.rstrip('\n')
@@ -461,12 +493,14 @@ def extract_og_pairs():
 
         for og in og_lts:
             if og in scc_ogs:
-                outf_handle.write('\t'.join(sorted(og_lts[og])) + '\n')
+                write_og_pairs(outf_handle, og_lts[og])
 
     elif method == 'orthofinder_og':
         subdirs = []
         for sd in os.listdir(input_dir):
-            subdirs.append(sd)
+            # ignore stray files (e.g. .DS_Store) and non-OrthoFinder dirs
+            if os.path.isdir(input_dir + sd) and sd.startswith('Results_'):
+                subdirs.append(sd)
 
         try:
             assert len(subdirs) == 1
@@ -483,6 +517,10 @@ def extract_og_pairs():
             msg = 'File not found %s' % result_file
             sys.stderr.write(msg + '\n')
             sys.exit(1)
+
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
 
         with open(result_file) as orf:
             for i, line in enumerate(orf):
@@ -501,13 +539,15 @@ def extract_og_pairs():
                             continue
                         og_lts.add(lt.strip())
                 if scc_flag:
-                    outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
+                    write_og_pairs(outf_handle, og_lts)
 
     elif method == 'orthofinder_hog':
 
         subdirs = []
         for sd in os.listdir(input_dir):
-            subdirs.append(sd)
+            # ignore stray files (e.g. .DS_Store) and non-OrthoFinder dirs
+            if os.path.isdir(input_dir + sd) and sd.startswith('Results_'):
+                subdirs.append(sd)
 
         try:
             assert len(subdirs) == 1
@@ -527,6 +567,10 @@ def extract_og_pairs():
             sys.stderr.write(msg + '\n')
             sys.exit(1)
 
+        # open output only after inputs have been validated
+        if outfile is not None:
+            outf_handle = open(outfile, 'w')
+
         with open(result_file) as orf:
             for i, line in enumerate(orf):
                 if i == 0:
@@ -544,7 +588,7 @@ def extract_og_pairs():
                             continue
                         og_lts.add(lt.strip())
                 if scc_flag:
-                    outf_handle.write('\t'.join(sorted(og_lts)) + '\n')
+                    write_og_pairs(outf_handle, og_lts)
 
     if outfile is not None:
         outf_handle.close()

@@ -18,7 +18,7 @@ from .utils import setup_ready_directory
 def setup_annotation_databases(
     output_dir: str, threads: int = config.DEFAULT_THREADS, force: bool = False,
     auto: bool = False, skip_genomad: bool = False
-) -> None:
+) -> bool:
     """
     Setup annotation databases.
 
@@ -30,7 +30,8 @@ def setup_annotation_databases(
         skip_genomad: Whether to skip downloading the geNomad database
 
     Returns:
-        None: Creates databases in output directory
+        bool: True if setup completed successfully (or an existing setup was kept),
+        False if any database failed to set up or the user cancelled.
     """
     # Use an absolute path so all recorded database locations are absolute
     output_dir = os.path.abspath(output_dir)
@@ -59,7 +60,7 @@ def setup_annotation_databases(
                     sys.stdout.write(
                         "Setup cancelled. Please choose a different directory or use --force to skip this prompt.\n"
                     )
-                    return
+                    return False
                 else:
                     sys.stdout.write("Please enter 'y' for yes or 'n' for no.\n")
 
@@ -75,8 +76,21 @@ def setup_annotation_databases(
     db_paths_file = os.path.join(output_dir, "database_location_paths.txt")
 
     if os.path.exists(db_paths_file) and not force:
-        sys.stdout.write("Database paths file already exists. Use --force to overwrite.\n")
-        return
+        # Don't report success for an existing but incomplete/broken setup (e.g. left
+        # by an earlier failed run): validate what the manifest points to.
+        from .utils import check_bofasa_db_setup
+        dbs_ok, dbs_message = check_bofasa_db_setup(require_genomad=not skip_genomad)
+        if dbs_ok:
+            sys.stdout.write(
+                "Databases are already set up and validated. Use --force to re-download/overwrite.\n"
+            )
+            return True
+        sys.stderr.write(
+            f"Error: an existing database setup was found in {output_dir} but it is incomplete or invalid:\n"
+            f"  {dbs_message}\n"
+            "Re-run with --force to rebuild the databases.\n"
+        )
+        return False
 
     # Setup geNomad database (downloaded by default, skipped with --skip-genomad)
     # The geNomad database path should include the genomad_db subdirectory created
@@ -90,7 +104,11 @@ def setup_annotation_databases(
             "Note: 'bofasa run --run-genomad' will not be usable until the geNomad\n"
             "database is set up.\n"
         )
-        genomad_db_path = None
+        # Keep recording a previously downloaded geNomad database (e.g. with --force --skip-genomad)
+        if os.path.isdir(genomad_db_path) and os.listdir(genomad_db_path):
+            sys.stdout.write(f"Keeping existing geNomad database: {genomad_db_path}\n")
+        else:
+            genomad_db_path = None
     else:
         sys.stdout.write("Setting up geNomad database...\n")
 
@@ -118,7 +136,7 @@ def setup_annotation_databases(
                 sys.stdout.write(
                     "Alternatively, rerun with --skip-genomad to set up the other databases only.\n"
                 )
-                return
+                return False
             sys.stdout.write("geNomad database setup completed\n")
         except FileNotFoundError:
             sys.stdout.write("Error: 'genomad' command not found.\n")
@@ -128,14 +146,14 @@ def setup_annotation_databases(
             sys.stdout.write(
                 "Alternatively, rerun with --skip-genomad to set up the other databases only.\n"
             )
-            return
+            return False
         except Exception as e:
             sys.stdout.write(f"Error setting up geNomad database: {e}\n")
             sys.stdout.write("Please ensure geNomad is installed and accessible\n")
             sys.stdout.write(
                 "Alternatively, rerun with --skip-genomad to set up the other databases only.\n"
             )
-            return
+            return False
 
     # Setup ISfinder database
     sys.stdout.write("Setting up ISfinder database...\n")
@@ -165,7 +183,7 @@ def setup_annotation_databases(
             os.remove(isfinder_fasta)
         
         # Use curl to download the file
-        curl_cmd = ["curl", "-L", "-o", isfinder_fasta, isfinder_url]
+        curl_cmd = ["curl", "-fL", "-o", isfinder_fasta, isfinder_url]
         result = subprocess.run(curl_cmd, capture_output=True, text=True)
         if result.returncode != 0:
             sys.stdout.write(
@@ -175,13 +193,25 @@ def setup_annotation_databases(
             sys.stdout.write(f"stdout: {result.stdout}\n")
             sys.stdout.write(f"stderr: {result.stderr}\n")
             raise Exception("Failed to download ISfinder database")
+
+        # Validate that the download looks like a FASTA file (not e.g. an HTML error page)
+        first_line = ''
+        with open(isfinder_fasta, 'r', errors='replace') as f:
+            for line in f:
+                if line.strip():
+                    first_line = line.strip()
+                    break
+        if not first_line.startswith('>'):
+            raise Exception(f"Downloaded file {isfinder_fasta} does not look like a FASTA file")
         
         sys.stdout.write("ISfinder database downloaded successfully\n")
         
     except Exception as e:
         sys.stdout.write(f"Error downloading ISfinder database: {e}\n")
         sys.stdout.write("Please ensure you have internet connectivity and curl is available\n")
-        return
+        return False
+
+    setup_ok = True
 
     if os.path.exists(isfinder_fasta):
         # If force is True and DIAMOND database exists, remove it
@@ -217,12 +247,15 @@ def setup_annotation_databases(
                 sys.stdout.write(f"Command: {' '.join(diamond_cmd)}\n")
                 sys.stdout.write(f"stdout: {result.stdout}\n")
                 sys.stdout.write(f"stderr: {result.stderr}\n")
+                setup_ok = False
             else:
                 sys.stdout.write("ISfinder DIAMOND database created\n")
         except Exception as e:
             sys.stdout.write(f"Error creating ISfinder DIAMOND database: {e}\n")
+            setup_ok = False
     else:
         sys.stdout.write("ISfinder FASTA file not found. Please download manually.\n")
+        setup_ok = False
 
     # Setup Pfam database
     sys.stdout.write("Setting up Pfam database...\n")
@@ -255,7 +288,7 @@ def setup_annotation_databases(
                 os.remove(pfam_hmm)
 
         # Use curl to download the file
-        curl_cmd = ["curl", "-L", "-o", pfam_hmm_gz, pfam_url]
+        curl_cmd = ["curl", "-fL", "-o", pfam_hmm_gz, pfam_url]
         result = subprocess.run(curl_cmd, capture_output=True, text=True)
         if result.returncode != 0:
             sys.stdout.write(
@@ -266,10 +299,12 @@ def setup_annotation_databases(
             sys.stdout.write(f"stderr: {result.stderr}\n")
             raise Exception("Failed to download Pfam database")
 
-        # Extract gzipped file
+        # Extract gzipped file (streamed to a temporary file, then moved into place)
+        pfam_hmm_tmp = pfam_hmm + ".tmp"
         with gzip.open(pfam_hmm_gz, 'rb') as f_in:
-            with open(pfam_hmm, 'wb') as f_out:
-                f_out.write(f_in.read())
+            with open(pfam_hmm_tmp, 'wb') as f_out:
+                shutil.copyfileobj(f_in, f_out)
+        os.replace(pfam_hmm_tmp, pfam_hmm)
 
         # Remove gzipped file
         os.remove(pfam_hmm_gz)
@@ -280,11 +315,15 @@ def setup_annotation_databases(
                 if line.startswith('NAME'):
                     pfam_z += 1
 
+        if pfam_z <= 0:
+            raise Exception(f"No HMM records found in {pfam_hmm}")
+
         sys.stdout.write(f"Pfam database setup completed with {pfam_z} records\n")
 
     except Exception as e:
         sys.stdout.write(f"Error setting up Pfam database: {e}\n")
         sys.stdout.write(f"Please download manually from: {pfam_url}\n")
+        setup_ok = False
 
     # Write database paths file, recording absolute paths for every database
     with open(db_paths_file, 'w') as f:
@@ -293,8 +332,14 @@ def setup_annotation_databases(
             f.write(f"genomad\tgenomad\t{os.path.abspath(genomad_db_path)}\t\n")
         if os.path.exists(isfinder_dmnd):
             f.write(f"isfinder\tdiamond\t{os.path.abspath(isfinder_dmnd)}\t\n")
-        if os.path.exists(pfam_hmm):
+        if os.path.exists(pfam_hmm) and pfam_z > 0:
             f.write(f"pfam\thmm\t{os.path.abspath(pfam_hmm)}\t{pfam_z}\n")
+
+    if not setup_ok:
+        sys.stdout.write("Annotation database setup finished with errors - see messages above.\n")
+        sys.stdout.write(f"Database paths (for successfully set up databases) saved to: {db_paths_file}\n")
+        return False
 
     sys.stdout.write("Annotation databases setup completed successfully\n")
     sys.stdout.write(f"Database paths saved to: {db_paths_file}\n")
+    return True

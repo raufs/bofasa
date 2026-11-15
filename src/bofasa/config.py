@@ -29,11 +29,20 @@ DEFAULT_ROOTING_SEEDS: int = 1
 DEFAULT_MCL_INFLATION: float = 1.2
 DEFAULT_NEAR_SCC_PROP: float = 0.95
 DEFAULT_THREADS: int = 4
-DEFAULT_MAX_MEMORY: int = 16
+# None means no memory limit is applied unless the user passes -mm/--max-memory.
+DEFAULT_MAX_MEMORY: Optional[int] = None
+MAX_MEMORY_HELP: str = (
+    "Optional cap, in GB, on virtual memory (address space) via RLIMIT_AS. "
+    "This is NOT resident RAM: virtual memory usually needs to be well above "
+    "real RAM use (e.g. several-fold with many threads), and the cap is "
+    "inherited by every external tool bofasa runs. Too low a value causes "
+    "allocation failures even when plenty of RAM is free [Default is no limit]."
+)
 DEFAULT_SURROUNDING_BP: int = 10000
 DEFAULT_TRIMAL_OPTIONS: str = "-strict -keepseqs"
 DEFAULT_MAX_RECURSION_DEPTH: int = 5000
 DEFAULT_MAX_GENOMES: int = 200
+DEFAULT_DOMSCAPE_BATCH_SIZE: int = 100
 
 # File extensions and patterns
 FASTA_EXTENSIONS: list[str] = [".fasta", ".fa", ".fna", ".fas"]
@@ -56,7 +65,10 @@ SUPPORTED_SOFTWARE: Set[str] = {
 GENE_CALLING_METHODS: list[str] = ["pyrodigal", "prodigal"]
 
 # Alignment methods
-ALIGNMENT_METHODS: list[str] = ["muscle"]
+ALIGNMENT_METHODS: list[str] = ["famsa", "muscle"]
+
+# Default multiple sequence aligner
+DEFAULT_ALIGNER: str = "famsa"
 
 # Default locus tag length
 DEFAULT_LOCUS_TAG_LENGTH: int = 3
@@ -76,6 +88,7 @@ LOG_LEVEL: str = "INFO"
 SUBCMD_SETUP_COLOR: str =  "\033[93m\033[1m"  # Yellow
 SUBCMD_PREP_COLOR: str = "\033[95m\033[1m"    # Magenta
 SUBCMD_RUN_COLOR: str = "\033[95m\033[1m"    # Magenta
+SUBCMD_DOMSCAPE_COLOR: str = "\033[96m\033[1m"  # Cyan
 SUBCMD_END_COLOR: str = "\033[0m"            # Reset
 
 def reset_global_variables() -> None:

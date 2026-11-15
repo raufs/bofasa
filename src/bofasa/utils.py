@@ -185,6 +185,7 @@ Commands:
   {config.SUBCMD_SETUP_COLOR}setup{config.SUBCMD_END_COLOR}    Set up annotation databases
   {config.SUBCMD_PREP_COLOR}prep{config.SUBCMD_END_COLOR}     Prepare genomic data for analysis
   {config.SUBCMD_RUN_COLOR}run{config.SUBCMD_END_COLOR}      Run the main BOFASA analysis pipeline
+  {config.SUBCMD_DOMSCAPE_COLOR}domscape{config.SUBCMD_END_COLOR} Count Pfam domain-carrying proteins across genomes
 
 For detailed help on any command, use: bofasa <command> --help
 
@@ -399,6 +400,64 @@ def create_logger_object(log_file: str) -> Optional[logging.Logger]:
         return None
 
 
+def _init_pool_worker(log_file: Optional[str]) -> None:
+    """
+    Pool initializer: make the "bofasa" logger usable inside worker processes.
+
+    Logger objects passed in task arguments are pickled by name only, so under the
+    'spawn' start method (macOS/Windows default) workers get a "bofasa" logger with
+    no handlers and their messages never reach the log file. Under 'fork' the
+    handlers are inherited, so this is a no-op there.
+    """
+    logger = logging.getLogger("bofasa")
+    if logger.handlers or not log_file:
+        return
+    create_logger_object(log_file)
+
+
+def thread_imap(fn: Any, items: Any, workers: int) -> Any:
+    """
+    Yield fn(item) for each item, in input order, using a ThreadPoolExecutor.
+
+    Note: all items are submitted to the executor up front (executor.map is not
+    lazy), so results are yielded in order as they complete but the input is
+    fully consumed immediately.
+
+    Use for workers whose time is spent outside the Python interpreter
+    (subprocess calls, or C extensions that release the GIL such as pyhmmer and
+    pyrodigal). Threads share memory, so there is no per-worker interpreter/import
+    cost and no pickling of task arguments, and no fork/spawn differences. For
+    pure-Python CPU-bound workers use create_pool() instead (GIL-bound otherwise).
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=max(1, int(workers))) as executor:
+        yield from executor.map(fn, items)
+
+
+def create_pool(processes: int) -> Any:
+    """
+    Create a multiprocessing.Pool that is safe under both 'fork' and 'spawn'.
+
+    Use only for pure-Python CPU-bound workers (see thread_imap() otherwise).
+
+    Workers must not rely on module-level state set by the parent (it is not
+    inherited under 'spawn'); pass everything a worker needs in its task
+    arguments. This pool additionally re-attaches the bofasa log file handler in
+    each worker so logging from workers is preserved.
+    """
+    import multiprocessing
+
+    log_file = None
+    for h in logging.getLogger("bofasa").handlers:
+        if isinstance(h, logging.FileHandler):
+            log_file = h.baseFilename
+            break
+    return multiprocessing.Pool(
+        processes, initializer=_init_pool_worker, initargs=(log_file,)
+    )
+
+
 def close_logger_object(logObject: Optional[logging.Logger]) -> None:
     """
     Close and cleanup logger object handlers.
@@ -469,17 +528,14 @@ def memory_limit(mem: int) -> None:
     """
     try:
         # Import config here to avoid circular imports
-        from .config import MIN_MEMORY_LIMIT, MAX_MEMORY_LIMIT
-        
-        # Validate memory limit is within reasonable bounds
+        from .config import MIN_MEMORY_LIMIT
+
+        # Enforce a (warned) lower bound only. No upper clamp: RLIMIT_AS limits virtual
+        # address space, which often must be set well above physical RAM.
         if mem < MIN_MEMORY_LIMIT:
             sys.stdout.write(f"Warning: Requested memory limit ({mem}GB) is below minimum ({MIN_MEMORY_LIMIT}GB)\n")
             sys.stdout.write(f"Using minimum limit of {MIN_MEMORY_LIMIT}GB\n")
             mem = MIN_MEMORY_LIMIT
-        elif mem > MAX_MEMORY_LIMIT:
-            sys.stdout.write(f"Warning: Requested memory limit ({mem}GB) is above maximum ({MAX_MEMORY_LIMIT}GB)\n")
-            sys.stdout.write(f"Using maximum limit of {MAX_MEMORY_LIMIT}GB\n")
-            mem = MAX_MEMORY_LIMIT
         
         max_virtual_memory: int = mem * 1000000000
         soft, hard = resource.getrlimit(resource.RLIMIT_AS)
@@ -623,7 +679,7 @@ def assess_job_intensity(faa_file: str) -> bool:
         return False
 
 
-def check_bofasa_db_setup(require_genomad: bool = False) -> Tuple[bool, str]:
+def check_bofasa_db_setup(require_genomad: bool = False, require_isfinder: bool = True) -> Tuple[bool, str]:
     """
     Check that BOFASA_DB_PATH is set and points at a usable database directory.
 
@@ -635,6 +691,8 @@ def check_bofasa_db_setup(require_genomad: bool = False) -> Tuple[bool, str]:
     -----------
     require_genomad : bool, default=False
         Whether the geNomad database entry is also required
+    require_isfinder : bool, default=True
+        Whether the ISfinder database entry is required
 
     Returns:
     --------
@@ -672,7 +730,9 @@ def check_bofasa_db_setup(require_genomad: bool = False) -> Tuple[bool, str]:
     except Exception as e:
         return False, f"Error reading database locations file {db_locations}: {str(e)}"
 
-    required = ['isfinder', 'pfam']
+    required = ['pfam']
+    if require_isfinder:
+        required.append('isfinder')
     if require_genomad:
         required.append('genomad')
 
@@ -687,7 +747,7 @@ def check_bofasa_db_setup(require_genomad: bool = False) -> Tuple[bool, str]:
             return False, f"{db_name} database referenced in {db_locations} not found: {db_path}"
 
     pfam_entry = db_entries['pfam']
-    if len(pfam_entry) < 4 or not pfam_entry[3].strip().isdigit():
+    if len(pfam_entry) < 4 or not pfam_entry[3].strip().isdigit() or int(pfam_entry[3].strip()) <= 0:
         return False, (
             f"Pfam Z value missing or malformed in {db_locations}.\n"
             "Please run 'bofasa setup' to (re)configure the Pfam database."
