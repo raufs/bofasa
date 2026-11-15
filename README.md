@@ -69,6 +69,15 @@ bash run_tests.sh
 > [!NOTE]
 > `bofasa setup` should already have been run. Also, the above will work for conda, but dataset can be downloaded and adapted to test docker installation too!
 
+### Unit Tests (from a source checkout):
+
+```bash
+pip install pytest
+pytest
+```
+
+Test fixtures in `tests/data/*.tar.gz` are uncompressed automatically when the tests start. No external tools (FAMSA, FastME, etc.) are required.
+
 ## Quick Start
 
 bofasa provides a unified command-line interface with two main subcommands: **`bofasa prep`** and **`bofasa run`**. For a more detailed look at the algorithms behind bofasa, check out the `ALGORITHM.md` document or [this Wiki page](https://github.com/raufs/bofasa/wiki/1.-Algorithm-Overview). A standalone **`bofasa domscape`** subcommand is also available for quickly building a Pfam domain by genome matrix ([see below](#bofasa-domscape---pfam-domain-matrix)).

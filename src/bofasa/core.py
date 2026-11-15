@@ -5,17 +5,15 @@ This module contains the main analysis functions for ortholog group determinatio
 phylogenetic refinement, and result processing.
 """
 
-import copy
 import os
 import random
-import statistics   
 import subprocess
 import sys
 import traceback
 import warnings
 from collections import defaultdict
 from operator import itemgetter
-from typing import Any, Dict, List, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 import concurrent.futures
 import numpy as np
 from Bio import SeqIO
@@ -169,6 +167,80 @@ def run_set_of_protein_comparisons(inputs: Tuple[str, str, float, Dict[str, Dict
         raise
 
 
+def write_unique_protein_pairs(
+    dog_member_lists: List[List[str]], batch_handles: Dict[int, Any]
+) -> Tuple[int, int]:
+    """
+    Write every protein pair that shares at least one DOG exactly once.
+
+    Pairs are enumerated DOG by DOG (in input order) as (p1, p2) with p1 < p2
+    within each DOG's sorted member list, and the n-th enumerated pair (counting
+    repeats) belongs to batch n % len(batch_handles). Previously every
+    occurrence was written; now a pair is written only at the occurrence that
+    came first in the concatenation of the batch files (lowest batch, then
+    earliest within it). The concatenated batch output is therefore exactly the
+    previous listing with later repeats removed - same lines, same order - so
+    downstream MCL sees the same graph with the same node order.
+
+    Occurrences of a pair are found from the DOGs its two proteins share (each
+    protein's short list of DOG indices), so no set of all pairs is kept.
+
+    Args:
+        dog_member_lists: For each DOG (in input order), its sorted protein ids.
+        batch_handles: Batch index -> open file handle.
+
+    Returns:
+        (pairs enumerated including repeats, unique pairs written)
+    """
+    num_batches = len(batch_handles)
+    prot_dog_idx: Dict[str, List[int]] = defaultdict(list)
+    for i, members in enumerate(dog_member_lists):
+        for p in members:
+            prot_dog_idx[p].append(i)
+    prot_dog_set = {p: set(v) for p, v in prot_dog_idx.items()}
+    sizes = [len(m) for m in dog_member_lists]
+    base = []
+    total = 0
+    for n in sizes:
+        base.append(total)
+        total += n * (n - 1) // 2
+    positions: Dict[int, Dict[str, int]] = {}
+
+    def occurrence_count(j: int, p1: str, p2: str) -> int:
+        # Index of pair (p1, p2) in the enumeration, when it comes from DOG j.
+        pos = positions.get(j)
+        if pos is None:
+            pos = {p: k for k, p in enumerate(dog_member_lists[j])}
+            positions[j] = pos
+        n, x, y = sizes[j], pos[p1], pos[p2]
+        return base[j] + x * n - x * (x + 1) // 2 + (y - x - 1)
+
+    pair_count = 0
+    written = 0
+    for i, members in enumerate(dog_member_lists):
+        n = len(members)
+        for a in range(n):
+            p1 = members[a]
+            p1_dogs = prot_dog_idx[p1]
+            for b in range(a + 1, n):
+                p2 = members[b]
+                write = True
+                if len(p1_dogs) > 1:
+                    s2 = prot_dog_set[p2]
+                    shared = [j for j in p1_dogs if j in s2]
+                    if len(shared) > 1:
+                        best = min(
+                            ((c % num_batches, c) for c in
+                             (occurrence_count(j, p1, p2) for j in shared))
+                        )
+                        write = best[1] == pair_count
+                if write:
+                    batch_handles[pair_count % num_batches].write(p1 + '\t' + p2 + '\n')
+                    written += 1
+                pair_count += 1
+    return pair_count, written
+
+
 def determine_protein_orthogroups(
     dogs_file: str,
     protein_clustering_dir: str,
@@ -215,7 +287,7 @@ def determine_protein_orthogroups(
         all_proteins = set([])
         sample_count = None
         samples = []
-        pair_count = 0
+        dog_member_lists: List[List[str]] = []
 
         with open(dogs_file) as odf:
             for i, line in enumerate(odf):
@@ -263,13 +335,17 @@ def determine_protein_orthogroups(
                     dog_conservation[dog] = sample_with/float(sample_count)
                     if sc_flag:
                         single_copy_dogs.add(dog)
-                    for j, p1 in enumerate(sorted(dog_lts)):
-                        for k, p2 in enumerate(sorted(dog_lts)):
-                            if j >= k: continue
-                            batch = pair_count % num_batches
-                            batch_input_handle = batch_handles[batch]
-                            batch_input_handle.write(p1 + '\t' + p2 + '\n')
-                            pair_count += 1
+                    dog_member_lists.append(sorted(dog_lts))
+
+        # Protein pairs sharing at least one DOG, each written once (proteins sharing
+        # several DOGs used to be listed - and compared - once per shared DOG; the
+        # repeats carry identical weights and MCL keeps a single edge, so dropping
+        # them leaves the MCL graph unchanged).
+        pair_count, unique_pair_count = write_unique_protein_pairs(dog_member_lists, batch_handles)
+        log_object.info(
+            f"{unique_pair_count} unique protein pairs sharing DOGs to compare "
+            f"({pair_count - unique_pair_count} repeated pairs skipped)"
+        )
 
         pairwise_assessment_inputs = []
         for batch in range(0, threads):
@@ -373,8 +449,11 @@ def determine_protein_orthogroups(
                     large_split_nj_trees_input.append([og_uniq_id, cog_list_file, cog_dist_file, og_tre_file, 
                                                      og_split_file, log_object, threads])
                 else:
+                    # Regular groups run in worker processes, which do not share this
+                    # process' protein_dogs, so each job carries its proteins' DOG counts.
                     split_nj_trees_input.append([og_uniq_id, cog_list_file, cog_dist_file, og_tre_file, 
-                                                og_split_file, log_object, 1])
+                                                og_split_file, log_object, 1,
+                                                {p: protein_dogs[p] for p in ls}])
                 large_protein_og_clusters.append(ls)
             else:
                 protein_og_clusters.append(ls)
@@ -401,36 +480,34 @@ def determine_protein_orthogroups(
             sys.stderr.write(traceback.format_exc() + '\n')
             sys.exit(1)
 
-        # Run splitting of regular-sized caorse protein ortholog groups in parallel
-        try:
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=threads
-            ) as executor:
-                future_to_input = {
-                    executor.submit(split_njt, input_data): input_data
-                    for input_data in split_nj_trees_input
-                }
-                
-                for future in _iter_progress(
-                    concurrent.futures.as_completed(future_to_input),
+        # Run splitting of regular-sized coarse protein ortholog groups in parallel
+        # (processes rather than threads: the splitting is pure Python and GIL-bound),
+        # largest groups first.
+        split_nj_trees_input.sort(key=lambda x: len(x[7]), reverse=True)
+        if split_nj_trees_input:
+            p = create_pool(threads)
+            try:
+                for og_uniq_id, err in _iter_progress(
+                    p.imap_unordered(_split_njt_job, split_nj_trees_input),
                     total=len(split_nj_trees_input),
                     description="Regular OG splits",
                 ):
-                    try:
-                        future.result()
-                    except Exception as e:
-                        input_data = future_to_input[future]
-                        msg = f'Failed during regular protein ortholog group job: {e}'
+                    if err is not None:
+                        msg = f'Failed during regular protein ortholog group job {og_uniq_id}: {err}'
                         log_object.error(msg)
                         sys.stderr.write(msg + '\n')
-                        sys.stderr.write(traceback.format_exc() + '\n')
                         # Continue with other jobs instead of exiting
-        except Exception as e:
-            msg = 'Failed during threading regular protein ortholog groups'
-            log_object.error(msg)
-            sys.stderr.write(msg + '\n')
-            sys.stderr.write(traceback.format_exc() + '\n')
-            sys.exit(1)
+            except Exception as e:
+                p.terminate()
+                msg = 'Failed during parallel processing of regular protein ortholog groups'
+                log_object.error(msg)
+                sys.stderr.write(msg + '\n')
+                sys.stderr.write(traceback.format_exc() + '\n')
+                sys.exit(1)
+            else:
+                p.close()
+            finally:
+                p.join()
 
         accounted_for_in_splitting = set([])
         for f in os.listdir(p_split_dir):
@@ -670,37 +747,25 @@ def resolve_orthogroups_using_phylogenetics(
                     samples = [x[:-len('.ccds')] if x.endswith('.ccds') else x for x in ls[1:]]
                     break
 
-        # Set up inputs for splitting DOGs using phylogenetics
-        split_inputs = []
-        for f in os.listdir(tre_dir):
-            dog = '.tre'.join(f.split('.tre')[:-1])
-            tre_file = tre_dir + f
-            spl_full_file = spl_full_dir + dog + '.txt'
-            t = Tree(tre_file)
-            if len(t.get_leaves()) < 500:
-                split_inputs.append([dog, tre_file, spl_full_file, skip_merge_back_flag, rooting_seeds, fixation_index_cutoff, 1, log_object])
-            else:
-                # Large trees are split serially in the main process to limit memory.
-                split_dogs([dog, tre_file, spl_full_file, skip_merge_back_flag, rooting_seeds, fixation_index_cutoff, threads, log_object])
-                
         # Run phylogenetic splitting of orthogroups
         msg = 'Using phylogenetics to split coarse domain resolution ortholog groups.'
         sys.stderr.write(msg + '\n')
         log_object.info(msg)
-        
-        # Use multiprocessing for domain ortholog group splitting
-        p = create_pool(threads)
+
         try:
-            for _ in _iter_progress(p.imap_unordered(split_dogs, split_inputs), total=len(split_inputs), description="Domain OG splits"):
-                pass
+            split_dogs_in_parallel(
+                tre_dir, spl_full_dir, log_object,
+                skip_merge_back_flag=skip_merge_back_flag,
+                rooting_seeds=rooting_seeds,
+                fixation_index_cutoff=fixation_index_cutoff,
+                threads=threads,
+            )
         except Exception as e:
-            p.terminate()
             msg = f"Phylogenetic splitting of a domain ortholog group failed: {e}"
             log_object.error(msg)
             log_object.error(traceback.format_exc())
             sys.stderr.write(msg + '\n')
             sys.exit(1)
-        p.close()
 
         # Write final results file
         with open(result_file, 'w') as outf_handle:
@@ -884,6 +949,73 @@ def determine_tree_score_bl(ptree: Tree) -> float:
         sys.stderr.write(msg + "\n")
 
 
+def _leaf_keys(name: str, are_proteins: bool) -> Tuple[str, str]:
+    """Return the (sample, protein) keys used for duplication scoring of a leaf."""
+    sample = name.split("|")[0]
+    if are_proteins:
+        return sample, name
+    return sample, "|".join(name.split("|")[:-2])
+
+
+def _subtree_duplication_scores(
+    intree: Tree, all_og_samples: Set[str], are_proteins: bool = False
+) -> Tuple[Dict[Any, int], Dict[Any, int]]:
+    """
+    Compute determine_tree_score() for every node of intree in one postorder pass.
+
+    determine_tree_score(n) = sum over s in all_og_samples of |#proteins_s(n) - 1|
+                            = |all_og_samples| + sum over s in (samples(n) & all_og_samples)
+                              of (#proteins_s(n) - 2)
+    Per-node sample->protein sets are merged small-to-large, so the whole pass is
+    O(n log n) instead of re-traversing every subtree (O(n^2)).
+
+    Returns:
+        (scores, named_leaf_counts) keyed by node object.
+    """
+    n_all = len(all_og_samples)
+    scores: Dict[Any, int] = {}
+    named_counts: Dict[Any, int] = {}
+    # node -> [sample -> set(protein), total_proteins, acc]
+    state: Dict[Any, List[Any]] = {}
+    for n in intree.traverse("postorder"):
+        if n.is_leaf():
+            s, p = _leaf_keys(n.name, are_proteins)
+            state[n] = [{s: {p}}, 1, (-1 if s in all_og_samples else 0)]
+            named_counts[n] = 1 if n.name.strip() != "" else 0
+            scores[n] = n_all + state[n][2]
+            continue
+        acc = None
+        named = 0
+        for ch in n.children:
+            named += named_counts[ch]
+            st = state.pop(ch)
+            if acc is None:
+                acc = st
+                continue
+            if st[1] > acc[1]:
+                acc, st = st, acc
+            big = acc[0]
+            for s, prots in st[0].items():
+                in_all = s in all_og_samples
+                bs = big.get(s)
+                if bs is None:
+                    big[s] = prots
+                    acc[1] += len(prots)
+                    if in_all:
+                        acc[2] += len(prots) - 2
+                else:
+                    for p in prots:
+                        if p not in bs:
+                            bs.add(p)
+                            acc[1] += 1
+                            if in_all:
+                                acc[2] += 1
+        state[n] = acc
+        named_counts[n] = named
+        scores[n] = n_all + acc[2]
+    return scores, named_counts
+
+
 def recursive_splitting(
     intree: Tree, all_og_samples: Set[str], are_proteins: bool = False
 ) -> List[Set[str]]:
@@ -898,34 +1030,48 @@ def recursive_splitting(
             if bl_sum <= threshold:
                 return [all_leaves]
 
-        full_score = determine_tree_score(
+        scores, named_counts = _subtree_duplication_scores(
             intree, all_og_samples, are_proteins=are_proteins
         )
+        full_score = scores[intree]
 
-        subtree_info = []
+        # Preorder pass (same order as ete3's traverse('preorder')) to find the
+        # minimum internal-node score and the sample set.
         min_score = 1e100
         samples = set([])
         for n in intree.traverse("preorder"):
             if n.is_leaf():
                 samples.add(n.name.split("|")[0])
-            else:
-                subtree_score = determine_tree_score(
-                    n, all_og_samples, are_proteins=are_proteins
-                )
-                subtree_info.append([get_children(n), subtree_score])
-                if subtree_score < min_score:
-                    min_score = subtree_score
+            elif scores[n] < min_score:
+                min_score = scores[n]
 
         if min_score >= full_score or len(samples) == 1:
             return [all_leaves]
 
+        # Greedily take min-score subtrees in preorder whose leaves do not overlap
+        # an already-taken subtree. Non-empty subtree leaf sets only overlap when
+        # one node is an ancestor of the other, and ancestors come first in
+        # preorder, so a node is taken iff no ancestor was taken (an empty leaf
+        # set never overlaps and is always taken, as before).
+        best_nodes = []
+        stack = [(intree, False)]
+        while stack:
+            n, under_taken = stack.pop()
+            if n.is_leaf():
+                continue
+            if scores[n] == min_score and (not under_taken or named_counts[n] == 0):
+                best_nodes.append(n)
+                if named_counts[n] > 0:
+                    under_taken = True
+            for ch in reversed(n.children):
+                stack.append((ch, under_taken))
+
         accounted_for = set([])
         best_partitions = []
-        for i, sti in enumerate(sorted(subtree_info, key=itemgetter(1))):
-            if sti[1] == min_score:
-                if len(sti[0].intersection(accounted_for)) == 0:
-                    best_partitions.append(sti[0])
-                    accounted_for = accounted_for.union(sti[0])
+        for n in best_nodes:
+            leaves = get_children(n)
+            best_partitions.append(leaves)
+            accounted_for |= leaves
 
         complement_leaves = all_leaves.difference(accounted_for)
         complement_samples = set([x.split("|")[0] for x in complement_leaves])
@@ -944,18 +1090,84 @@ def recursive_splitting(
         sys.stderr.write(msg + "\n")
         sys.stderr.write(traceback.format_exc() + "\n")
         sys.exit(1)
-        
+
+
+def _protein_dog_count_matrix(
+    proteins: List[str], prot_dogs: Dict[str, Dict[str, int]], nonzero_only: bool
+) -> np.ndarray:
+    """
+    Protein x DOG count matrix (rows in the order of ``proteins``; columns are the
+    sorted DOGs with a count > 0 (``nonzero_only=False``) or != 0
+    (``nonzero_only=True``) in at least one protein).
+    """
+    dogs = set()
+    for p in proteins:
+        for d, c in prot_dogs.get(p, {}).items():
+            if (c != 0) if nonzero_only else (c > 0):
+                dogs.add(d)
+    dog_index = {d: j for j, d in enumerate(sorted(dogs))}
+    m = np.zeros((len(proteins), len(dog_index)), dtype=np.int64)
+    for i, p in enumerate(proteins):
+        for d, c in prot_dogs.get(p, {}).items():
+            j = dog_index.get(d)
+            if j is not None and (c != 0 or not nonzero_only):
+                m[i, j] = c
+    return m
+
+
+def write_protein_cosine_distance_matrix(
+    all_prots: Set[str],
+    prot_dogs: Dict[str, Dict[str, int]],
+    cog_dist_file: str,
+    block_size: int = 1024,
+) -> Dict[str, str]:
+    """
+    Write the PHYLIP matrix of cosine distances between proteins' DOG count vectors
+    (FastME input) and return the PHYLIP-name -> protein mapping.
+
+    Matches scipy.spatial.distance.cosine applied pair by pair: for integer count
+    vectors the dot products are exact, and 1 - uv / sqrt(uu * vv) is evaluated
+    with the same float operations, then clipped to [0, 2] as scipy does. Computed
+    with matrix products in row blocks instead of one Python-level call per pair.
+    """
+    prots = sorted(all_prots)
+    # float64 BLAS products are exact here: counts and their sums of products are
+    # small integers (< 2**53), so uv, uu, vv and uu * vv equal scipy's int64 values.
+    m = _protein_dog_count_matrix(prots, prot_dogs, nonzero_only=False).astype(np.float64)
+    norms = np.einsum('ij,ij->i', m, m)
+    naming: Dict[str, str] = {}
+    with open(cog_dist_file, 'w') as outf:
+        outf.write(str(len(prots)) + '\n')
+        for start in range(0, len(prots), block_size):
+            stop = min(start + block_size, len(prots))
+            uv = m[start:stop] @ m.T
+            with np.errstate(divide='ignore', invalid='ignore'):
+                denom = np.sqrt(norms[start:stop, None] * norms[None, :])
+                dist = 1.0 - uv / denom
+            np.clip(dist, 0.0, 2.0, out=dist)
+            for bi, row in enumerate(dist.tolist()):
+                p1i = start + bi
+                len_id = len(str(p1i))
+                assert(10 > len_id)
+                naming[str(p1i)] = prots[p1i]
+                name = str(p1i) + (' ' * (10 - len_id))
+                outf.write(name + ' '.join(['{:.10f}'.format(x) for x in row]) + '\n')
+    return naming
+
 
 def split_njt(input: List[Any]) -> None:
     """
     Split protein ortholog groups using neighbor-joining trees based on domain ortholog group distances.
-    
+
     Args:
-        input: List containing [og_uniq_id, cog_list_file, cog_dist_file, og_tre_file, og_split_file, 
-        log_object, threads]
+        input: List containing [og_uniq_id, cog_list_file, cog_dist_file, og_tre_file, og_split_file,
+        log_object, threads] and optionally an 8th element: the protein -> {DOG: count}
+        mapping for (at least) the proteins of this group. Without it the module-level
+        ``protein_dogs`` is used (only available in the process that loaded it).
     """
     try:
-        og, cog_list_file, cog_dist_file, tre_file, spl_file, log_object, threads = input
+        og, cog_list_file, cog_dist_file, tre_file, spl_file, log_object, threads = input[:7]
+        prot_dogs = input[7] if len(input) > 7 else protein_dogs
 
         all_prots = set([])
         with open(cog_list_file) as oclf:
@@ -963,39 +1175,7 @@ def split_njt(input: List[Any]) -> None:
                 line = line.strip()
                 all_prots.add(line)
 
-        all_dogs = set([])
-        for p in all_prots:
-            for d in protein_dogs[p]:
-                if protein_dogs[p][d] > 0:
-                    all_dogs.add(d)
-
-        prot_dog_vectors = defaultdict(list)
-        for p in all_prots:
-            for d in sorted(all_dogs):
-                if p in protein_dogs and d in protein_dogs[p]:
-                    prot_dog_vectors[p].append(protein_dogs[p][d])
-                else:
-                    prot_dog_vectors[p].append(0)
-
-        prot_dog_vectors_np = {}
-        for p in prot_dog_vectors:
-            prot_dog_vectors_np[p] = np.array(prot_dog_vectors[p])
-
-        naming = {}
-        outf = open(cog_dist_file, 'w')
-        outf.write(str(len(prot_dog_vectors_np.keys())) + '\n')
-        for p1i, p1 in enumerate(sorted(prot_dog_vectors_np)):
-            p1_dist = []
-            for p2 in sorted(prot_dog_vectors_np):
-                dist = distance.cosine(prot_dog_vectors_np[p1], prot_dog_vectors_np[p2])
-                p1_dist.append('{:.10f}'.format(dist))
-
-            len_id = len(str(p1i))
-            assert(10 > len_id)
-            naming[str(p1i)] = p1
-            name = str(p1i) + (' '*(10-len_id))
-            outf.write(name + ' '.join(p1_dist) + '\n')
-        outf.close()
+        naming = write_protein_cosine_distance_matrix(all_prots, prot_dogs, cog_dist_file)
 
         fastme_cmd = ['fastme', '-i', cog_dist_file, '-o', tre_file, '-T', str(threads)]
         run_cmd(fastme_cmd, None, check_files=[tre_file])
@@ -1020,7 +1200,7 @@ def split_njt(input: List[Any]) -> None:
         t.set_outgroup(R)
         sp = recursive_splitting(t, samples_with_og, are_proteins=True)
         sp_further_split = further_split_disjoint_dog_partitions(t, sp)
-        sp_refined = further_split_outlier_artifact_groups(t, sp_further_split)
+        sp_refined = further_split_outlier_artifact_groups(t, sp_further_split, prot_dogs=prot_dogs)
         spl_outf = open(spl_file, 'w')
         for spi in sp_refined:
             spl_outf.write(' '.join(sorted(spi)) + '\n')
@@ -1037,123 +1217,110 @@ def split_njt(input: List[Any]) -> None:
         sys.exit(1)
 
 
-def further_split_outlier_artifact_groups(rooted_t: Tree, sps: List[Set[str]]) -> List[Set[str]]:
+def _split_njt_job(input: List[Any]) -> Tuple[str, Any]:
     """
-    Further split ortholog groups that may contain small proteins or be the result
-    of outlier sequences being claded together after midpoint rooting of FastME tree.
+    Process-pool wrapper around split_njt: returns (og, None) on success or
+    (og, error message) on failure, so one failing group neither kills the
+    worker (split_njt raises SystemExit) nor stops the remaining groups.
     """
     try:
-        all_proteins = get_children(rooted_t)
+        split_njt(input)
+        return input[0], None
+    except (Exception, SystemExit):
+        return input[0], traceback.format_exc()
 
-        updated_sp = []
-        for sp in sps:
-            singletons = set([])
-            for p1 in sorted(sp):
-                p1dogs = protein_dogs[p1]
-                max_jacc_internal = 0.0
-                max_jacc_external = 0.0
-                for p2 in sorted(sp):
-                    if p1 == p2: 
-                        continue
-                    
-                    p2dogs = protein_dogs[p2]
 
-                    union_dogs = (set(p1dogs.keys())).union(set(p2dogs.keys()))
-
-                    union_count = 0
-                    intersect_count = 0
-                    for d in union_dogs:
-                        p1dc = 0
-                        p2dc = 0
-                        if d in p1dogs:
-                            p1dc = p1dogs[d]
-                        if d in p2dogs:
-                            p2dc = p2dogs[d]
-                        union_count += p1dc + p2dc - min([p1dc, p2dc])
-                        intersect_count += min([p1dc, p2dc])
-
-                    if union_count > 0:
-                        jaccard_index = intersect_count/union_count
-                        if jaccard_index > max_jacc_internal:
-                            max_jacc_internal = jaccard_index
-
-                for p2 in sorted(all_proteins):
-                    if p2 in sp: 
-                        continue
-                    p2dogs = protein_dogs[p2]
-
-                    union_dogs = (set(p1dogs.keys())).union(set(p2dogs.keys()))
-
-                    union_count = 0
-                    intersect_count = 0
-                    for d in union_dogs:
-                        p1dc = 0
-                        p2dc = 0
-                        if d in p1dogs:
-                            p1dc = p1dogs[d]
-                        if d in p2dogs:
-                            p2dc = p2dogs[d]
-                        union_count += p1dc + p2dc - min([p1dc, p2dc])
-                        intersect_count += min([p1dc, p2dc])
-
-                    if union_count > 0:
-                        jaccard_index = intersect_count/union_count
-                        if jaccard_index > max_jacc_external:
-                            max_jacc_external = jaccard_index
-    
-                if max_jacc_internal <= max_jacc_external:
-                    singletons.add(p1)
-                    updated_sp.append(set([p1]))
-            
-            remaining_sp = set([])
-            for p in sp:
-                if p in singletons: 
-                    continue
-                remaining_sp.add(p)
-            
-            if len(remaining_sp) == 0: 
-                continue
-            updated_sp.append(remaining_sp)
-
-        return updated_sp
-    except Exception as e:
-        msg = 'Issues refining domain ortholog groups based on phylogenetics.'
-        sys.stderr.write(msg + '\n')
-        sys.stderr.write(traceback.format_exc() + '\n')
-        sys.exit(1)
+def _node_leaf_set(n: Tree) -> Set[str]:
+    """Leaf set of a node as used by further_split_disjoint_dog_partitions."""
+    if n.is_leaf():
+        return set([n.name])
+    return get_children(n)
 
 
 def further_split_disjoint_dog_partitions(rooted_t: Tree, sps: List[Set[str]]) -> List[Set[str]]:
     """
     Function to further split disjoint domain ortholog groups based on the phylogenetic tree.
+
+    A partition that is exactly the leaf set of some node is kept as is; otherwise
+    it is covered greedily by the largest subtrees fully contained in it.
+
+    Node leaf sets are summarised by (size, hash-sum) so monophyly is checked with
+    a dict lookup (verified exactly on the candidate) instead of comparing the
+    partition against the materialised leaf set of every node.
     """
     try:
-        node_id = 1
-        innernode_children = []
-        for n in rooted_t.traverse('postorder'):
+        mask = (1 << 64) - 1
+        post = list(rooted_t.traverse('postorder'))
+        size: Dict[Any, int] = {}
+        hsum: Dict[Any, int] = {}
+        index: Dict[Tuple[int, int], List[Any]] = defaultdict(list)
+        for n in post:
             if n.is_leaf():
-                innernode_children.append([node_id, set([n.name]), 1])
+                size[n] = 1
+                hsum[n] = hash(n.name) & mask
             else:
-                children = get_children(n)
-                innernode_children.append([node_id, children, len(children)])
-            node_id += 1
+                s = 0
+                h = 0
+                for ch in n.children:
+                    if ch.is_leaf():
+                        if ch.name.strip() != "":
+                            s += 1
+                            h += hash(ch.name) & mask
+                    else:
+                        s += size[ch]
+                        h += hsum[ch]
+                size[n] = s
+                hsum[n] = h & mask
+            index[(size[n], hsum[n])].append(n)
 
         updated_sp = []
         for sp in sps:
+            key = (len(sp), sum(hash(x) & mask for x in sp) & mask)
             monophyletic_flag = False
-            for n in innernode_children:
-                if sp == n[1]:
+            for n in index.get(key, []):
+                if _node_leaf_set(n) == sp:
                     monophyletic_flag = True
+                    break
             if monophyletic_flag:
                 updated_sp.append(sp)
-            else:
-                accounted_leafs = set([])
-                for n in sorted(innernode_children, key=itemgetter(2), reverse=True):
-                    nc = n[1]
-                    if nc.issubset(sp) and len(nc.difference(sp)) == 0 and len(nc.intersection(accounted_leafs)) == 0:
-                        accounted_leafs = accounted_leafs.union(nc)
-                        updated_sp.append(nc)
-                assert(sp == accounted_leafs)
+                continue
+
+            # Nodes whose whole leaf set lies inside sp.
+            inside: Dict[Any, bool] = {}
+            for n in post:
+                if n.is_leaf():
+                    inside[n] = n.name in sp
+                else:
+                    ok = True
+                    for ch in n.children:
+                        if ch.is_leaf():
+                            if ch.name.strip() != "" and ch.name not in sp:
+                                ok = False
+                                break
+                        elif not inside[ch]:
+                            ok = False
+                            break
+                    inside[n] = ok
+
+            # A contained node below a strictly larger contained parent can never
+            # be chosen (the parent, or a node with the parent's leaf set, is taken
+            # first and overlaps it), so it is skipped. Postorder order is kept so
+            # the stable size-descending sort matches the original tie-breaking.
+            candidates = []
+            for n in post:
+                if not inside[n]:
+                    continue
+                par = n.up
+                if size[n] == 0 or par is None or not inside[par] or size[par] == size[n]:
+                    candidates.append(n)
+
+            accounted_leafs = set([])
+            for n in sorted(candidates, key=lambda x: size[x], reverse=True):
+                nc = _node_leaf_set(n)
+                if len(nc.intersection(accounted_leafs)) == 0:
+                    accounted_leafs = accounted_leafs.union(nc)
+                    updated_sp.append(nc)
+            assert(sp == accounted_leafs)
         return updated_sp
 
     except Exception as e:
@@ -1164,94 +1331,76 @@ def further_split_disjoint_dog_partitions(rooted_t: Tree, sps: List[Set[str]]) -
 
 
 def further_split_outlier_artifact_groups(
-    rooted_t: Tree, sps: Set[str]
+    rooted_t: Tree,
+    sps: List[Set[str]],
+    prot_dogs: Optional[Dict[str, Dict[str, int]]] = None,
+    block_size: int = 512,
 ) -> List[Set[str]]:
     """
     Further split ortholog groups that may contain small proteins or be the result
     of outlier sequences being claded together after midpoint rooting of FastME tree.
 
+    A protein becomes a singleton when its best weighted-Jaccard similarity of DOG
+    counts to another member of its group is <= its best similarity to a protein
+    of the tree outside the group. Weighted Jaccard is sum(min) / sum(max) over DOGs
+    with non-zero counts; sum(min) over integer counts is computed exactly as
+    sum_k [a >= k] . [b >= k] with matrix products (row blocks), and the final
+    division matches the original per-pair Python arithmetic.
+
     Args:
         rooted_t: Rooted phylogenetic tree
         sps: List of ortholog group partitions
+        prot_dogs: protein -> {DOG: count}; defaults to the module-level protein_dogs
 
     Returns:
         list: Updated ortholog group partitions
     """
     try:
+        if prot_dogs is None:
+            prot_dogs = protein_dogs
         all_proteins = get_children(rooted_t)
+        universe = set(all_proteins)
+        for sp in sps:
+            universe.update(sp)
+        universe = sorted(universe)
+        index = {p: i for i, p in enumerate(universe)}
+
+        m = _protein_dog_count_matrix(universe, prot_dogs, nonzero_only=True)
+        max_count = int(m.max()) if m.size else 0
+        min_count = int(m.min()) if m.size else 0
+        if min_count < 0:
+            raise ValueError("Negative DOG counts are not supported.")
+        levels = [(m >= k).astype(np.float64) for k in range(1, max_count + 1)]
+        totals = m.sum(axis=1)
+        in_tree = np.zeros(len(universe), dtype=bool)
+        for p in all_proteins:
+            in_tree[index[p]] = True
 
         updated_sp = []
         for sp in sps:
+            members = sorted(sp)
+            rows = np.array([index[p] for p in members], dtype=np.int64)
+            in_sp = np.zeros(len(universe), dtype=bool)
+            in_sp[rows] = True
+            external = in_tree & ~in_sp
+
             singletons = set([])
-            for p1 in sorted(sp):
-                p1dogs = {}
-                for dog, count in protein_dogs[p1].items():
-                    if count != 0:
-                        p1dogs[dog] = count
-                p1dogs_keys = set(p1dogs.keys())
-
-                max_jacc_internal = 0.0
-                max_jacc_external = 0.0
-                for p2 in sorted(sp):
-                    if p1 == p2:
-                        continue
-
-                    p2dogs = {}
-                    for dog, count in protein_dogs[p2].items():
-                        if count != 0:
-                            p2dogs[dog] = count
-
-                    p2dogs_keys = set(p2dogs.keys())
-                    union_dogs = p1dogs_keys.union(p2dogs_keys)
-
-                    union_count = 0
-                    intersect_count = 0
-                    for d in union_dogs:
-                        p1dc = 0
-                        p2dc = 0
-                        if d in p1dogs:
-                            p1dc = p1dogs[d]
-                        if d in p2dogs:
-                            p2dc = p2dogs[d]
-                        union_count += p1dc + p2dc - min([p1dc, p2dc])
-                        intersect_count += min([p1dc, p2dc])
-
-                    if union_count > 0:
-                        jaccard_index = intersect_count / union_count
-                        if jaccard_index > max_jacc_internal:
-                            max_jacc_internal = jaccard_index
-
-                for p2 in sorted(all_proteins):
-                    if p2 in sp:
-                        continue
-                    p2dogs = {}
-                    for dog, count in protein_dogs[p2].items():
-                        if count != 0:
-                            p2dogs[dog] = count
-
-                    p2dogs_keys = set(p2dogs.keys())
-                    union_dogs = p1dogs_keys.union(p2dogs_keys)
-
-                    union_count = 0
-                    intersect_count = 0
-                    for d in union_dogs:
-                        p1dc = 0
-                        p2dc = 0
-                        if d in p1dogs:
-                            p1dc = p1dogs[d]
-                        if d in p2dogs:
-                            p2dc = p2dogs[d]
-                        union_count += p1dc + p2dc - min([p1dc, p2dc])
-                        intersect_count += min([p1dc, p2dc])
-
-                    if union_count > 0:
-                        jaccard_index = intersect_count / union_count
-                        if jaccard_index > max_jacc_external:
-                            max_jacc_external = jaccard_index
-
-                if max_jacc_internal <= max_jacc_external:
-                    singletons.add(p1)
-                    updated_sp.append(set([p1]))
+            for start in range(0, len(members), block_size):
+                block = rows[start:start + block_size]
+                inter = np.zeros((len(block), len(universe)), dtype=np.float64)
+                for lv in levels:
+                    inter += lv[block] @ lv.T
+                union = totals[block][:, None] + totals[None, :] - inter
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    jacc = np.where(union > 0, inter / union, 0.0)
+                internal_j = np.where(in_sp[None, :], jacc, 0.0)
+                internal_j[np.arange(len(block)), block] = 0.0
+                max_internal = internal_j.max(axis=1) if internal_j.shape[1] else np.zeros(len(block))
+                max_external = np.where(external[None, :], jacc, 0.0).max(axis=1)
+                for bi, p1 in enumerate(members[start:start + block_size]):
+                    if max_internal[bi] <= max_external[bi]:
+                        singletons.add(p1)
+                        updated_sp.append(set([p1]))
 
             remaining_sp = set([])
             for p in sp:
@@ -1297,18 +1446,56 @@ def single_linkage_cluster(pairs, all_lts, paired_lts):
         sys.exit(1)
 
 
+def _exact_depths(t: Tree) -> Tuple[Dict[Any, int], int]:
+    """
+    Root-to-node depths as exact integers in units of 2**-scale.
+
+    Every float branch length is a dyadic rational, so scaling by the largest
+    power-of-two denominator makes all depths (and sums of them) exact integers.
+    This keeps the aggregated distance sums in merge_back_dog_partitions exact,
+    independent of summation order.
+    """
+    ratios = {}
+    scale = 0
+    for n in t.traverse('preorder'):
+        if n.is_root():
+            continue
+        num, den = float(n.dist).as_integer_ratio()
+        ratios[n] = (num, den)
+        b = den.bit_length() - 1
+        if b > scale:
+            scale = b
+    depth: Dict[Any, int] = {}
+    for n in t.traverse('preorder'):
+        if n.is_root():
+            depth[n] = 0
+        else:
+            num, den = ratios[n]
+            depth[n] = depth[n.up] + num * ((1 << scale) // den)
+    return depth, scale
+
+
 def merge_back_dog_partitions(
     t: Tree,
-    pw_dists: Dict[Tuple[str, str], float],
     split_partitions: List[Set[str]],
     fixation_index_cutoff: float = 0.5,
 ) -> List[Set[str]]:
     """
     Merge back domain ortholog group partitions based on fixation index.
 
+    For each internal node spanning leaves from >= 2 partitions, the mean patristic
+    distance between leaves of the same partition (pi_within) and of different
+    partitions (pi_between) under that node give
+    fix_index = (pi_between - pi_within) / pi_between; partitions under nodes with
+    fix_index <= cutoff are merged by single-linkage.
+
+    The distance sums are aggregated bottom-up using
+    dist(a, b) = depth(a) + depth(b) - 2 * depth(LCA(a, b)), merging per-partition
+    (count, depth-sum) tables small-to-large, so no pairwise distance matrix is
+    built (previously O(n^2) memory and roughly O(n^3) time on large trees).
+
     Args:
-        t: Phylogenetic tree
-        pw_dists: Pairwise distances dictionary
+        t: Rooted phylogenetic tree
         split_partitions: List of split partitions
         fixation_index_cutoff: Fixation index cutoff (default: 0.5)
 
@@ -1327,51 +1514,61 @@ def merge_back_dog_partitions(
     if len(clade_leaves) == 1:
         return split_partitions
 
-    node_clade_samples = defaultdict(lambda: defaultdict(list))
-    node_tot_children = defaultdict(int)
-    for ni, n in enumerate(t.traverse('postorder')):
-        if n.is_leaf():
-            continue
-        name = 'Node_' + str(ni + 1)
-        n.name = name
-        for l in n.traverse('postorder'):
-            if l.is_leaf():
-                c = leaf_to_clade[l.name]
-                node_clade_samples[name][c].append(l.name)
-                node_tot_children[name] += 1
+    depth, scale = _exact_depths(t)
 
+    # node -> [clade -> [count, depth_sum], n_leaves, depth_sum,
+    #          all_pairs_dist_sum, within_pairs_dist_sum, within_pairs_count]
+    state: Dict[Any, List[Any]] = {}
     merge_sps = []
     paired_sps = set([])
     for n in t.traverse('postorder'):
         if n.is_leaf():
+            d = depth[n]
+            state[n] = [{leaf_to_clade[n.name]: [1, d]}, 1, d, 0, 0, 0]
             continue
-        if len(node_clade_samples[n.name]) == 1:
-            continue
-        within_dists = []
-        for c in sorted(node_clade_samples[n.name]):
-            for i, s1 in enumerate(sorted(node_clade_samples[n.name][c])):
-                for j, s2 in enumerate(sorted(node_clade_samples[n.name][c])):
-                    if i >= j:
-                        continue
-                    key = tuple(sorted([s1, s2]))
-                    dist = pw_dists[key]
-                    within_dists.append(dist)
 
-        between_dists = []
-        for i, c1 in enumerate(sorted(node_clade_samples[n.name])):
-            for j, c2 in enumerate(sorted(node_clade_samples[n.name])):
-                if i >= j:
-                    continue
-                for s1 in node_clade_samples[n.name][c1]:
-                    for s2 in node_clade_samples[n.name][c2]:
-                        key = tuple(sorted([s1, s2]))
-                        dist = pw_dists[key]
-                        between_dists.append(dist)
+        two_d = 2 * depth[n]
+        acc = None
+        for ch in n.children:
+            st = state.pop(ch)
+            if acc is None:
+                acc = st
+                continue
+            if len(st[0]) > len(acc[0]):
+                acc, st = st, acc
+            k1, s1 = acc[1], acc[2]
+            k2, s2 = st[1], st[2]
+            acc[3] += st[3] + k1 * s2 + k2 * s1 - two_d * k1 * k2
+            acc[1] = k1 + k2
+            acc[2] = s1 + s2
+            acc[4] += st[4]
+            acc[5] += st[5]
+            big = acc[0]
+            for c, (ck2, cs2) in st[0].items():
+                e = big.get(c)
+                if e is None:
+                    big[c] = [ck2, cs2]
+                else:
+                    ck1, cs1 = e
+                    acc[4] += ck1 * cs2 + ck2 * cs1 - two_d * ck1 * ck2
+                    acc[5] += ck1 * ck2
+                    e[0] = ck1 + ck2
+                    e[1] = cs1 + cs2
+        state[n] = acc
 
-        if len(within_dists) == 0:
+        clades = acc[0]
+        if len(clades) == 1:
             continue
-        pi_within = statistics.mean(within_dists)
-        pi_between = statistics.mean(between_dists)
+        within_count = acc[5]
+        if within_count == 0:
+            continue
+        n_leaves = acc[1]
+        between_count = n_leaves * (n_leaves - 1) // 2 - within_count
+        within_sum = acc[4]
+        between_sum = acc[3] - within_sum
+        # Exact rational means, correctly rounded to float.
+        pi_within = within_sum / (within_count << scale)
+        pi_between = between_sum / (between_count << scale)
         if pi_between == 0:
             # Identical sequences (zero branch lengths): partitions are not differentiated.
             fix_index = 0.0
@@ -1380,10 +1577,9 @@ def merge_back_dog_partitions(
 
         if fix_index > fixation_index_cutoff:
             continue
-        for i, c1 in enumerate(sorted(node_clade_samples[n.name])):
-            for j, c2 in enumerate(sorted(node_clade_samples[n.name])):
-                if i >= j:
-                    continue
+        sorted_clades = sorted(clades)
+        for i, c1 in enumerate(sorted_clades):
+            for c2 in sorted_clades[i + 1:]:
                 merge_sps.append([c1, c2])
                 paired_sps.add(c1)
                 paired_sps.add(c2)
@@ -1402,53 +1598,196 @@ def merge_back_dog_partitions(
         return split_partitions
 
 
-def all_pairwise_leaf_distances(t: Any) -> Dict[Tuple[str, str], float]:
+def score_partitions(rooted_t: Tree, partitions: List[Set[str]]) -> Tuple[int, float]:
     """
-    Compute patristic distances between all pairs of leaves in a single pass.
+    Score a partitioning of rooted_t's leaves without copying/pruning the tree.
 
-    Uses dist(a, b) = depth(a) + depth(b) - 2 * depth(LCA(a, b)), where depth is
-    the summed branch length from the root. Each pair is visited exactly once, at
-    its lowest common ancestor, so this is O(n^2) in the number of leaves instead
-    of calling t.get_distance() (itself O(tree height)) for every pair. Equivalent
-    to t.get_distance(l1, l2) for all leaf pairs; no multiprocessing required.
-
-    Args:
-        t: ete3 Tree object.
+    Equivalent to, for each partition p, pruning a copy of rooted_t to p (with
+    preserve_branch_length=True) and summing determine_tree_score() and
+    determine_tree_score_bl() over the pruned trees:
+      - duplication score of p = #distinct proteins in p - #distinct samples in p
+      - branch-length score of p = total length of the subtree spanning p (for a
+        single leaf, ete3 keeps the original root, so it is the root-to-leaf depth)
 
     Returns:
-        Dict mapping sorted (leaf1, leaf2) name tuples to their distance, plus
-        (leaf, leaf) -> 0.0 self-distances.
+        (summed duplication score, summed branch-length score)
     """
-    depth: Dict[Any, float] = {}
-    for n in t.traverse('preorder'):
-        depth[n] = 0.0 if n.is_root() else depth[n.up] + n.dist
+    leaf_part: Dict[str, int] = {}
+    for i, p in enumerate(partitions):
+        for l in p:
+            leaf_part[l] = i
+    sizes = [len(p) for p in partitions]
+    bl = [0.0] * len(partitions)
 
-    pw_dists: Dict[Tuple[str, str], float] = {}
-    leaves_below: Dict[Any, List[Any]] = {}
-    for n in t.traverse('postorder'):
+    float_depth: Dict[Any, float] = {}
+    for n in rooted_t.traverse('preorder'):
+        float_depth[n] = 0.0 if n.is_root() else float_depth[n.up] + n.dist
+
+    # node -> {partition: number of its leaves below node}, only for partitions
+    # not yet complete; an edge lies on p's spanning subtree iff 0 < count < |p|.
+    state: Dict[Any, Dict[int, int]] = {}
+    for n in rooted_t.traverse('postorder'):
         if n.is_leaf():
-            leaves_below[n] = [n]
-            pw_dists[(n.name, n.name)] = 0.0
-            continue
-        twice_lca_depth = 2.0 * depth[n]
-        child_leaf_sets = [leaves_below.pop(c) for c in n.children]
-        for ci in range(len(child_leaf_sets)):
-            for cj in range(ci + 1, len(child_leaf_sets)):
-                for a in child_leaf_sets[ci]:
-                    da = depth[a] - twice_lca_depth
-                    for b in child_leaf_sets[cj]:
-                        key = (a.name, b.name) if a.name <= b.name else (b.name, a.name)
-                        pw_dists[key] = da + depth[b]
-        leaves_below[n] = [l for ls in child_leaf_sets for l in ls]
-    return pw_dists
+            cur: Dict[int, int] = {}
+            pi = leaf_part.get(n.name)
+            if pi is not None:
+                if sizes[pi] == 1:
+                    bl[pi] = float_depth[n]
+                else:
+                    cur[pi] = 1
+        else:
+            cur = None
+            for ch in n.children:
+                st = state.pop(ch)
+                if cur is None:
+                    cur = st
+                    continue
+                if len(st) > len(cur):
+                    cur, st = st, cur
+                for pi, c in st.items():
+                    cur[pi] = cur.get(pi, 0) + c
+            for pi in [pi for pi, c in cur.items() if c == sizes[pi]]:
+                del cur[pi]
+        if not n.is_root():
+            for pi in cur:
+                bl[pi] += n.dist
+        state[n] = cur
+
+    pscore_sum = 0
+    pscore_bl_sum = 0.0
+    for i, p in enumerate(partitions):
+        prots = set()
+        samples = set()
+        for x in p:
+            s, prot = _leaf_keys(x, False)
+            samples.add(s)
+            prots.add(prot)
+        pscore_sum += len(prots) - len(samples)
+        pscore_bl_sum += bl[i]
+    return pscore_sum, pscore_bl_sum
+
+
+def _load_named_dog_tree(tre_file: str) -> Tree:
+    """Load a coarse DOG tree and name internal nodes node_<preorder index>."""
+    t = Tree(tre_file)
+    for node_id, n in enumerate(t.traverse('preorder')):
+        if not n.is_leaf():
+            n.name = 'node_' + str(node_id + 1)
+    return t
+
+
+def plan_dog_rootings(og: str, t: Tree, rooting_seeds: int) -> List[Any]:
+    """
+    Rootings to evaluate for a DOG tree, in the order they are scored.
+
+    Returns the sampled outgroup node names (preorder order) followed by None,
+    which stands for midpoint rooting. With rooting_seeds <= 1 this is [None].
+    """
+    rooting_seeds = max([rooting_seeds, 1])
+    if rooting_seeds <= 1:
+        return [None]
+    possible_nodes_for_rooting = set([n.name for n in t.traverse('preorder')])
+    if len(possible_nodes_for_rooting) > (rooting_seeds - 1):
+        # Per-OG RNG over a sorted population so results do not depend on
+        # PYTHONHASHSEED or on the order tasks are processed in worker processes.
+        rng = random.Random(f"12345:{og}")
+        possible_nodes_for_rooting = set(
+            rng.sample(sorted(possible_nodes_for_rooting), rooting_seeds - 1)
+        )
+    plan: List[Any] = [
+        n.name for n in t.traverse('preorder') if n.name in possible_nodes_for_rooting
+    ]
+    plan.append(None)
+    return plan
+
+
+def _plan_dog_rootings_job(inputs: List[Any]) -> Tuple[str, List[Any]]:
+    """Pool worker: (og, tre_file, rooting_seeds) -> (og, rooting plan)."""
+    og, tre_file, rooting_seeds = inputs
+    return og, plan_dog_rootings(og, _load_named_dog_tree(tre_file), rooting_seeds)
+
+
+def split_dog_rooting(inputs: List[Any]) -> Tuple[str, int, Any]:
+    """
+    Split one coarse DOG tree under one rooting.
+
+    Args:
+        inputs: [og, tre_file, rooting_index, root (outgroup node name, or None for
+            midpoint rooting), skip_merge_back_flag, fixation_index_cutoff, log_object]
+
+    Returns:
+        (og, rooting_index, result) where result is
+        [partitions, duplication_score, n_partitions, branch_length_score], or None
+        if the tree could not be rooted at the requested node.
+    """
+    (og, tre_file, rooting_index, root, skip_merge_back_flag,
+     fixation_index_cutoff, log_object) = inputs
+    try:
+        rooted_t = _load_named_dog_tree(tre_file)
+        samples_with_og = set([])
+        for n in rooted_t.get_leaves():
+            samples_with_og.add(n.name.split('|')[0])
+
+        if root is None:
+            R = rooted_t.get_midpoint_outgroup()
+            rooted_t.set_outgroup(R)
+        elif root != rooted_t.name:
+            try:
+                rooted_t.set_outgroup(root)
+            except Exception:
+                log_object.error(f"Error setting outgroup for node {root}: {traceback.format_exc()}")
+                return og, rooting_index, None
+
+        sp = recursive_splitting(rooted_t, samples_with_og)
+        sp_merge = further_split_disjoint_dog_partitions(rooted_t, sp)
+        if not skip_merge_back_flag:
+            sp_merge = merge_back_dog_partitions(
+                rooted_t,
+                sp_merge,
+                fixation_index_cutoff=fixation_index_cutoff,
+            )
+        pscore_sum, pscore_bl_sum = score_partitions(rooted_t, sp_merge)
+        return og, rooting_index, [sp_merge, pscore_sum, len(sp_merge), pscore_bl_sum]
+    except (Exception, SystemExit) as e:
+        # Helpers call sys.exit(1) on error; inside a multiprocessing pool worker a
+        # SystemExit kills the worker and the parent's imap_unordered hangs forever.
+        # Convert to a regular exception so it propagates to the parent.
+        msg = (
+            f'Issue with splitting ortholog group {og} - based on phylo from full MSA.'
+        )
+        log_object.error(msg)
+        log_object.error(traceback.format_exc())
+        raise RuntimeError(msg + '\n' + traceback.format_exc()) from None
+
+
+def write_best_dog_split(og: str, rooting_results: List[Any], spl_file: str) -> None:
+    """
+    Write the best-scoring partitioning across rootings for one DOG.
+
+    rooting_results must be in rooting-plan order (sampled roots, then midpoint);
+    ties on (duplication score, n partitions, branch length) keep that order.
+    """
+    all_rooting_partitions = [r for r in rooting_results if r is not None]
+    if len(all_rooting_partitions) == 0:
+        return
+    best = sorted(all_rooting_partitions, key=itemgetter(1, 2, 3))[0]
+    with open(spl_file, 'w') as spl_outf:
+        for it, spi in enumerate(best[0]):
+            spog = og + '_' + str(it)
+            for dom in spi:
+                spl_outf.write(spog + '\t' + dom + '\n')
 
 
 def split_dogs(inputs: List[Any]) -> None:
     """
-    Split domain ortholog groups using phylogenetic approach.
+    Split domain ortholog groups using phylogenetic approach (serially).
+
+    resolve_orthogroups_using_phylogenetics() runs the individual rootings of all
+    trees in parallel via split_dog_rooting(); this helper does the same for a
+    single tree in the current process.
 
     Args:
-        inputs: List containing [og, tre_file, spl_file, skip_merge_back_flag, rooting_seeds, 
+        inputs: List containing [og, tre_file, spl_file, skip_merge_back_flag, rooting_seeds,
         fixation_index_cutoff, threads, log_object]
 
     Returns:
@@ -1464,126 +1803,103 @@ def split_dogs(inputs: List[Any]) -> None:
         threads,
         log_object,
     ) = inputs
-    rooting_seeds = max([rooting_seeds, 1])
     try:
-        t = Tree(tre_file)
-        samples_with_og = set([])
-        leafs = set([])
-        for n in t.traverse('postorder'):
-            if n.is_leaf():
-                s = n.name.split('|')[0]
-                samples_with_og.add(s)
-                leafs.add(n.name)
-
-        # All pairwise leaf distances (incl. self-distances) in one pass over the
-        # tree. Previously large trees used a Manager pool reading a module-level
-        # global tree, which is None in workers under macOS's default 'spawn'.
-        pw_dists = all_pairwise_leaf_distances(t)
-
-        all_rooting_partitions = []
-        possible_nodes_for_rooting = set([])
-        for node_id, n in enumerate(t.traverse('preorder')):
-            if not n.is_leaf():
-                n.name = 'node_' + str(node_id + 1)
-            possible_nodes_for_rooting.add(n.name)
-
-        if len(possible_nodes_for_rooting) > (rooting_seeds - 1):
-            # Per-OG RNG over a sorted population so results do not depend on
-            # PYTHONHASHSEED or on the order tasks are processed in worker processes.
-            rng = random.Random(f"12345:{og}")
-            possible_nodes_for_rooting = set(
-                rng.sample(sorted(possible_nodes_for_rooting), rooting_seeds - 1)
-            )
-
-        if len(possible_nodes_for_rooting) > 0:
-            for n in t.traverse('preorder'):
-                if not n.name in possible_nodes_for_rooting:
-                    continue
-                rooted_t = copy.deepcopy(t)
-                try:
-                    if n.name is rooted_t.name:
-                        pass
-                    else:
-                        rooted_t.set_outgroup(n.name)
-                except Exception:
-                    log_object.error(f"Error setting outgroup for node {n.name}: {traceback.format_exc()}")
-                    continue
-
-                sp = recursive_splitting(rooted_t, samples_with_og)
-                sp_further_split = further_split_disjoint_dog_partitions(rooted_t, sp)
-                sp_merge = sp_further_split
-                if not skip_merge_back_flag:
-                    sp_merge = merge_back_dog_partitions(
-                        rooted_t,
-                        pw_dists,
-                        sp_further_split,
-                        fixation_index_cutoff=fixation_index_cutoff,
-                    )
-
-                pscore_sum = 0
-                pscore_bl_sum = 0.0
-                for p in sp_merge:
-                    ptree = copy.deepcopy(rooted_t)
-                    ptree.prune(p, preserve_branch_length=True)
-                    ptree_samples = set([x.split('|')[0] for x in p])
-                    pscore = determine_tree_score(ptree, ptree_samples)
-                    pscore_bl = determine_tree_score_bl(ptree)
-                    del ptree
-                    pscore_sum += pscore
-                    pscore_bl_sum += pscore_bl
-                all_rooting_partitions.append(
-                    [sp_merge, pscore_sum, len(sp_merge), pscore_bl_sum]
-                )
-                del rooted_t
-
-        mp_t = copy.deepcopy(t)
-        R = mp_t.get_midpoint_outgroup()
-        mp_t.set_outgroup(R)
-        sp = recursive_splitting(mp_t, samples_with_og)
-        sp_further_split = further_split_disjoint_dog_partitions(mp_t, sp)
-        sp_merge = sp_further_split
-        if not skip_merge_back_flag:
-            sp_merge = merge_back_dog_partitions(
-                mp_t,
-                pw_dists,
-                sp_further_split,
-                fixation_index_cutoff=fixation_index_cutoff,
-            )
-
-        pscore_sum = 0
-        pscore_bl_sum = 0.0
-        for p in sp_merge:
-            ptree = copy.deepcopy(mp_t)
-            ptree.prune(p, preserve_branch_length=True)
-            ptree_samples = set([x.split('|')[0] for x in p])
-            pscore = determine_tree_score(ptree, ptree_samples)
-            pscore_bl = determine_tree_score_bl(ptree)
-            del ptree
-            pscore_sum += pscore
-            pscore_bl_sum += pscore_bl
-        all_rooting_partitions.append(
-            [sp_merge, pscore_sum, len(sp_merge), pscore_bl_sum]
-        )
-        del mp_t
-
-        if len(all_rooting_partitions) > 0:
-            spl_outf = open(spl_file, 'w')
-            for i, sp in enumerate(sorted(all_rooting_partitions, key=itemgetter(1, 2, 3))):
-                if i == 0:
-                    for it, spi in enumerate(sp[0]):
-                        spog = og + '_' + str(it)
-                        for dom in spi:
-                            spl_outf.write(spog + '\t' + dom + '\n')
-            spl_outf.close()
-
-        return
-    except (Exception, SystemExit) as e:
-        # Helpers call sys.exit(1) on error; inside a multiprocessing pool worker a
-        # SystemExit kills the worker and the parent's imap_unordered hangs forever.
-        # Convert to a regular exception so it propagates to the parent.
+        plan = plan_dog_rootings(og, _load_named_dog_tree(tre_file), rooting_seeds)
+    except (Exception, SystemExit):
         msg = (
             f'Issue with splitting ortholog group {og} - based on phylo from full MSA.'
         )
         log_object.error(msg)
         log_object.error(traceback.format_exc())
         raise RuntimeError(msg + '\n' + traceback.format_exc()) from None
+    results = []
+    for i, root in enumerate(plan):
+        _, _, res = split_dog_rooting(
+            [og, tre_file, i, root, skip_merge_back_flag, fixation_index_cutoff, log_object]
+        )
+        results.append(res)
+    write_best_dog_split(og, results, spl_file)
+
+
+def _count_newick_leaves(tre_file: str) -> int:
+    """Cheap leaf count of a Newick file (commas + 1) used for job scheduling."""
+    with open(tre_file) as f:
+        return f.read().count(',') + 1
+
+
+def split_dogs_in_parallel(
+    tre_dir: str,
+    spl_full_dir: str,
+    log_object: Any,
+    skip_merge_back_flag: bool = False,
+    rooting_seeds: int = config.DEFAULT_ROOTING_SEEDS,
+    fixation_index_cutoff: float = config.DEFAULT_FIXATION_INDEX_CUTOFF,
+    threads: int = config.DEFAULT_THREADS,
+) -> None:
+    """
+    Phylogenetically split every coarse DOG tree in tre_dir, in parallel.
+
+    Each (tree, rooting) pair is an independent job: one job per tree by default
+    (midpoint rooting), or rooting_seeds jobs per tree with -rs > 1. Jobs are
+    dispatched largest tree first so big trees do not end up running alone at the
+    end. Results are gathered per tree, and once all rootings of a tree are in,
+    the best partitioning is chosen in rooting-plan order (so ties resolve exactly
+    as in a serial run) and written to <spl_full_dir>/<og>.txt.
+    """
+    trees = []
+    for f in sorted(os.listdir(tre_dir)):
+        if not f.endswith('.tre'):
+            continue
+        dog = '.tre'.join(f.split('.tre')[:-1])
+        tre_file = os.path.join(tre_dir, f)
+        trees.append((dog, tre_file, _count_newick_leaves(tre_file)))
+    if not trees:
+        return
+    # Largest trees first (longest-processing-time-first scheduling).
+    trees.sort(key=lambda x: x[2], reverse=True)
+
+    p = create_pool(threads)
+    try:
+        # Rooting plans: trivially [midpoint] unless extra rooting seeds are requested.
+        if max([rooting_seeds, 1]) > 1:
+            plans = dict(
+                _iter_progress(
+                    p.imap_unordered(
+                        _plan_dog_rootings_job,
+                        [[dog, tre_file, rooting_seeds] for dog, tre_file, _ in trees],
+                    ),
+                    total=len(trees),
+                    description="Planning DOG rootings",
+                )
+            )
+        else:
+            plans = {dog: [None] for dog, _, _ in trees}
+
+        jobs = []
+        for dog, tre_file, _ in trees:
+            for i, root in enumerate(plans[dog]):
+                jobs.append([dog, tre_file, i, root, skip_merge_back_flag,
+                             fixation_index_cutoff, log_object])
+        log_object.info(
+            f"Splitting {len(trees)} coarse DOG trees ({len(jobs)} rooting jobs) "
+            f"with {threads} processes"
+        )
+
+        pending: Dict[str, Dict[int, Any]] = defaultdict(dict)
+        for dog, idx, res in _iter_progress(
+            p.imap_unordered(split_dog_rooting, jobs),
+            total=len(jobs),
+            description="Domain OG splits",
+        ):
+            pending[dog][idx] = res
+            if len(pending[dog]) == len(plans[dog]):
+                results = [pending[dog][i] for i in range(len(plans[dog]))]
+                write_best_dog_split(dog, results, os.path.join(spl_full_dir, dog + '.txt'))
+                del pending[dog]
+    except BaseException:
+        p.terminate()
+        raise
+    else:
+        p.close()
+    finally:
+        p.join()

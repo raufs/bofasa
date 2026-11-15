@@ -16,6 +16,9 @@ dependencies = [
     "pyrodigal>=2.0.0",
 ]
 
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
 [project.scripts]
 bofasa = "bofasa.main:main"
 
@@ -39,3 +42,6 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 bofasa = ["data/*.html", "data/*.js"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

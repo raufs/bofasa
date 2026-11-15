@@ -11,3 +11,6 @@ dist/
 .DS_Store
 **/.DS_Store
 ._*
+
+# Test fixtures extracted from tests/data/*.tar.gz at test time
+tests/data/.extracted/

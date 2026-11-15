@@ -206,7 +206,7 @@ For each **coarse domain-resolution ortholog group**:
    - Build multiple sequence alignment (default: FAMSA; MUSCLE in `super5` mode can be requested via `--aligner muscle`).
    - Trim MSA using trimAl (in `strict` mode).
    - Construct phylogenetic tree (default: FastTree2).
-   - Apply midpoint-rooting. If `-rs N` flag is specified, then root the tree randomly _N_-1 amount of times and once using midpoint. 
+   - Apply midpoint-rooting. If `-rs N` flag is specified, then root the tree randomly _N_-1 amount of times and once using midpoint. Each (tree, rooting) combination is processed as an independent job across `-c` processes, largest trees first.
    - Partition phylogeny into **refined domain-resolution ortholog groups** using using bofasa's recursive algorithm.
    - Further refine/adjust delineations of refined ortholog groups: (1) further split up disjoint ortholog groups [*see note* :scissors:] and (2) fixation index calculation to assess whether split partitions should be merged back [*see note* :tent:].
 
