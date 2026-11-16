@@ -500,6 +500,16 @@ def add_prep_arguments(parser: argparse.ArgumentParser) -> None:
         help="Skip domain-annotation based splitting of coding sequences.",
     )
     parser.add_argument(
+        "-ntdo",
+        "--no-trim-domain-overlaps",
+        action="store_true",
+        help="Do not trim the minor (<10%%) overlap between an accepted Pfam domain "
+        "and higher-scoring domains already accepted for the same protein. By "
+        "default overlaps are trimmed so each accepted domain yields exactly one, "
+        "correctly labelled, chunk; this flag restores the behavior of v1.2.2 and "
+        "earlier.",
+    )
+    parser.add_argument(
         "-rg",
         "--run-genomad",
         action="store_true",
@@ -1396,6 +1406,8 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                 args.ignore_upperbound_limit,
                 args.gene_calling_method,
                 args.min_length,
+                args.skip_domain_splitting,
+                not args.no_trim_domain_overlaps,
                 args.threads,
                 args.max_memory
             ]
@@ -1410,6 +1422,8 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                 "Ignore Upperbound Genome Limit?",
                 "Gene Calling Method",
                 "Minimum Length of Domain/Inter-Domain Unit",
+                "Skip Domain Splitting?",
+                "Trim Domain Overlaps?",
                 "Number of Threads",
                 "Maximum Memory in GB"
             ]
@@ -1886,7 +1900,8 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                 sample_is_mge=sample_is_mge,
                 minimal_length=args.min_length, 
                 threads=args.threads, 
-                skip_domain_splitting=args.skip_domain_splitting
+                skip_domain_splitting=args.skip_domain_splitting,
+                trim_domain_overlaps=not args.no_trim_domain_overlaps
             )
 
             if not sample_ccds_proteomes:

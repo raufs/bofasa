@@ -1653,6 +1653,7 @@ def annotate_and_split_proteins_using_pfam(
     minimal_length: int = 20,
     threads: int = 1,
     skip_domain_splitting: bool = False,
+    trim_domain_overlaps: bool = True,
 ) -> Dict[str, str]:
     """
     Annotate and split proteins using Pfam domains.
@@ -1677,6 +1678,8 @@ def annotate_and_split_proteins_using_pfam(
         Number of threads to use
     skip_domain_splitting : bool, default=False
         Whether to skip domain splitting
+    trim_domain_overlaps : bool, default=True
+        Whether to trim minor overlaps between accepted domains (on by default)
         
     Returns:
     --------
@@ -1730,7 +1733,8 @@ def annotate_and_split_proteins_using_pfam(
 
             prot_mod_inputs.append([
                 proteome_file, ccds_prot_file, domain_coord_file, pfam_hmm_path,
-                pfam_z, minimal_length, log_object, hmmsearch_cpus, skip_domain_splitting
+                pfam_z, minimal_length, log_object, hmmsearch_cpus, skip_domain_splitting,
+                trim_domain_overlaps
             ])
 
         msg = f"Creating domain-chopped up version of proteome files for {len(prot_mod_inputs)} genomes"
@@ -1924,9 +1928,9 @@ def create_chopped_proteomes(inputs):
     Parameters:
     -----------
     inputs : list
-        List containing [prot_file, ccds_prot_file, dom_coord_file, pfam_hmm_path, pfam_z, minimal_length, log_object, threads, skip_domain_splitting]
+        List containing [prot_file, ccds_prot_file, dom_coord_file, pfam_hmm_path, pfam_z, minimal_length, log_object, threads, skip_domain_splitting, trim_domain_overlaps]
     """
-    prot_file, ccds_prot_file, dom_coord_file, pfam_hmm_path, pfam_z, minimal_length, log_object, threads, skip_domain_splitting = inputs
+    prot_file, ccds_prot_file, dom_coord_file, pfam_hmm_path, pfam_z, minimal_length, log_object, threads, skip_domain_splitting, trim_domain_overlaps = inputs
     
     try:
         sample = '.'.join(prot_file.split('/')[-1].split('.')[:-1])
@@ -1960,8 +1964,8 @@ def create_chopped_proteomes(inputs):
                     overlap_coords = accounted_coords.intersection(set(range(start, end+1)))
                     if len(overlap_coords)/float(end-start+1) >= 0.1 or len(overlap_coords) >= minimal_length:
                         continue
-                    if len(overlap_coords) > 0:
-                        # Trim the (minor) overlap with already accepted domains so that each
+                    if trim_domain_overlaps and len(overlap_coords) > 0:
+                        # Trim (unless disabled) the (minor) overlap with already accepted domains so that each
                         # accepted domain yields exactly one, correctly labelled, chunk.
                         while start <= end and start in accounted_coords:
                             start += 1
