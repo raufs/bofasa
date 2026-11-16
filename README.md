@@ -1,4 +1,5 @@
 # bofasa
+[![Manuscript](https://img.shields.io/badge/Manuscript-bioRxiv-darkblue?style=flat-square&maxAge=2678400)](https://www.biorxiv.org/content/10.64898/2026.11.11.765980v1)
 [![Anaconda-Server Badge](https://anaconda.org/bioconda/bofasa/badges/version.svg)](https://anaconda.org/bioconda/bofasa)
 [![Anaconda-Server Badge](https://anaconda.org/bioconda/bofasa/badges/latest_release_date.svg)](https://anaconda.org/bioconda/bofasa)
 [![Anaconda-Server Badge](https://anaconda.org/bioconda/bofasa/badges/latest_release_relative_date.svg)](https://anaconda.org/bioconda/bofasa)
