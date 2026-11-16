@@ -246,6 +246,7 @@ bofasa also provides several additional utility scripts:
 
 - `extract_og_pairs.py` - Extract ortholog group pairs for method comparison
 - `extract_scc_og_pairs.py` - Extract single-copy-core ortholog group pairs
+- `extract_scc_ogs.py` - Extract single-copy-core ortholog groups (one group per line, proteins tab-separated)
 - `compare_og_pairs.py` - Compare ortholog group pairs between methods
 - `determine_og_freqs.py` - Determine ortholog group frequencies
 - `print_og_itol_matrix.py` - Print ortholog group matrices for iTOL visualization
