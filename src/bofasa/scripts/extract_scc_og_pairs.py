@@ -271,7 +271,7 @@ def extract_og_pairs():
         gbk_dir = input_dir + '/input_GenBank/'
 
         all_genomes = set([])
-        for f in os.listdir(gbk_dir):
+        for f in sorted(os.listdir(gbk_dir)):
             genome = '.'.join(f.split('.')[:-1])
             all_genomes.add(genome)
 
@@ -389,7 +389,7 @@ def extract_og_pairs():
             sys.exit(1)
 
         sample_ids_in_order = defaultdict(list)
-        for f in os.listdir(pirate_input_dir):
+        for f in sorted(os.listdir(pirate_input_dir)):
             s = '_'.join(f.split('.')[:-1]).replace('-', '_')
             with open(pirate_input_dir + f) as ogff:
                 for line in ogff:
@@ -497,7 +497,7 @@ def extract_og_pairs():
 
     elif method == 'orthofinder_og':
         subdirs = []
-        for sd in os.listdir(input_dir):
+        for sd in sorted(os.listdir(input_dir)):
             # ignore stray files (e.g. .DS_Store) and non-OrthoFinder dirs
             if os.path.isdir(input_dir + sd) and sd.startswith('Results_'):
                 subdirs.append(sd)
@@ -544,7 +544,7 @@ def extract_og_pairs():
     elif method == 'orthofinder_hog':
 
         subdirs = []
-        for sd in os.listdir(input_dir):
+        for sd in sorted(os.listdir(input_dir)):
             # ignore stray files (e.g. .DS_Store) and non-OrthoFinder dirs
             if os.path.isdir(input_dir + sd) and sd.startswith('Results_'):
                 subdirs.append(sd)

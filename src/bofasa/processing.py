@@ -711,7 +711,7 @@ def _get_available_locus_tags(
     for bed_dir in [outdir, os.path.join(outdir, "BEDs")]:
         if not os.path.isdir(bed_dir):
             continue
-        for bed_name in os.listdir(bed_dir):
+        for bed_name in sorted(os.listdir(bed_dir)):
             if not bed_name.endswith('.bed') or bed_name[:-4] in current:
                 continue
             try:
@@ -1259,7 +1259,7 @@ def process_prokka_directory(
     fna_file = None
     
     # Look for Prokka output files
-    for file in os.listdir(prokka_dir):
+    for file in sorted(os.listdir(prokka_dir)):
         if file.endswith('.gff'):
             gff_file = os.path.join(prokka_dir, file)
         elif file.endswith('.faa'):
@@ -1419,7 +1419,7 @@ def process_bakta_directory(
     fna_file = None
     
     # Look for Bakta output files
-    for file in os.listdir(bakta_dir):
+    for file in sorted(os.listdir(bakta_dir)):
         if file.endswith('.gff3'):
             gff_file = os.path.join(bakta_dir, file)
         elif file.endswith('.faa') and not file.endswith('.hypotheticals.faa'):
@@ -1590,7 +1590,7 @@ def detect_annotation_type(annotation_dir: str) -> str:
     if not os.path.isdir(annotation_dir):
         raise ValueError(f"Directory does not exist: {annotation_dir}")
     
-    files = os.listdir(annotation_dir)
+    files = sorted(os.listdir(annotation_dir))
     
     # Check for Prokka files
     if any(f.endswith('.gff') for f in files):
@@ -1766,7 +1766,7 @@ def _summarize_cds_issues(outdir: str, log_object: logging.Logger):
     try:
         # Find all CDS log files
         cds_log_files = []
-        for file in os.listdir(outdir):
+        for file in sorted(os.listdir(outdir)):
             if file.startswith("cds_processing_issues_") and file.endswith(".log"):
                 cds_log_files.append(os.path.join(outdir, file))
         

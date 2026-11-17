@@ -287,9 +287,7 @@ Re-assesses each internal node of coarse ortholog group phylogenies that include
   - Best partioning is selected based on scoring:
      - Sort by: (1) tree score, (2) number of groups, (3) total branch length and choose partition with lowest combined score
   
-- `-al, --aligner`: Multiple sequence aligner to use: `famsa` (default) or `muscle` (MUSCLE super5).
-
-- `--more-deterministic`: Run sequence alignments sequentially using 1 thread to make more deterministic, based on discussion: https://github.com/rcedgar/muscle/issues/95
+- `-al, --aligner`: Multiple sequence aligner to use: `famsa` (default) or `muscle` (MUSCLE super5). Note that MUSCLE super5 alignments are not deterministic (see https://github.com/rcedgar/muscle/issues/95), so runs using `muscle` are not exactly reproducible; FAMSA is deterministic.
 
 ## Step 4: Protein Ortholog Group Determination
 

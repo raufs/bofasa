@@ -415,12 +415,10 @@ def add_run_arguments(parser: argparse.ArgumentParser) -> None:
         choices=config.ALIGNMENT_METHODS,
         default=config.DEFAULT_ALIGNER,
         help="Multiple sequence aligner to use: 'famsa' or 'muscle'\n"
-        f"(MUSCLE super5) [Default is {config.DEFAULT_ALIGNER}].",
+        f"(MUSCLE super5) [Default is {config.DEFAULT_ALIGNER}]. Warning: MUSCLE "
+        "super5 alignments are not deterministic, so runs using muscle are not "
+        "exactly reproducible; FAMSA is deterministic.",
     )
-    parser.add_argument(
-        "--more-deterministic",
-        action="store_true",
-        help="Use more deterministic settings for reproducible results.")
     parser.add_argument(
         "-y",
         "--auto",
@@ -514,6 +512,15 @@ def add_prep_arguments(parser: argparse.ArgumentParser) -> None:
         "--run-genomad",
         action="store_true",
         help="Whether to run geNomad - takes time but results can be used to achieve higher quality orthogroup predictions.",
+    )
+    parser.add_argument(
+        "-gs",
+        "--genomad-splits",
+        type=int,
+        default=config.DEFAULT_GENOMAD_SPLITS,
+        help="Number of chunks geNomad splits its database into (geNomad --splits) - more "
+        "splits lower memory usage at the cost of speed; only used with --run-genomad "
+        f"[Default is {config.DEFAULT_GENOMAD_SPLITS}].",
     )
     parser.add_argument(
         "-x",
@@ -859,7 +866,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
             setup_ready_directory([orthofinder_input_dir], overwrite_mode="overwrite")
             
             # Copy bacterial genomes (excluding MGEs)
-            for fasta_file in os.listdir(all_fastas_dir):
+            for fasta_file in sorted(os.listdir(all_fastas_dir)):
                 if fasta_file.endswith('.ccds.faa'):
                     sample_name = fasta_file.replace('.ccds.faa', '')
                     # Only include if not an MGE
@@ -917,7 +924,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
         # Find OrthoFinder results files
         orthofinder_subdirs = []
         if os.path.isdir(orthofinder_results_dir):
-            orthofinder_subdirs = [d for d in os.listdir(orthofinder_results_dir)
+            orthofinder_subdirs = [d for d in sorted(os.listdir(orthofinder_results_dir))
                                   if d.startswith('Results_') and os.path.isdir(os.path.join(orthofinder_results_dir, d))]
         if not orthofinder_subdirs:
             if logger:
@@ -1051,7 +1058,6 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
                     rooting_seeds=args.rooting_seeds,
                     fixation_index_cutoff=args.fixation_index_cutoff,
                     threads=args.threads, 
-                    more_deterministic=args.more_deterministic,
                     aligner=args.aligner
                 )
             
@@ -1193,7 +1199,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
                 setup_ready_directory([og_seqs_dir, og_algn_dir, og_hmms_dir, og_cons_dir], overwrite_mode="overwrite")
                 create_protein_alignments(
                     args.bofasa_prep_dir, resulting_ogs_file, og_seqs_dir, og_algn_dir,
-                    logger, threads=args.threads, more_deterministic=args.more_deterministic,
+                    logger, threads=args.threads,
                     aligner=args.aligner
                 )
                 create_profile_hmms_and_consensus_seqs(
@@ -1229,7 +1235,7 @@ def run_bofasa_analysis(args: argparse.Namespace) -> None:
                     args.bofasa_prep_dir, resulting_dogs_file, dogs_seqs_dir,
                     dogs_algn_dir, dogs_trim_dir, merged_core_genome_file,
                     logger, near_scc_prop=args.near_scc_prop, 
-                    threads=args.threads, more_deterministic=args.more_deterministic,
+                    threads=args.threads,
                     aligner=args.aligner
                 )
                 
@@ -1303,6 +1309,10 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
     
     if input_genomes and annotation_dirs:
         sys.stdout.write("Warning: Both input genomes and annotation directories provided. Processing both types of input.\n")
+
+    if args.genomad_splits < 1:
+        sys.stdout.write("Error: --genomad-splits must be at least 1.\n")
+        sys.exit(1)
     
     # Validate extract-mge-genomes requires run-genomad
     if args.extract_mge_genomes and not args.run_genomad:
@@ -1402,6 +1412,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                 args.rename_locus_tags,
                 args.meta_mode,
                 args.run_genomad,
+                args.genomad_splits,
                 args.extract_mge_genomes,
                 args.ignore_upperbound_limit,
                 args.gene_calling_method,
@@ -1418,6 +1429,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                 "Rename Locus Tags?",
                 "Draft Mode?",
                 "Run geNomad?",
+                "geNomad Splits",
                 "Extract MGE Genomes?",
                 "Ignore Upperbound Genome Limit?",
                 "Gene Calling Method",
@@ -1607,21 +1619,21 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
 
             # Load from existing proteome files
             if os.path.exists(faa_dir):
-                for faa_file in os.listdir(faa_dir):
+                for faa_file in sorted(os.listdir(faa_dir)):
                     if faa_file.endswith('.faa'):
                         sample_name = os.path.splitext(faa_file)[0]
                         sample_proteomes[sample_name] = os.path.join('Genome_Processing/Proteomes', faa_file)
             
             # Load from existing bed files
             if os.path.exists(bed_dir):
-                for bed_file in os.listdir(bed_dir):
+                for bed_file in sorted(os.listdir(bed_dir)):
                     if bed_file.endswith('.bed'):
                         sample_name = os.path.splitext(bed_file)[0]
                         sample_beds[sample_name] = os.path.join('Genome_Processing/BEDs', bed_file)
             
             # Load genome files (check both .fna files and original input files)
             if os.path.exists(wgs_dir):
-                for fna_file in os.listdir(wgs_dir):
+                for fna_file in sorted(os.listdir(wgs_dir)):
                     if fna_file.endswith('.fna'):
                         sample_name = os.path.splitext(fna_file)[0]
                         sample_wgs[sample_name] = os.path.join('Genome_Processing/Genomes', fna_file)
@@ -1690,7 +1702,8 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                 determine_phages_and_plasmids(
                     sample_wgs, sample_beds, genomad_dir, 
                     phage_protein_listing_file, plasmid_protein_listing_file, 
-                    logger, threads=args.threads
+                    logger, threads=args.threads,
+                    genome_splits=args.genomad_splits
                 )
                 
                 # Create Step 2a checkpoint
@@ -1722,7 +1735,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                     for sub, ext in [("Genomes", ".fna"), ("Proteomes", ".faa"), ("BEDs", ".bed")]:
                         sub_dir = os.path.join(gp_dir_mge, sub)
                         if os.path.isdir(sub_dir):
-                            leftover_ids.update(f[:-len(ext)] for f in os.listdir(sub_dir) if f.endswith(ext))
+                            leftover_ids.update(f[:-len(ext)] for f in sorted(os.listdir(sub_dir)) if f.endswith(ext))
                     leftover_mges = _extracted_mge_ids(leftover_ids | set(sample_wgs))
                     for mge_id in leftover_mges:
                         for sub, ext in [("Genomes", ".fna"), ("Proteomes", ".faa"), ("BEDs", ".bed")]:
@@ -1809,7 +1822,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
                     candidate_ids = set()
                     for cand_dir, cand_ext in [(wgs_dir, '.fna'), (faa_dir, '.faa'), (bed_dir, '.bed')]:
                         if os.path.exists(cand_dir):
-                            for cand_file in os.listdir(cand_dir):
+                            for cand_file in sorted(os.listdir(cand_dir)):
                                 if cand_file.endswith(cand_ext):
                                     candidate_ids.add(cand_file[:-len(cand_ext)])
                     parent_ids = set(c for c in candidate_ids if not mge_name_pattern.match(c))
@@ -1938,7 +1951,7 @@ def run_bofasa_prep(args: argparse.Namespace) -> None:
             # Reconstruct sample_ccds_proteomes from existing files (single directory)
             sample_ccds_proteomes = {}
             if os.path.exists(split_proteins_dir):
-                for ccds_file in os.listdir(split_proteins_dir):
+                for ccds_file in sorted(os.listdir(split_proteins_dir)):
                     if ccds_file.endswith('.ccds.faa'):
                         sample_name = ccds_file.replace('.ccds.faa', '')
                         sample_ccds_proteomes[sample_name] = os.path.join(split_proteins_dir, ccds_file)

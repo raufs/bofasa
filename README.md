@@ -176,6 +176,7 @@ bofasa prep -i <genome1.fasta> <genome2.gbk> ... -o <output-dir> [OPTIONS]
 - `-ml, --min-length`: Minimum length of domain/inter-domain unit to consider (default: 20)
 - `-rlt, --rename-locus-tags`: Rename locus tags in GenBank files and annotation directories (Prokka/Bakta)
 - `-rg, --run-genomad`: Run genomad for phage/plasmid annotation
+- `-gs, --genomad-splits`: Number of chunks geNomad splits its database into (geNomad `--splits`); more splits lower memory usage at the cost of speed (default: 8)
 - `-emg, --extract-mge-genomes`: Extract mobile genetic element (phage/plasmid) genomes identified by genomad (requires -rg)
 - `-sds, --skip-domain-splitting`: Skip domain-annotation based splitting of coding sequences
 - `-ntdo, --no-trim-domain-overlaps`: Do not trim minor (<10%) overlaps between accepted Pfam domains (by default they are trimmed so each domain yields exactly one correctly labelled chunk); restores v1.2.2 behavior
@@ -210,8 +211,7 @@ bofasa run -i <bofasa-prep-dir> -o <output-dir> [OPTIONS]
 - `-c, --threads`: Number of threads (default: 4)
 - `-mrd, --max-recursion-depth`: Max recursion depth (default: 5000)
 - `-mm, --max-memory`: Optional cap on virtual memory (address space) in GB, not resident RAM; it usually needs to be well above real RAM use (default: no limit)
-- `-al, --aligner`: Multiple sequence aligner: `famsa` (default) or `muscle` (MUSCLE super5)
-- `--more-deterministic`: Use more deterministic settings for reproducible results
+- `-al, --aligner`: Multiple sequence aligner: `famsa` (default) or `muscle` (MUSCLE super5). Note: MUSCLE super5 is not deterministic, so runs using `muscle` are not exactly reproducible; FAMSA is deterministic
 - `-y, --auto`: Automatically set `y` for all interactive prompts
 
 #### `bofasa domscape` - Pfam Domain Matrix

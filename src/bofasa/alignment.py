@@ -115,7 +115,6 @@ def create_domain_alignments(
     dog_algn_dir: str,
     log_object: Any,
     threads: int = config.DEFAULT_THREADS,  
-    more_deterministic: bool = False,
     aligner: str = config.DEFAULT_ALIGNER,
 ) -> None:
     """
@@ -135,14 +134,12 @@ def create_domain_alignments(
         Logger object for recording progress and errors
     threads : int, default=4
         Number of processes to use for parallel processing (each uses 1 thread)
-    more_deterministic : bool, default=False
-        Whether to use more deterministic settings for reproducible results
     aligner : str, default=config.DEFAULT_ALIGNER
         Multiple sequence aligner to use ("famsa" or "muscle")
     """
     try:
         # Get list of DOG sequence files
-        dog_files: List[str] = [f for f in os.listdir(dog_seqs_dir) if f.endswith('.fa')]
+        dog_files: List[str] = [f for f in sorted(os.listdir(dog_seqs_dir)) if f.endswith('.fa')]
 
         if not dog_files:
             log_object.warning(f"No DOG sequence files found in {dog_seqs_dir}")
@@ -151,7 +148,6 @@ def create_domain_alignments(
         # Prepare tasks for parallel processing
         heavy_jobs = []
         light_jobs = []
-        all_jobs = []
         skipped_files = 0
         for dog_file in dog_files:
             seq_file: str = os.path.join(dog_seqs_dir, dog_file)
@@ -159,14 +155,11 @@ def create_domain_alignments(
             algn_file: str = os.path.join(dog_algn_dir, f"{prefix}.msa.faa")
 
             try:
-                if more_deterministic:
-                    all_jobs.append([seq_file, algn_file, 1, aligner])
+                heavy_job = assess_job_intensity(seq_file)
+                if heavy_job:
+                    heavy_jobs.append([seq_file, algn_file, threads, aligner])
                 else:
-                    heavy_job = assess_job_intensity(seq_file)
-                    if heavy_job:
-                        heavy_jobs.append([seq_file, algn_file, threads, aligner])
-                    else:
-                        light_jobs.append([seq_file, algn_file, 1, aligner])
+                    light_jobs.append([seq_file, algn_file, 1, aligner])
             except Exception as e:
                 skipped_files += 1
                 log_object.error(
@@ -175,12 +168,10 @@ def create_domain_alignments(
                 continue
 
         _perform_parallelization(
-            all_jobs,
             heavy_jobs,
             light_jobs,
             log_object,
             skipped_files,
-            more_deterministic,
             threads,
             "domain",
         )
@@ -201,7 +192,6 @@ def create_protein_alignments(
     prot_algn_dir: str,
     log_object: Any,
     threads: int = config.DEFAULT_THREADS,
-    more_deterministic: bool = False,
     aligner: str = config.DEFAULT_ALIGNER,
 ) -> None:
     """
@@ -222,8 +212,6 @@ def create_protein_alignments(
         Logger object
     threads : int, default=config.DEFAULT_THREADS
         Number of threads to use for alignment
-    more_deterministic : bool, default=False
-        Whether to use more deterministic settings for reproducible results
     aligner : str, default=config.DEFAULT_ALIGNER
         Multiple sequence aligner to use ("famsa" or "muscle")
     """
@@ -247,7 +235,7 @@ def create_protein_alignments(
         proteome_dir: str = bofasa_prep_dir + "Genome_Processing/Proteomes/"
         proteins_extracted = 0
         try:
-            for f in os.listdir(proteome_dir):
+            for f in sorted(os.listdir(proteome_dir)):
                 if not f.endswith(".faa"):
                     continue
                 s: str = ".faa".join(f.split(".faa")[:-1])
@@ -282,10 +270,9 @@ def create_protein_alignments(
 
         heavy_jobs = []
         light_jobs = []
-        all_jobs = []
         skipped_files = 0        
         try:
-            for pf in os.listdir(prot_dir):
+            for pf in sorted(os.listdir(prot_dir)):
                 if not pf.endswith('.faa'):
                     continue
                     
@@ -293,23 +280,20 @@ def create_protein_alignments(
                 prot_file: str = os.path.join(prot_dir, pf)
                 prot_algn_file: str = os.path.join(prot_algn_dir, prefix + '.msa.faa')
 
-                if more_deterministic:
-                    all_jobs.append([prot_file, prot_algn_file, 1, aligner])
-                else:
-                    try:
-                        # Assess job intensity
-                        heavy_job: bool = assess_job_intensity(prot_file)
+                try:
+                    # Assess job intensity
+                    heavy_job: bool = assess_job_intensity(prot_file)
 
-                        if heavy_job:
-                            heavy_jobs.append([prot_file, prot_algn_file, threads, aligner])
-                        else:
-                            light_jobs.append([prot_file, prot_algn_file, 1, aligner])
-                    except Exception as e:
-                        log_object.error(
-                            f"Error assessing job intensity for {pf}: {str(e)}"
-                        )
-                        skipped_files += 1
-                        continue
+                    if heavy_job:
+                        heavy_jobs.append([prot_file, prot_algn_file, threads, aligner])
+                    else:
+                        light_jobs.append([prot_file, prot_algn_file, 1, aligner])
+                except Exception as e:
+                    log_object.error(
+                        f"Error assessing job intensity for {pf}: {str(e)}"
+                    )
+                    skipped_files += 1
+                    continue
                 
         except Exception as e:
             log_object.error(
@@ -318,12 +302,10 @@ def create_protein_alignments(
             raise
         
         _perform_parallelization(
-            all_jobs,
             heavy_jobs,
             light_jobs,
             log_object,
             skipped_files,
-            more_deterministic,
             threads,
             "protein",
         )
@@ -335,12 +317,10 @@ def create_protein_alignments(
         
 
 def _perform_parallelization(
-    all_jobs: List[List[str]],
     heavy_jobs: List[List[str]],
     light_jobs: List[List[str]],
     log_object: Any,
     skipped_files: int,
-    more_deterministic: bool,
     threads: int,
     type: str = "protein",
 ) -> None:
@@ -348,19 +328,26 @@ def _perform_parallelization(
     Perform parallelization of protein alignments.
     """
 
-    if more_deterministic:
-        log_object.info(f"Prepared {len(all_jobs)} jobs for alignment")
-        if skipped_files > 0:
-            log_object.info(f"Skipped {skipped_files} files (already aligned or errors)")
-            
-        # process all jobs
+    log_object.info(
+        f"Prepared {len(heavy_jobs)} heavy jobs and {len(light_jobs)} light jobs for alignment"
+    )
+    if skipped_files > 0:
+        log_object.info(
+            f"Skipped {skipped_files} files (already aligned or errors)"
+        )
+    
+    if not heavy_jobs:
+        log_object.info(f"No heavy {type} alignment jobs")
+        
+    # process heavy jobs
+    if heavy_jobs:
         try:
             with ThreadPoolExecutor(max_workers=1) as executor:
                 results: List[bool] = list(
                     _iter_progress(
-                        executor.map(run_alignment, all_jobs),
-                        total=len(all_jobs),
-                        description=f"Creating {type} alignments",
+                        executor.map(run_alignment, heavy_jobs),
+                        total=len(heavy_jobs),
+                        description=f"Creating heavy {type} alignments",
                     )
                 )
         except Exception as e:
@@ -372,76 +359,37 @@ def _perform_parallelization(
 
         # Count successful alignments
         successful_alignments = sum(results)
-        failed_alignments = len(all_jobs) - successful_alignments
+        failed_alignments = len(heavy_jobs) - successful_alignments
 
         log_object.info(
-            f"{type} alignments completed: {successful_alignments} successful, "
-            f"{failed_alignments} failed"
+            f"Heavy {type} alignments completed: {successful_alignments} successful, {failed_alignments} failed"
         )
 
-    else:
-        log_object.info(
-            f"Prepared {len(heavy_jobs)} heavy jobs and {len(light_jobs)} light jobs for alignment"
-        )
-        if skipped_files > 0:
-            log_object.info(
-                f"Skipped {skipped_files} files (already aligned or errors)"
-            )
-        
-        if not heavy_jobs:
-            log_object.info(f"No heavy {type} alignment jobs")
-            
-        # process heavy jobs
-        if heavy_jobs:
-            try:
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    results: List[bool] = list(
-                        _iter_progress(
-                            executor.map(run_alignment, heavy_jobs),
-                            total=len(heavy_jobs),
-                            description=f"Creating heavy {type} alignments",
-                        )
-                    )
-            except Exception as e:
-                log_object.error(
-                    f"Error during threaded protein alignment: {str(e)}"
+    # Process light jobs
+    try:
+        with ThreadPoolExecutor(max_workers=threads) as executor:
+            results: List[bool] = list(
+                _iter_progress(
+                    executor.map(run_alignment, light_jobs),
+                    total=len(light_jobs),
+                    description=f"Creating light {type} alignments",
                 )
-                log_object.error(traceback.format_exc())
-                raise
-
-            # Count successful alignments
-            successful_alignments = sum(results)
-            failed_alignments = len(heavy_jobs) - successful_alignments
-
-            log_object.info(
-                f"Heavy {type} alignments completed: {successful_alignments} successful, {failed_alignments} failed"
             )
-
-        # Process light jobs
-        try:
-            with ThreadPoolExecutor(max_workers=threads) as executor:
-                results: List[bool] = list(
-                    _iter_progress(
-                        executor.map(run_alignment, light_jobs),
-                        total=len(light_jobs),
-                        description=f"Creating light {type} alignments",
-                    )
-                )
-        except Exception as e:
-            log_object.error(
-                f"Error during threaded light protein alignment: {str(e)}"
-            )
-            log_object.error(traceback.format_exc())
-            raise
-
-        # Count successful alignments
-        successful_alignments = sum(results)
-        failed_alignments = len(light_jobs) - successful_alignments
-
-        log_object.info(
-            f"Light {type} alignments completed: {successful_alignments} successful, "
-            f"{failed_alignments} failed"
+    except Exception as e:
+        log_object.error(
+            f"Error during threaded light protein alignment: {str(e)}"
         )
+        log_object.error(traceback.format_exc())
+        raise
+
+    # Count successful alignments
+    successful_alignments = sum(results)
+    failed_alignments = len(light_jobs) - successful_alignments
+
+    log_object.info(
+        f"Light {type} alignments completed: {successful_alignments} successful, "
+        f"{failed_alignments} failed"
+    )
 
 
 def create_near_scc_resolved_domain_protein_alignments(
@@ -456,7 +404,6 @@ def create_near_scc_resolved_domain_protein_alignments(
     near_scc_prop: float = config.DEFAULT_NEAR_SCC_PROP,
     trimal_options: str = config.DEFAULT_TRIMAL_OPTIONS,
     allow_mge: bool = False,
-    more_deterministic: bool = False,
     aligner: str = config.DEFAULT_ALIGNER,
 ) -> None:
     """
@@ -486,8 +433,6 @@ def create_near_scc_resolved_domain_protein_alignments(
         TrimAl options
     allow_mge : bool, default=False
         Whether to allow mobile genetic elements
-    more_deterministic : bool, default=False
-        Whether to use more deterministic settings for reproducible results
     aligner : str, default=config.DEFAULT_ALIGNER
         Multiple sequence aligner to use ("famsa" or "muscle")
     """
@@ -568,7 +513,7 @@ def create_near_scc_resolved_domain_protein_alignments(
 
         # Extract protein sequences for selected OGs
         proteome_dir: str = os.path.join(bofasa_prep_dir, 'Domain_and_Interdomain_FASTAs')
-        for f in os.listdir(proteome_dir):
+        for f in sorted(os.listdir(proteome_dir)):
             if not f.endswith('.faa'):
                 continue
             s: str = '.faa'.join(f.split('.faa')[:-1])
@@ -585,37 +530,31 @@ def create_near_scc_resolved_domain_protein_alignments(
         msa_trim_cmds: List[List[str]] = []
         heavy_jobs = []
         light_jobs = []
-        all_jobs = []
-        for pf in os.listdir(dogs_seqs_dir):
+        for pf in sorted(os.listdir(dogs_seqs_dir)):
             prefix: str = '.faa'.join(pf.split('.faa')[:-1])
             prot_file: str = os.path.join(dogs_seqs_dir, pf)
             prot_algn_file: str = os.path.join(dogs_algn_dir, prefix + '.msa.faa')
             prot_algn_trim_file: str = os.path.join(dogs_trim_dir, prefix + '.trimmed.msa.faa')
 
-            if more_deterministic:
-                all_jobs.append([prot_file, prot_algn_file, 1, aligner])
-            else:   
-                # Assess job intensity to determine threading strategy
-                heavy_job: bool = assess_job_intensity(prot_file)
+            # Assess job intensity to determine threading strategy
+            heavy_job: bool = assess_job_intensity(prot_file)
 
-                if heavy_job:
-                    # For heavy jobs, run the aligner separately with all threads
-                    heavy_jobs.append([prot_file, prot_algn_file, threads, aligner])
-                else:
-                    # For light jobs, run the aligner in parallel
-                    light_jobs.append([prot_file, prot_algn_file, 1, aligner])
+            if heavy_job:
+                # For heavy jobs, run the aligner separately with all threads
+                heavy_jobs.append([prot_file, prot_algn_file, threads, aligner])
+            else:
+                # For light jobs, run the aligner in parallel
+                light_jobs.append([prot_file, prot_algn_file, 1, aligner])
 
-            # Trim every alignment (in all branches, including more_deterministic)
+            # Trim every alignment
             trimal_cmd: List[str] = ['trimal', '-in', prot_algn_file, '-out', prot_algn_trim_file] + trimal_options.split() + [log_object]
             msa_trim_cmds.append(trimal_cmd)
         
         _perform_parallelization(
-            all_jobs,
             heavy_jobs,
             light_jobs,
             log_object,
             0,
-            more_deterministic,
             threads,
             "domain",
         )
@@ -640,7 +579,7 @@ def create_near_scc_resolved_domain_protein_alignments(
         # Create merged core genome alignment
         sample_seqs: Dict[str, str] = defaultdict(lambda: "")
 
-        for f in os.listdir(dogs_trim_dir):
+        for f in sorted(os.listdir(dogs_trim_dir)):
             samples_accounted: Set[str] = set()
             seqlen: int = 0
 

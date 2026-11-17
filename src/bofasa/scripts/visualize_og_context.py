@@ -177,7 +177,8 @@ Output Files:
         choices=['famsa', 'muscle'],
         default='famsa',
         help="Multiple sequence aligner to use: 'famsa' or 'muscle'\n"
-             "(MUSCLE super5) [Default is famsa].",
+             "(MUSCLE super5) [Default is famsa]. Warning: MUSCLE super5\n"
+             "alignments are not deterministic; FAMSA is deterministic.",
         required=False,
     )
     parser.add_argument(
@@ -232,7 +233,7 @@ def load_prep_results(prep_dir: str) -> Dict:
     
     # Load GenBank files
     if os.path.isdir(genbank_dir):
-        for filename in os.listdir(genbank_dir):
+        for filename in sorted(os.listdir(genbank_dir)):
             if filename.endswith('.gbk') or filename.endswith('.genbank') or filename.endswith('.gbff'):
                 sample_id = filename.rsplit('.', 1)[0]
                 prep_data['sample_genbanks'][sample_id] = os.path.join(genbank_dir, filename)
@@ -242,14 +243,14 @@ def load_prep_results(prep_dir: str) -> Dict:
         sys.stderr.write(
             f"No GenBank files found. Using BED files from Genome_Processing/BEDs/\n"
         )
-        for filename in os.listdir(bed_dir):
+        for filename in sorted(os.listdir(bed_dir)):
             if filename.endswith('.bed'):
                 sample_id = filename.rsplit('.', 1)[0]
                 prep_data['sample_genbanks'][sample_id] = os.path.join(bed_dir, filename)
     
     # Load protein FASTA files
     if os.path.isdir(protein_dir):
-        for filename in os.listdir(protein_dir):
+        for filename in sorted(os.listdir(protein_dir)):
             if filename.endswith('.faa') or filename.endswith('.fasta'):
                 sample_id = filename.rsplit('.', 1)[0]
                 prep_data['sample_proteins'][sample_id] = os.path.join(protein_dir, filename)
@@ -1460,6 +1461,7 @@ def build_gene_tree(focal_og: str, run_dir: str, prep_dir: str,
             subprocess.run(
                 ['FastTree', '-lg', '-quiet', use_faa],
                 check=True, stdout=tree_out, stderr=subprocess.DEVNULL,
+                env=dict(os.environ, OMP_NUM_THREADS='1'),
             )
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         sys.stderr.write(f"  FastTree failed: {e}\n")
@@ -1509,6 +1511,7 @@ def _subsample_and_fasttree(concat_faa: str, tree_nwk: str,
             subprocess.run(
                 ['FastTree', '-lg', '-quiet', concat_faa],
                 check=True, stdout=tree_out, stderr=subprocess.DEVNULL,
+                env=dict(os.environ, OMP_NUM_THREADS='1'),
             )
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         sys.stderr.write(f"  FastTree failed: {e}\n")

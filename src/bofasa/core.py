@@ -23,7 +23,7 @@ with warnings.catch_warnings():
     from ete3 import Tree
 from scipy.spatial import distance
 from . import config
-from .utils import get_version, setup_ready_directory, run_cmd, _iter_progress, create_pool
+from .utils import get_version, setup_ready_directory, run_cmd, _iter_progress, create_pool, sort_fasta_file_by_header, single_thread_env
 from .alignment import create_domain_alignments
 import itertools
 
@@ -398,6 +398,23 @@ def determine_protein_orthogroups(
             sys.stderr.write(traceback.format_exc() + '\n')
             sys.exit(1)
 
+        # Sort the (unique) protein pairs so the MCL input order - and hence MCL's
+        # node indexing/tie-breaking - does not depend on the number of threads used
+        # to batch the pairwise comparisons. Byte-wise (LC_ALL=C) for a locale-
+        # independent order; Unix sort spills to disk for large files.
+        try:
+            sort_env = dict(os.environ, LC_ALL='C')
+            subprocess.run(
+                ['sort', '-T', os.path.dirname(os.path.abspath(pairwise_file)),
+                 '-o', pairwise_file, pairwise_file],
+                check=True, env=sort_env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            )
+        except Exception as e:
+            msg = f'Had an issue sorting the protein pairs file {pairwise_file}: {e}'
+            log_object.error(msg)
+            sys.stderr.write(msg + '\n')
+            sys.exit(1)
+
         clust_cmd = ['mcl', pairwise_file, '--abc', '-I', '1.2', '-o', clusters_file, '-te', str(threads)]
             
         try:
@@ -510,7 +527,7 @@ def determine_protein_orthogroups(
                 p.join()
 
         accounted_for_in_splitting = set([])
-        for f in os.listdir(p_split_dir):
+        for f in sorted(os.listdir(p_split_dir)):
             split_listing_file = p_split_dir + f
             with open(split_listing_file) as oslf:
                 for line in oslf:
@@ -564,7 +581,6 @@ def resolve_orthogroups_using_phylogenetics(
     rooting_seeds: int = config.DEFAULT_ROOTING_SEEDS,
     trimal_options: str = config.DEFAULT_TRIMAL_OPTIONS,
     threads: int = config.DEFAULT_THREADS,
-    more_deterministic: bool = False,
     aligner: str = config.DEFAULT_ALIGNER,
 ) -> None:
     """
@@ -583,7 +599,6 @@ def resolve_orthogroups_using_phylogenetics(
         rooting_seeds: Number of rooting seeds
         trimal_options: TrimAl options
         threads: Number of threads to use
-        more_deterministic: Whether to use more deterministic settings
         aligner: Multiple sequence aligner to use ("famsa" or "muscle")
 
     Returns:
@@ -597,6 +612,13 @@ def resolve_orthogroups_using_phylogenetics(
         spl_full_dir = resdog_dir + 'Split_DOG_Listings/'
         setup_ready_directory([msa_dir, trim_dir, tre_dir, spl_full_dir], overwrite_mode="overwrite")
 
+        # Sort sequences within each orthogroup FASTA by header so the aligner input
+        # (and thus alignments, trees and DOG splits) does not depend on the order
+        # sequences were written by OrthoFinder or appended during MGE integration.
+        for f in sorted(os.listdir(orthofinder_fasta_dir)):
+            if f.endswith('.fa'):
+                sort_fasta_file_by_header(os.path.join(orthofinder_fasta_dir, f))
+
         # Create protein alignments
         aligner_name = 'MUSCLE super5' if aligner == 'muscle' else 'FAMSA'
         msg = f'Running multiple-sequence alignments using {aligner_name}.'
@@ -608,13 +630,12 @@ def resolve_orthogroups_using_phylogenetics(
             dog_algn_dir=msa_dir,
             log_object=log_object,
             threads=threads,
-            more_deterministic=more_deterministic,
             aligner=aligner,
         )
 
         # Prepare TrimAl commands for trimming
         trimal_cmds = []
-        for f in os.listdir(orthofinder_fasta_dir):
+        for f in sorted(os.listdir(orthofinder_fasta_dir)):
             if not f.endswith('.fa'):
                 continue
             dog = '.'.join(f.split('.')[:-1])
@@ -671,7 +692,7 @@ def resolve_orthogroups_using_phylogenetics(
 
         # Create phylogenetic trees
         fasttree_cmds = []
-        for f in os.listdir(orthofinder_fasta_dir):
+        for f in sorted(os.listdir(orthofinder_fasta_dir)):
             dog = '.'.join(f.split('.')[:-1])
             msa_file = msa_dir + dog + '.msa.faa'
 
@@ -703,6 +724,9 @@ def resolve_orthogroups_using_phylogenetics(
         msg = 'Running phylogeny constructions using FastTree 2.'
         log_object.info(msg)
         
+        # FastTree is run single-threaded (OMP_NUM_THREADS=1 in case the OpenMP
+        # build is installed); parallelism comes from running many trees at once.
+        fasttree_env = single_thread_env()
         if not fasttree_cmds:
             log_object.warning("No FastTree commands to run - no valid alignment files found")
         else:
@@ -714,7 +738,7 @@ def resolve_orthogroups_using_phylogenetics(
             try:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
                     future_to_cmd = {
-                        executor.submit(run_cmd, cmd, None): cmd for cmd in fasttree_cmds
+                        executor.submit(run_cmd, cmd, None, env=fasttree_env): cmd for cmd in fasttree_cmds
                     }
                     for future in _iter_progress(
                         concurrent.futures.as_completed(future_to_cmd),

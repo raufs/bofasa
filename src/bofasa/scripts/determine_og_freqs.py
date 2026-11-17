@@ -555,7 +555,7 @@ def extract_og_pairs():
     elif method == 'orthofinder_og':
 
         subdirs = []
-        for sd in os.listdir(input_dir):
+        for sd in sorted(os.listdir(input_dir)):
             # ignore stray files (e.g. .DS_Store) and non-OrthoFinder dirs
             if os.path.isdir(input_dir + sd) and sd.startswith('Results_'):
                 subdirs.append(sd)
@@ -635,7 +635,7 @@ def extract_og_pairs():
     elif method == 'orthofinder_hog':
 
         subdirs = []
-        for sd in os.listdir(input_dir):
+        for sd in sorted(os.listdir(input_dir)):
             # ignore stray files (e.g. .DS_Store) and non-OrthoFinder dirs
             if os.path.isdir(input_dir + sd) and sd.startswith('Results_'):
                 subdirs.append(sd)

@@ -78,6 +78,34 @@ def pyhmmer_text(value: Any) -> str:
     return str(value)
 
 
+def sort_fasta_file_by_header(fasta_file: str) -> None:
+    """
+    Rewrite a FASTA file in place with its records sorted by header line.
+
+    Record lines are kept exactly as they are; only the order of the records
+    changes. Used to make inputs to alignment (and everything downstream)
+    independent of the order in which sequences were written, e.g. by
+    OrthoFinder or by appending MGE proteins to orthogroup FASTA files.
+    """
+    records: List[Tuple[str, List[str]]] = []
+    with open(fasta_file) as handle:
+        for line in handle:
+            if line.startswith('>'):
+                records.append((line.rstrip('\n'), []))
+            elif records:
+                records[-1][1].append(line.rstrip('\n'))
+            elif line.strip():
+                raise ValueError(f"FASTA file {fasta_file} does not start with a header line")
+    records.sort(key=lambda r: r[0])
+    tmp_file = fasta_file + '.tmp'
+    with open(tmp_file, 'w') as out_handle:
+        for header, seq_lines in records:
+            out_handle.write(header + '\n')
+            for seq_line in seq_lines:
+                out_handle.write(seq_line + '\n')
+    os.replace(tmp_file, fasta_file)
+
+
 def _iter_progress(iterable, total=None, description: Optional[str] = None):
     """
     Iterate with a nice progress display using Rich's track when available,
@@ -219,6 +247,7 @@ def run_cmd(
     check_directories: List[str] = [],
     stdout: Any = subprocess.DEVNULL,
     stderr: Any = subprocess.DEVNULL,
+    env: Optional[dict] = None,
 ) -> None:
     """
     Run a command and handle logging.
@@ -237,6 +266,8 @@ def run_cmd(
         Standard output destination
     stderr : Any, default=subprocess.DEVNULL
         Standard error destination
+    env : dict, optional
+        Environment for the command (default: inherit the current environment)
 
     Returns:
     --------
@@ -249,7 +280,7 @@ def run_cmd(
             logObject.info(f"Running command: {cmd_str}")
         
         result: subprocess.CompletedProcess = subprocess.run(
-            cmd, stdout=stdout, stderr=stderr, check=True, text=True
+            cmd, stdout=stdout, stderr=stderr, check=True, text=True, env=env
         )
         
         if logObject:
@@ -278,6 +309,18 @@ def run_cmd(
         else:
             sys.stderr.write(error_msg + '\n')
         raise
+
+
+def single_thread_env() -> dict:
+    """
+    Copy of the current environment that limits OpenMP programs to one thread.
+
+    Used for FastTree so that the OpenMP build (FastTreeMP), which may be what
+    `fasttree`/`FastTree` resolves to in some installations, does not use all
+    cores - bofasa already runs many FastTree jobs in parallel - and so results
+    do not depend on the number of threads available.
+    """
+    return dict(os.environ, OMP_NUM_THREADS='1')
 
 
 def multi_process(input_data: List[Any]) -> None:

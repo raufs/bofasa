@@ -339,7 +339,7 @@ def create_profile_hmms_and_consensus_seqs(
         setup_ready_directory([phmm_dir, cons_dir], overwrite_mode="overwrite")
 
         # Process each alignment file
-        alignment_files: List[str] = [f for f in os.listdir(prot_algn_dir) if f.endswith('.msa.faa')]
+        alignment_files: List[str] = [f for f in sorted(os.listdir(prot_algn_dir)) if f.endswith('.msa.faa')]
         
         hmmbuild_cmds = []
         hmmemit_cmds = []
@@ -432,7 +432,7 @@ def concatenate_consensus_sequences(
         Logger object
     """
     try:
-        consensus_files: List[str] = [f for f in os.listdir(og_cons_dir) if f.endswith('.faa')]
+        consensus_files: List[str] = [f for f in sorted(os.listdir(og_cons_dir)) if f.endswith('.faa')]
         
         if not consensus_files:
             log_object.warning("No consensus files found")
@@ -714,7 +714,7 @@ def determine_phages_and_plasmids(
     plasmid_protein_listing_file: str,
     log_object: Any,
     threads: int = 1,
-    genome_splits: int = 8,
+    genome_splits: int = config.DEFAULT_GENOMAD_SPLITS,
 ) -> None:
     """
     Determine phages and plasmids using genomad.
@@ -735,8 +735,9 @@ def determine_phages_and_plasmids(
         Logger object
     threads : int, default=1
         Number of threads to use
-    genome_splits : int, default=8
-        Number of genome splits for processing
+    genome_splits : int, default=config.DEFAULT_GENOMAD_SPLITS (8)
+        Number of chunks geNomad splits its database into (geNomad --splits);
+        more splits lower memory usage at the cost of speed
     """
     try:
         # Get genomad database path
@@ -1470,7 +1471,7 @@ def update_mge_protein_listings_from_proteomes(
         phage_entries = []
         plasmid_entries = []
         
-        for filename in os.listdir(proteomes_dir):
+        for filename in sorted(os.listdir(proteomes_dir)):
             if not filename.endswith('.faa'):
                 continue
             
@@ -1601,7 +1602,7 @@ def annotate_is_finder(
         
         # Process results and create summary file
         with open(isfinder_protein_listing_file, 'w') as outf:
-            for rf in os.listdir(annot_dir):
+            for rf in sorted(os.listdir(annot_dir)):
                 if rf.endswith('.isfinder_diamond_blastp.txt'):
                     sample = rf.replace('.isfinder_diamond_blastp.txt', '')
                     
@@ -1756,7 +1757,7 @@ def annotate_and_split_proteins_using_pfam(
             dci_handle.write('\t'.join(['Sample', 'Protein', 'Annotation', 'Annotation_Iterator', 'Start', 'End']) + '\n')
             
             # Process all files in the domain_coords_dir
-            for f in os.listdir(domain_coords_dir):
+            for f in sorted(os.listdir(domain_coords_dir)):
                 if f.endswith('.domain_coords.txt'):
                     sample = f.replace('.domain_coords.txt', '')
                     ccds_prot_file = os.path.join(split_proteins_dir, f"{sample}.ccds.faa")
@@ -2120,7 +2121,7 @@ def integrate_mge_proteins_into_orthogroups(
         all_mges = set([])
         mge_pchunk_to_seq = defaultdict(dict)
         with open(mge_concat_fasta, 'w') as mge_out, open(bacterial_genome_concat_fasta, 'w') as bac_out:
-            for fasta_file in os.listdir(input_dir):
+            for fasta_file in sorted(os.listdir(input_dir)):
                 if not fasta_file.endswith('.ccds.faa'): continue
               
                 sample_name = fasta_file.replace('.ccds.faa', '')
@@ -2352,7 +2353,7 @@ def integrate_mge_proteins_into_orthogroups(
 
                 og_fasta_path = os.path.join(orthogroup_sequences_dir, new_og_id + '.fa')
                 ofp_handle = open(og_fasta_path, 'w')
-                for pchunk in cluster_proteins[clust]:
+                for pchunk in sorted(cluster_proteins[clust]):
                     mge = pchunk.split('|')[0]
                     mge_og_pchunks[mge].add(pchunk)
                     accounted_mge_pchunks.add(pchunk)
@@ -2402,8 +2403,8 @@ def integrate_mge_proteins_into_orthogroups(
                         for mge in mges_sorted:
                             if mge in mge_og_pchunks:
                                 if og_id in mge_og_pchunks[mge]:
-                                    mge_pcs.append(', '.join(list(mge_og_pchunks[mge][og_id])))
-                                    for pchunk in mge_og_pchunks[mge][og_id]:
+                                    mge_pcs.append(', '.join(sorted(mge_og_pchunks[mge][og_id])))
+                                    for pchunk in sorted(mge_og_pchunks[mge][og_id]):
                                         ofp_handle.write('>' + pchunk + '\n' + mge_pchunk_to_seq[mge][pchunk] + '\n')
                                 else:
                                     mge_pcs.append('')
@@ -2431,8 +2432,8 @@ def integrate_mge_proteins_into_orthogroups(
                             for mge in mges_sorted:
                                 if mge in mge_og_pchunks:
                                     if og_id in mge_og_pchunks[mge]:
-                                        mge_matches.append(', '.join(list(mge_og_pchunks[mge][og_id])))
-                                        for pchunk in mge_og_pchunks[mge][og_id]:
+                                        mge_matches.append(', '.join(sorted(mge_og_pchunks[mge][og_id])))
+                                        for pchunk in sorted(mge_og_pchunks[mge][og_id]):
                                             ofp_handle.write('>' + pchunk + '\n' + mge_pchunk_to_seq[mge][pchunk] + '\n')
                                     else:
                                         mge_matches.append('')
@@ -2449,7 +2450,7 @@ def integrate_mge_proteins_into_orthogroups(
                             ogf.write(line + '\t' + '\t'.join(['']*len(mges_sorted)) + '\n')
 
             for i, mge in enumerate(mges_sorted):
-                for pchunk in mge_protein_chunks[mge]:
+                for pchunk in sorted(mge_protein_chunks[mge]):
                     if pchunk in accounted_mge_pchunks: continue
                     new_sog_id = generate_og_name(last_og_id)
                     line_part_1 = [new_sog_id] + (['']*bac_sample_count) + (['']*i)
