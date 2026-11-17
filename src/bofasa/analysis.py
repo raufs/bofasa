@@ -21,7 +21,7 @@ import pandas as pd
 from Bio import SeqIO
 import plotly.express as px
 import pyhmmer
-from .utils import _iter_progress, multi_process, setup_ready_directory, load_table_in_pandas_dataframe, run_cmd, thread_imap
+from .utils import _iter_progress, multi_process, setup_ready_directory, load_table_in_pandas_dataframe, run_cmd, thread_imap, pyhmmer_text
 from .processing import extract_gene_contexts
 from .core import generate_og_name
 from . import config
@@ -1846,8 +1846,8 @@ def process_pfam_domains_with_pyhmmer(
             for hits in pyhmmer.hmmsearch(hmm_file, sequences, bit_cutoffs="gathering", Z=1000000, cpus=threads):
                 for hit in hits:
                     for domain in hit.domains.included:
-                        target_dom_hits[hits.query.name.decode()].append([
-                            hit.name.decode(), 
+                        target_dom_hits[pyhmmer_text(hits.query.name)].append([
+                            pyhmmer_text(hit.name), 
                             domain.alignment.target_from, 
                             domain.alignment.target_to, 
                             domain.score, 
@@ -1948,7 +1948,7 @@ def create_chopped_proteomes(inputs):
                 for hits in pyhmmer.hmmsearch(hmm_file, sequences, bit_cutoffs="gathering", Z=int(pfam_z), cpus=threads):
                     for hit in hits:
                         for domain in hit.domains.included:
-                            target_dom_hits[hit.name.decode()].append([hits.query.name.decode(), domain.alignment.target_from, domain.alignment.target_to, domain.score, domain.i_evalue])
+                            target_dom_hits[pyhmmer_text(hit.name)].append([pyhmmer_text(hits.query.name), domain.alignment.target_from, domain.alignment.target_to, domain.score, domain.i_evalue])
 
             # Process domain hits and create breakpoints
             breakpoints = defaultdict(list)

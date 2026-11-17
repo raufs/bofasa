@@ -16,7 +16,7 @@ dependencies:
   - prodigal
   - pyrodigal
   - scipy
-  - pyhmmer=0.11.1
+  - pyhmmer>=0.10.10
   - genomad=1.8.1
   - curl
   - rich-argparse

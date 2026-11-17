@@ -17,16 +17,7 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 import pyhmmer
 
-from .utils import _iter_progress
-
-
-def _to_str(value: Any) -> str:
-    """Convert a pyhmmer name/accession (bytes or str, possibly None) to str."""
-    if value is None:
-        return ''
-    if isinstance(value, bytes):
-        return value.decode()
-    return str(value)
+from .utils import _iter_progress, pyhmmer_text as _to_str
 
 
 def get_pfam_db_info() -> Tuple[str, int]:

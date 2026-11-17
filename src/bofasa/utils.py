@@ -64,6 +64,20 @@ def load_table_in_pandas_dataframe(
         raise ValueError(f"Error loading table from {input_file}: {str(e)}")
 
 
+def pyhmmer_text(value: Any) -> str:
+    """
+    Convert a pyhmmer name/accession/description to str.
+
+    pyhmmer < 0.12 returns these attributes as bytes, while pyhmmer >= 0.12
+    returns str - this accepts either (and None, which becomes '').
+    """
+    if value is None:
+        return ''
+    if isinstance(value, bytes):
+        return value.decode()
+    return str(value)
+
+
 def _iter_progress(iterable, total=None, description: Optional[str] = None):
     """
     Iterate with a nice progress display using Rich's track when available,
