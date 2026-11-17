@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
 ### Program: visualize_og_context
-### Author: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan
-### Affiliation: University of Wisconsin - Madison, McMaster University
+### Authors: Rauf Salamzade, Eitan Yaffe, Aamuktha Kottapalli, Lindsay R. Kalan, David Relman
+### Affiliation: University of Wisconsin - Madison, McMaster University, Stanford University
 
 # BSD 3-Clause License
 #

@@ -17,7 +17,7 @@ from .utils import setup_ready_directory
 
 def setup_annotation_databases(
     output_dir: str, threads: int = config.DEFAULT_THREADS, force: bool = False,
-    auto: bool = False, skip_genomad: bool = False
+    auto: bool = False, skip_genomad: bool = False, pfam_version: str = "current"
 ) -> bool:
     """
     Setup annotation databases.
@@ -28,11 +28,20 @@ def setup_annotation_databases(
         force: Whether to force overwrite existing databases
         auto: Whether to automatically answer 'yes' to interactive prompts
         skip_genomad: Whether to skip downloading the geNomad database
+        pfam_version: Pfam release to download - "current" for the current release,
+            or a specific release listed in config.PFAM_RELEASES (e.g. "37.4")
 
     Returns:
         bool: True if setup completed successfully (or an existing setup was kept),
         False if any database failed to set up or the user cancelled.
     """
+    if pfam_version != "current" and pfam_version not in config.PFAM_RELEASES:
+        sys.stderr.write(
+            f"Error: unsupported Pfam version '{pfam_version}'. Options are: "
+            f"current, {', '.join(sorted(config.PFAM_RELEASES))}\n"
+        )
+        return False
+
     # Use an absolute path so all recorded database locations are absolute
     output_dir = os.path.abspath(output_dir)
 
@@ -80,6 +89,21 @@ def setup_annotation_databases(
         # by an earlier failed run): validate what the manifest points to.
         from .utils import check_bofasa_db_setup
         dbs_ok, dbs_message = check_bofasa_db_setup(require_genomad=not skip_genomad)
+        expected_z = config.PFAM_RELEASES.get(pfam_version)
+        if dbs_ok and expected_z is not None:
+            existing_z = None
+            with open(db_paths_file) as f:
+                for line in f:
+                    fields = line.rstrip('\n').split('\t')
+                    if len(fields) >= 4 and fields[0] == 'pfam':
+                        existing_z = fields[3]
+            if existing_z != str(expected_z):
+                sys.stderr.write(
+                    f"Error: the existing Pfam database in {output_dir} has {existing_z} HMMs, "
+                    f"which does not match Pfam {pfam_version} ({expected_z} HMMs).\n"
+                    "Re-run with --force to replace the databases.\n"
+                )
+                return False
         if dbs_ok:
             sys.stdout.write(
                 "Databases are already set up and validated. Use --force to re-download/overwrite.\n"
@@ -101,7 +125,7 @@ def setup_annotation_databases(
     if skip_genomad:
         sys.stdout.write(
             "Skipping geNomad database setup (--skip-genomad specified).\n"
-            "Note: 'bofasa run --run-genomad' will not be usable until the geNomad\n"
+            "Note: 'bofasa prep --run-genomad' will not be usable until the geNomad\n"
             "database is set up.\n"
         )
         # Keep recording a previously downloaded geNomad database (e.g. with --force --skip-genomad)
@@ -171,8 +195,9 @@ def setup_annotation_databases(
     isfinder_proc_fasta = os.path.join(isfinder_dir, "ISfinder_proc.faa")
     isfinder_dmnd = os.path.join(isfinder_dir, "ISfinder.dmnd")
 
-    # Download ISfinder database from GitHub repository
-    isfinder_url = "https://raw.githubusercontent.com/thanhleviet/ISfinder-sequences/refs/heads/master/IS.faa"
+    # Download ISfinder database from GitHub repository (pinned to the most recent
+    # commit of the repository, which has not been updated since October 2020)
+    isfinder_url = config.ISFINDER_URL
     
     try:
         sys.stdout.write(f"Downloading ISfinder database from {isfinder_url}...\n")
@@ -272,11 +297,14 @@ def setup_annotation_databases(
     pfam_hmm_gz = os.path.join(pfam_dir, "Pfam-A.hmm.gz")
 
     # Download Pfam database
-    pfam_url = "https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.hmm.gz"
+    if pfam_version == "current":
+        pfam_url = config.PFAM_CURRENT_RELEASE_URL
+    else:
+        pfam_url = config.PFAM_RELEASE_URL_TEMPLATE.format(version=pfam_version)
     pfam_z = 0
 
     try:
-        sys.stdout.write(f"Downloading Pfam database from {pfam_url}...\n")
+        sys.stdout.write(f"Downloading Pfam database (release: {pfam_version}) from {pfam_url}...\n")
 
         # If force is True and files exist, remove them
         if force:
@@ -317,6 +345,12 @@ def setup_annotation_databases(
 
         if pfam_z <= 0:
             raise Exception(f"No HMM records found in {pfam_hmm}")
+
+        expected_z = config.PFAM_RELEASES.get(pfam_version)
+        if expected_z is not None and pfam_z != expected_z:
+            raise Exception(
+                f"Expected {expected_z} HMM records for Pfam {pfam_version} but found {pfam_z}"
+            )
 
         sys.stdout.write(f"Pfam database setup completed with {pfam_z} records\n")
 

@@ -203,7 +203,8 @@ def create_main_parser() -> BofasaArgumentParser:
         "  export BOFASA_DB_PATH=/path/to/databases\n"
         "  bofasa setup\n"
         "  bofasa setup --threads 8 --force\n"
-        "  bofasa setup --skip-genomad"
+        "  bofasa setup --skip-genomad\n"
+        "  bofasa setup --skip-genomad --pfam-version 37.4"
     )
 
 
@@ -224,7 +225,11 @@ def create_main_parser() -> BofasaArgumentParser:
         "sequences from the ISFinder database and geNomad.\n\n"
         "If Bakta or Prokka annotations are provided, please make sure\n"
         "such annotations were run using the \"--prefix\" argument as this\n"
-        "will be important for parsing out sample names.",
+        "will be important for parsing out sample names.\n\n"
+        "If using --run-genomad, please also cite geNomad:\n"
+        "  Camargo AP, Roux S, Schulz F, Babinski M, Xu Y, Hu B, Chain PSG,\n"
+        "  Nayfach S, Kyrpides NC. Identification of mobile genetic elements\n"
+        "  with geNomad. Nature Biotechnology 42, 1303-1312 (2024).",
         formatter_class=BofasaHelpFormatter,
     )
     add_prep_arguments(prep_parser)
@@ -239,7 +244,11 @@ def create_main_parser() -> BofasaArgumentParser:
     run_parser = subparsers.add_parser(
         "run",
         help="Execute the main bofasa orthology analysis",
-        description="Execute the main bofasa orthology analysis.",
+        description="Execute the main bofasa orthology analysis.\n\n"
+        "OrthoFinder is used to determine coarse domain ortholog groups,\n"
+        "please also cite it:\n"
+        "  Emms DM, Kelly S. OrthoFinder: phylogenetic orthology inference\n"
+        "  for comparative genomics. Genome Biology 20, 238 (2019).",
         formatter_class=BofasaHelpFormatter,
     )
     add_run_arguments(run_parser)
@@ -648,9 +657,18 @@ def add_setup_annotation_dbs_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Skip downloading the geNomad database. The geNomad database is\n"
         "downloaded by default, but it is large and only needed for\n"
-        "'bofasa run --run-genomad'.",
+        "'bofasa prep --run-genomad'.",
         required=False,
         default=False,
+    )
+    parser.add_argument(
+        "-pv",
+        "--pfam-version",
+        choices=["current"] + sorted(config.PFAM_RELEASES),
+        help="Pfam release to download. Default is the current release. Use\n"
+        "37.4 to reproduce the expected results of the test case.",
+        required=False,
+        default="current",
     )
     parser.add_argument(
         "-y",
@@ -2324,7 +2342,8 @@ def run_setup_annotation_dbs(args: argparse.Namespace) -> None:
 
     try:
         setup_ok = setup_annotation_databases(
-            output_dir, args.threads, args.force, args.auto, args.skip_genomad
+            output_dir, args.threads, args.force, args.auto, args.skip_genomad,
+            pfam_version=args.pfam_version,
         )
     except Exception as e:
         sys.stdout.write(f"Error during setup annotation databases: {str(e)}\n")

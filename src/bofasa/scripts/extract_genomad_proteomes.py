@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
 ### Program: extract_genomad_proteomes.py
-### Author: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan
-### Affiliation: University of Wisconsin - Madison, McMaster University
+### Authors: Rauf Salamzade, Eitan Yaffe, Aamuktha Kottapalli, Lindsay R. Kalan, David Relman
+### Affiliation: University of Wisconsin - Madison, McMaster University, Stanford University
 
 # BSD 3-Clause License
 #
@@ -49,8 +49,8 @@ def create_parser():
     parser = argparse.ArgumentParser(
         description="""
     Program: extract_genomad_proteomes.py
-    Author: Rauf Salamzade
-    Affiliation: University of Wisconsin - Madison, McMaster University
+    Authors: Rauf Salamzade, Eitan Yaffe, Aamuktha Kottapalli, Lindsay R. Kalan, David Relman
+    Affiliation: University of Wisconsin - Madison, McMaster University, Stanford University
 
     Extract virus/prophage proteome files from multiple geNomad results directories.
 

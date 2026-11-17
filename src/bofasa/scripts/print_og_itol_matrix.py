@@ -2,8 +2,8 @@
 
 """
 Program: print_og_itol_matrix.py
-Authors: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan 
-Affiliation: University of Wisconsin - Madison, McMaster University
+Authors: Rauf Salamzade, Eitan Yaffe, Aamuktha Kottapalli, Lindsay R. Kalan, David Relman 
+Affiliation: University of Wisconsin - Madison, McMaster University, Stanford University
 """
 
 # BSD 3-Clause License
@@ -51,8 +51,8 @@ def create_parser():
     parser = argparse.ArgumentParser(
         description="""
 Program: print_og_itol_matrix
-Authors: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan 
-Affiliation: University of Wisconsin - Madison, McMaster University
+Authors: Rauf Salamzade, Eitan Yaffe, Aamuktha Kottapalli, Lindsay R. Kalan, David Relman 
+Affiliation: University of Wisconsin - Madison, McMaster University, Stanford University
 
 print_og_itol_matrix: a simple script to list pairs of proteins in the 
 same ortholog group for method comparison. 

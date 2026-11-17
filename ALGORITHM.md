@@ -446,7 +446,7 @@ Construct a concatenated multi-FASTA alignment of the strict or loose single-cop
 
 When using BOFASA, please cite:
 
-> Salamzade, R., Yaffe E., Kottapalli, A., Kalan, L, & Relman, D. (2025). bofasa: high-quality orthology inference across multiple bacterial species.
+> Salamzade, R., Yaffe, E., Kottapalli, A., Kalan, L., & Relman, D. (2026). bofasa enables high-quality orthology inference across diverse multi-species bacterial genome sets. bioRxiv.
 
 And the underlying tools:
 - **OrthoFinder**: Emms, D.M. & Kelly, S. (2019) Genome Biology

@@ -10,7 +10,7 @@ try:
     __version__ = str(_importlib_metadata.version("bofasa"))
 except _importlib_metadata.PackageNotFoundError:
     __version__ = "unknown"
-__author__ = "Rauf Salamzade"
+__author__ = "Rauf Salamzade, Eitan Yaffe, Aamuktha Kottapalli, Lindsay R. Kalan, David Relman"
 __email__ = "salamzader@gmail.com"
 
 # Import only lightweight modules by default

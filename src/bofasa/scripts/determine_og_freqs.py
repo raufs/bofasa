@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
 ### Program: determine_og_freqs
-### Author: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan
-### Affiliation: University of Wisconsin - Madison, McMaster University
+### Authors: Rauf Salamzade, Eitan Yaffe, Aamuktha Kottapalli, Lindsay R. Kalan, David Relman
+### Affiliation: University of Wisconsin - Madison, McMaster University, Stanford University
 
 # BSD 3-Clause License
 #
@@ -50,8 +50,8 @@ def create_parser():
     parser = argparse.ArgumentParser(
         description="""
 Program: determine_og_freqs
-Authors: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan 
-Affiliation: University of Wisconsin - Madison, McMaster University
+Authors: Rauf Salamzade, Eitan Yaffe, Aamuktha Kottapalli, Lindsay R. Kalan, David Relman 
+Affiliation: University of Wisconsin - Madison, McMaster University, Stanford University
 
 determine_og_freqs: a simple script to list pairs of proteins in the 
 same ortholog group for method comparison. Takes in the results 

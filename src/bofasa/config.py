@@ -101,3 +101,16 @@ def reset_global_variables() -> None:
     protein_dogs = {}
     dog_conservation = {}
     tree_obj = None
+
+# Database download locations for 'bofasa setup'
+PFAM_CURRENT_RELEASE_URL: str = "https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.hmm.gz"
+PFAM_RELEASE_URL_TEMPLATE: str = "https://ftp.ebi.ac.uk/pub/databases/Pfam/releases/Pfam{version}/Pfam-A.hmm.gz"
+# Specific Pfam releases that can be requested with 'bofasa setup -pv', mapped to their
+# number of Pfam-A HMMs (used to validate the download). Pfam 37.4 was used to generate
+# the expected results of the test case.
+PFAM_RELEASES: dict = {"37.4": 24736}
+# ISfinder protein sequences, pinned to the latest commit (October 2020) of the repository
+ISFINDER_URL: str = (
+    "https://raw.githubusercontent.com/thanhleviet/ISfinder-sequences/"
+    "bedbeb5c16618eca3e16ef74adf865d6b88cafb5/IS.faa"
+)

@@ -2,8 +2,8 @@
 
 """
 Program: extract_scc_ogs.py
-Authors: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan 
-Affiliation: University of Wisconsin - Madison, McMaster University
+Authors: Rauf Salamzade, Eitan Yaffe, Aamuktha Kottapalli, Lindsay R. Kalan, David Relman 
+Affiliation: University of Wisconsin - Madison, McMaster University, Stanford University
 """
 
 # BSD 3-Clause License
@@ -51,8 +51,8 @@ def create_parser():
     parser = argparse.ArgumentParser(
         description="""
 Program: extract_scc_ogs
-Authors: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan 
-Affiliation: University of Wisconsin - Madison, McMaster University
+Authors: Rauf Salamzade, Eitan Yaffe, Aamuktha Kottapalli, Lindsay R. Kalan, David Relman 
+Affiliation: University of Wisconsin - Madison, McMaster University, Stanford University
 
 extract_scc_ogs: a simple script to list the proteins in each 
 single-copy core (scc) ortholog group for method comparison. Only 

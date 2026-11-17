@@ -70,6 +70,9 @@ bash run_tests.sh
 > [!NOTE]
 > `bofasa setup` should already have been run. Also, the above will work for conda, but dataset can be downloaded and adapted to test docker installation too!
 
+> [!IMPORTANT]
+> The expected results in `expected_results.tar.gz` were generated using **Pfam-A release 37.4** (24,736 HMMs). By default, `bofasa setup` downloads the *current* Pfam release, so if a newer release is available, your test results can differ from the expected results even if bofasa is installed correctly. To exactly reproduce the expected results, set up the databases with `bofasa setup --pfam-version 37.4` (add `--force` if databases were already set up). The test case does not run geNomad, so its database is not needed.
+
 ### Unit Tests (from a source checkout):
 
 ```bash
@@ -89,11 +92,19 @@ bofasa provides a unified command-line interface with two main subcommands: **`b
 bofasa setup
 ```
 
-The geNomad database is downloaded by default. It is large and only needed for `bofasa run --run-genomad`, so it can be skipped:
+The geNomad database is downloaded by default. It is large and only needed for `bofasa prep --run-genomad`, so it can be skipped:
 
 ```bash
 bofasa setup --skip-genomad
 ```
+
+By default, the current Pfam release is downloaded. A specific release can be requested with `-pv/--pfam-version` (currently `37.4`, the release used for the test case's expected results):
+
+```bash
+bofasa setup --pfam-version 37.4
+```
+
+The ISFinder protein sequences are downloaded from the [ISfinder-sequences](https://github.com/thanhleviet/ISfinder-sequences) repository, pinned to its most recent commit (October 2020).
 
 > [!NOTE]
 > To aid reproducability between two runs, please ensure you are using the same version of the Pfam-A database!

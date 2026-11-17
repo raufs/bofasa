@@ -2,8 +2,8 @@
 
 """
 Program: compare_og_pairs.py
-Authors: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan 
-Affiliation: University of Wisconsin - Madison, McMaster University
+Authors: Rauf Salamzade, Eitan Yaffe, Aamuktha Kottapalli, Lindsay R. Kalan, David Relman 
+Affiliation: University of Wisconsin - Madison, McMaster University, Stanford University
 """
 
 # BSD 3-Clause License
@@ -50,8 +50,8 @@ def create_parser() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="""
 Program: compare_og_pairs
-Authors: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan 
-Affiliation: University of Wisconsin - Madison, McMaster University
+Authors: Rauf Salamzade, Eitan Yaffe, Aamuktha Kottapalli, Lindsay R. Kalan, David Relman 
+Affiliation: University of Wisconsin - Madison, McMaster University, Stanford University
 
 compare_og_pairs: a simple script to compare results from two 
 different orthology prediction methods.

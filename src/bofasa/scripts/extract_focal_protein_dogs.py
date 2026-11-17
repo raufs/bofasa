@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
 ### Program: extract_focal_protein_dogs
-### Author: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan
-### Affiliation: University of Wisconsin - Madison, McMaster University
+### Authors: Rauf Salamzade, Eitan Yaffe, Aamuktha Kottapalli, Lindsay R. Kalan, David Relman
+### Affiliation: University of Wisconsin - Madison, McMaster University, Stanford University
 
 # BSD 3-Clause License
 #
@@ -49,8 +49,8 @@ def create_parser():
     parser = argparse.ArgumentParser(
         description="""
 Program: extract_focal_protein_dogs
-Authors: Rauf Salamzade, Aamuktha Kottapalli, Lindsay R. Kalan 
-Affiliation: University of Wisconsin - Madison, McMaster University
+Authors: Rauf Salamzade, Eitan Yaffe, Aamuktha Kottapalli, Lindsay R. Kalan, David Relman 
+Affiliation: University of Wisconsin - Madison, McMaster University, Stanford University
 
 extract_focal_protein_dogs: Extract domain ortholog groups for a focal 
 protein from BOFASA results. Creates a mini Domain Ortholog Groups file 
