@@ -5,6 +5,9 @@
 2. [Workflow Architecture](#workflow-architecture)
 3. [Preparation Phase (`bofasa prep`)](#preparation-phase)
 4. [Analysis Phase (`bofasa run`)](#analysis-phase)
+5. [Database Setup (`bofasa setup`)](#database-setup-bofasa-setup)
+6. [Standalone Pfam Domain Matrix (`bofasa domscape`)](#standalone-pfam-domain-matrix-bofasa-domscape)
+7. [Reproducibility](#reproducibility)
 
 ---
 
@@ -23,7 +26,7 @@ BOFASA (Bacterial Orthology Finding And Syntenic Analysis) implements a multi-st
 
 ## Workflow Architecture
 
-BOFASA operates in two distinct phases:
+After a one-time `bofasa setup` to download databases, BOFASA operates in two distinct phases:
 
 ```
 ┌─────────────────────┐
@@ -38,6 +41,8 @@ BOFASA operates in two distinct phases:
 │   (Analysis)        │  → Output: Ortholog groups + synteny metrics
 └─────────────────────┘
 ```
+
+A separate, lightweight subcommand, `bofasa domscape`, builds a Pfam domain by genome matrix without running `prep`/`run` (see [below](#standalone-pfam-domain-matrix-bofasa-domscape)).
 
 ---
 
@@ -69,6 +74,7 @@ Gene Calling (if FASTA) or CDS Extraction (if GenBank)
 - `-rlt, --rename-locus-tags`: Forces regeneration of locus tags in GenBank files
 - `-rg, --run-genomad`: Run geNomad for annotation of phages and plasmids
 - `-emg, --extract-mge-genomes`: Extracts phages/plasmids to use as individual genomes (to use this option, your genomes should be complete)
+- `-mm, --max-memory`: Optional cap, in GB, on virtual memory (address space, via RLIMIT_AS) - not resident RAM. It is inherited by every external tool bofasa runs and usually needs to be well above actual RAM use (default: no limit)
 
 ## Step 2. Protein Extraction
 ```
@@ -94,14 +100,22 @@ Delineation of Proteins by Domain Coordinates
 ```
 
 **Actions:**
-- Use PyHMMER to search for Pfam-A domains in proteins
-- Extract domain sequences
-- Create "chopped-up" protein FASTA per input genome where each protein is split up into "chunks" based on domain boundary coordinates.
+- Use PyHMMER to search for Pfam-A domains in proteins (using Pfam gathering thresholds)
+- Select a set of mostly non-overlapping domains per protein:
+   - Domain hits are processed from highest to lowest bitscore.
+   - A hit is accepted unless it overlaps already accepted domains by ≥10% of its length or by ≥ `-ml` residues.
+   - When an accepted hit has a minor (<10%) overlap with previously accepted domains, the overlapping residues are trimmed from its ends so that each accepted domain yields exactly one, correctly labelled, chunk. If trimming would leave nothing, or another accepted domain is nested within the hit, the hit is skipped.
+- Create "chopped-up" protein FASTA per input genome where each protein is split up into "chunks" based on domain boundary coordinates: domain chunks plus the inter-domain regions between them (chunks shorter than `-ml` are not kept).
+
+**Key Parameters:**
+- `-ml, --min-length` (default: 20): Minimum length of a domain/inter-domain chunk
+- `-sds, --skip-domain-splitting`: Skip domain-based splitting of proteins
+- `-ntdo, --no-trim-domain-overlaps`: Do not trim minor overlaps between accepted domains (restores v1.2.2 behavior)
 
 **Reasons:**
 - Increases sensitivity by analyzing homology at domain resolution
 - Accounts for domain shuffling/fusion/loss events
-- Downstream we will be using OrthoFinder to determine course domain ortholog groups, which standardizes for differences in protein-chunk length
+- Downstream we will be using OrthoFinder to determine coarse domain ortholog groups, which standardizes for differences in protein-chunk length
 
 ## Optional Step 4: Mobile Genetic Element Detection
 
@@ -116,12 +130,13 @@ Optional Extraction (if -emg)
 **Key Parameters:**
 - `-rg, --run-genomad`: Enables geNomad for MGE (phage/plasmid) detection
 - `-emg, --extract-mge-genomes`: Extracts identified phage/plasmid sequences to be considered as separate genomes
+- `-gs, --genomad-splits` (default: 8): Number of chunks geNomad splits its database into (geNomad `--splits`); more splits lower memory usage at the cost of speed
 
 **Effects:**
 - `-rg` alone: Annotates MGEs but keeps them in original genomes
 - `-rg` + `-emg`: Creates separate genome files for each phage/plasmid
 
-**Rational:**
+**Rationale:**
 - Useful to understand how ortholog groups are distributed across autonomous mobile elements
 - Can improve resolution of single-copy-core ortholog groups if paralogs exist on MGEs in some genomes
 
@@ -148,8 +163,12 @@ Coarse Domain Ortholog Groups (DOGs)
 - `-us, --ultra-sens`: Use DIAMOND ultra-sensitive mode
   - Recommended for highly divergent species
 
+**General Parameters (apply to all of `bofasa run`):**
+- `-c, --threads` (default: 4): Number of threads/processes
+- `-mm, --max-memory`: Optional cap, in GB, on virtual memory (not resident RAM); same behavior as in `bofasa prep` (default: no limit)
+
 > [!NOTE]
-> When MGEs are present (from `bofasa prep -emg`), they are **excluded** from OrthoFinder to prevent biasing the core ortholog group structure. MGEs are integrated in Step 1b.
+> When MGEs are present (from `bofasa prep -emg`), they are **excluded** from OrthoFinder to prevent biasing the core ortholog group structure. MGEs are integrated in Step 2.
 
 ## Step 2: MGE Integration (_auxiliary_; if `-emg` used in prep)
 
@@ -175,6 +194,7 @@ Construction of Modified  Domain-Resolution Coarse Ortholog Group by Genome/MGE 
 3. **Create DIAMOND databases**: Separate databases for MGE and bacterial proteins
 4. **Reflexive MGE alignment**: DIAMOND blastp of MGEs against themselves
    - Filter hits: require E-value < 1e-3
+   - Optionally (`-mmc`), also require a minimum query **and** subject coverage
    - Purpose: Identify MGE protein chunks that are homologous to each other
 5. **Cluster MGE protein chunks**: Single-linkage clustering (using slclust) on filtered pairs are used to groups them into homologous clusters
 6. **MGE vs chromosomal protein chunk alignment**: DIAMOND blastp of MGE protein chunks against bacterial chromosome protein chunks database
@@ -186,6 +206,9 @@ Construction of Modified  Domain-Resolution Coarse Ortholog Group by Genome/MGE 
 8. **Output modified tables**: Modified files can be found under the `OrthoFinder_Results/` directory.
    - `Orthogroups_Modified.tsv`: Original OGs + MGE columns (includes some previously single (aka "unassigned") protein chunks that are homologous to protein chunks from MGEs)
    - `Orthogroups_UnassignedGenes_Modified.tsv`: Singletons + new MGE singletons
+
+**Key Parameters:**
+- `-mmc, --mge-min-coverage` (default: off): Minimum query and subject coverage (%, 0-100) of MGE-vs-MGE DIAMOND hits used to cluster MGE protein chunks. Without a coverage filter, chained clusters spanning several OGs are left as singletons in step 7, which keeps false-positive assignments low.
 
 ## Step 3: Phylogenetic Refinement of Domain-Resolution Ortholog Groups
 
@@ -206,8 +229,8 @@ For each **coarse domain-resolution ortholog group**:
    - Build multiple sequence alignment (default: FAMSA; MUSCLE in `super5` mode can be requested via `--aligner muscle`).
    - Trim MSA using trimAl (in `strict` mode).
    - Construct phylogenetic tree (default: FastTree2).
-   - Apply midpoint-rooting. If `-rs N` flag is specified, then root the tree randomly _N_-1 amount of times and once using midpoint. Each (tree, rooting) combination is processed as an independent job across `-c` processes, largest trees first.
-   - Partition phylogeny into **refined domain-resolution ortholog groups** using using bofasa's recursive algorithm.
+   - Apply midpoint-rooting. If `-rs N` flag is specified, then root the tree at _N_-1 randomly chosen nodes and once using midpoint. The random nodes are drawn with a fixed seed per coarse ortholog group (derived from its name), so the rootings tried do not depend on the number of threads or the order in which jobs run. Each (tree, rooting) combination is processed as an independent job across `-c` processes, largest trees first.
+   - Partition phylogeny into **refined domain-resolution ortholog groups** using bofasa's recursive algorithm.
    - Further refine/adjust delineations of refined ortholog groups: (1) further split up disjoint ortholog groups [*see note* :scissors:] and (2) fixation index calculation to assess whether split partitions should be merged back [*see note* :tent:].
 
 ### Overview of bofasa's recursive algorithm:
@@ -234,14 +257,14 @@ Goal: Split a phylogenetic tree into ortholog groups by minimizing gene duplicat
    - Calculate score for entire tree
    - Calculate score for every subtree (traverse preorder)
    - Identify subtree(s) with minimum score
-   - Select non-overlapping subtrees that minimize duplication
+   - Select the minimum-score subtrees greedily in preorder, skipping any subtree nested inside one already selected, so the selected subtrees do not overlap
 
 #### Handle remaining sequences:
 - Create "complement" partition (sequences not in best subtrees)
 - ***If complement has ≥2 samples, recursively split it***
 - Combine best subtrees + complement splits
   
-### Details on addition refinement steps:
+### Details on additional refinement steps:
 
 #### :scissors: Further split up disjoint ortholog groups
 
@@ -263,7 +286,7 @@ This prevents ortholog groups from spanning multiple independent evolutionary li
 
 Re-assesses each internal node of coarse ortholog group phylogenies that include multiple refined ortholog groups to see if they are evolutionarily more appropriate to group together.
 
-- Uses largest-to-smallest node traversion
+- Uses largest-to-smallest node traversal
 - Calculates fixation index (FST) between split groups
 - If FST < threshold → merge groups back together (default threshold = 0.1)
 - Prevents over-splitting of true orthologs
@@ -284,8 +307,9 @@ Re-assesses each internal node of coarse ortholog group phylogenies that include
   - Higher values: More robust rooting but slower
   - 1 (default): Fastest, uses midpoint rooting
   - 100: Tries midpoint rooting + 99 random nodes as roots to see if they result in higher quality refined ortholog groups
-  - Best partioning is selected based on scoring:
+  - Best partitioning is selected based on scoring:
      - Sort by: (1) tree score, (2) number of groups, (3) total branch length and choose partition with lowest combined score
+     - Ties are broken by the order rootings are evaluated: the random rootings first, midpoint rooting last
   
 - `-al, --aligner`: Multiple sequence aligner to use: `famsa` (default) or `muscle` (MUSCLE super5). Note that MUSCLE super5 alignments are not deterministic (see https://github.com/rcedgar/muscle/issues/95), so runs using `muscle` are not exactly reproducible; FAMSA is deterministic.
 
@@ -310,13 +334,14 @@ Final Protein Ortholog Groups
 ```
 
 ### Part A: Initial Jaccard-Based Clustering
-1. For each protein, identify its domain ortholog group memberships
-2. Calculate Jaccard similarity between proteins:
+1. For each protein, count how many chunks it has in each refined domain ortholog group (DOG)
+2. For each pair of proteins sharing at least one DOG, calculate the Jaccard similarity of their DOG compositions:
    ```
    J(A,B) = |DOGs(A) ∩ DOGs(B)| / |DOGs(A) ∪ DOGs(B)|
    ```
-3. Create protein similarity graph (edges = similarity ≥ threshold; default threshold is )
-4. Identify connected components = coarse protein ortholog groups
+   where _DOGs(A)_ is the multiset of DOGs of protein _A_, with each DOG counted once per chunk of _A_ in it. For multisets, ∩ keeps the smaller and ∪ the larger count of each DOG. For example, if _A_ has two chunks in DOG _X_ and _B_ has one, _X_ contributes 1 to the intersection and 2 to the union. DOGs that are largely inter-domain regions are excluded (see note below).
+3. Keep pairs with J ≥ threshold. The threshold is `-dj` (default: 0.5), but is lowered to `-dj` × (1 − _c_) when the two proteins share a single-copy DOG (never more than one copy per genome) found in a proportion _c_ of genomes, using the most conserved such DOG. Proteins sharing a highly conserved single-copy DOG can therefore be grouped even if the rest of their domain composition differs.
+4. Cluster the resulting protein similarity graph (edge weights = J) with MCL (inflation 1.2; independent of `-mi`) = coarse protein ortholog groups
 
 ### Part B: Phylogenetic Refinement of Multi-Copy Groups
 For protein ortholog groups meeting refinement criteria (≥2 copies in any genome, ≥2 genomes, ≥4 proteins total):
@@ -331,8 +356,8 @@ For protein ortholog groups meeting refinement criteria (≥2 copies in any geno
 
 3. **Tree-based splitting**:
    - Root tree at midpoint
-   - Apply recursive splitting at duplication nodes (uses same recusive function as for domain-resolution OG splitting)
-       - Note, however, that there is a slight difference for domain-resolution and protein-resolution recursive splitting. Namely, for proteins, we stop only if the branch length sum = 0 (identical) whereas for domains we stop if branch length ≤ threshold. This is inorder to account for pseudovalues added by FastTree 2.          
+   - Apply recursive splitting at duplication nodes (uses same recursive function as for domain-resolution OG splitting)
+       - Note, however, that there is a slight difference for domain-resolution and protein-resolution recursive splitting. Namely, for proteins, we stop only if the branch length sum = 0 (identical) whereas for domains we stop if branch length ≤ threshold. This is in order to account for pseudovalues added by FastTree 2.
 
 4. **Monophyletic enforcement**:
    - Check if each split group forms a monophyletic clade
@@ -341,16 +366,16 @@ For protein ortholog groups meeting refinement criteria (≥2 copies in any geno
 
 5. **Outlier artifact removal**:
    - For each protein in a split group:
-     - Calculate max Jaccard similarity to proteins within the group
-     - Calculate max Jaccard similarity to proteins outside the group
+     - Calculate max Jaccard similarity (of DOG multisets, as in Part A) to proteins within the group
+     - Calculate max Jaccard similarity to proteins outside the group (elsewhere in the coarse group's tree)
      - If external similarity ≥ internal similarity → remove as singleton
    - Prevents misplaced proteins from remaining in inappropriate groups - could result from nesting pattern in FastME tree that arises akin to similar artifacts in neighbor-joining trees for instance.
 
 > [!NOTE]
-> When calculating Jaccard similarity between proteins based on domain-resolution ortholog groups (DOGs) for outlier detection, DOGs that are largely (>80%) inter-domain regions (IDR) are included to provide higher resolution. However, for initial aggregation of proteins into coarse protein ortholog groups, the Jaccard similarity indices measured does not account for DOGs as they might contribute noise.
+> When calculating Jaccard similarity between proteins based on domain-resolution ortholog groups (DOGs) for outlier detection, DOGs that are largely (>80%) inter-domain regions (IDR) are included to provide higher resolution. However, for initial aggregation of proteins into coarse protein ortholog groups (Part A), these largely-IDR DOGs are not counted as they might contribute noise.
 
 **Key Parameters:**
-- `-dj, --dog-jaccard` (default: 0.5): Jaccard similarity threshold for initial clustering
+- `-dj, --dog-jaccard` (default: 0.5): Jaccard similarity threshold for initial clustering (relaxed for proteins sharing conserved single-copy DOGs, see Part A)
   - Lower values (0.1-0.49): More permissive, allows for more domain composition differences
   - Higher values (0.51-1.0): Stricter, requires domain compositions between proteins to be high
 
@@ -373,7 +398,7 @@ Ortholog Groups + Synteny Metrics
 $Context\ Conservation\ Score = Avg.\ Neighbor\ Count/Total\ Distinct\ Neighbors$
 
 - **Avg. Neighbor Count**: The average of the number of unique OGs that appear as neighbors to the focal OG ***per*** context.
-- **Total Distinct Neighbors**: Total number of unique OGs that ever appear as neighbors to the focal OG across ***gall*** context.
+- **Total Distinct Neighbors**: Total number of unique OGs that ever appear as neighbors to the focal OG across ***all*** contexts.
 
 #### Interpretation:
 - Score → 1: High conservation (same neighbors always present)
@@ -418,7 +443,7 @@ You can also use the option `-ogc` option to generate a multi-FASTA containing c
 - `-ogc, --og-consensus`: Generate consensus sequences for each ortholog group
 
 ### Algorithm:
-1. Align all sequences in each ortholog group
+1. Align all sequences in each ortholog group (using the aligner set by `-al`; FAMSA by default)
 2. Determine consensus sequence + profile HMM for each ortholog group
 
 ## Optional Step 8: Core Genome Alignment
@@ -439,8 +464,65 @@ Construct a concatenated multi-FASTA alignment of the strict or loose single-cop
 ### Algorithm:
 1. Identify single-copy core ortholog groups (SCC-DOGs)
    - Present in ≥95% of genomes by default unless `-ns` modified.
-2. Align each SCC-DOG
+2. Align each SCC-DOG (using the aligner set by `-al`; FAMSA by default)
 3. Concatenate alignments and output multi-FASTA suitable for phylogenomics
+
+---
+
+# Database Setup (`bofasa setup`)
+
+`bofasa setup` downloads the databases used by bofasa (needs to be run only once):
+
+- **Pfam-A**: By default, the current Pfam release is downloaded. A specific release can be requested with `-pv, --pfam-version` (currently `37.4`, the release used to generate the test case's expected results); the download is validated against the expected number of HMMs for that release.
+- **ISfinder** protein sequences: pinned to a fixed commit (October 2020) of the [ISfinder-sequences](https://github.com/thanhleviet/ISfinder-sequences) repository.
+- **geNomad** database: only needed for `bofasa prep -rg`; can be skipped with `--skip-genomad`.
+
+> [!NOTE]
+> Domain splitting, and therefore all downstream results, depends on the Pfam release. Use the same Pfam release (e.g. via `-pv`) when comparing or reproducing runs.
+
+---
+
+# Standalone Pfam Domain Matrix (`bofasa domscape`)
+
+A lightweight alternative to the full pipeline for quickly surveying domain content across many genomes. It is independent of `prep`/`run` and has no upper limit on the number of genomes.
+
+```
+Genomes (FASTA/GenBank), proteomes, or annotation dirs (Prokka/Bakta)
+  ↓
+Gene Calling (if FASTA genomes)
+  ↓
+PyHMMER search against Pfam-A (gathering thresholds), proteomes searched in batches
+  ↓
+Pfam domain by genome matrix (number of proteins carrying each domain)
+```
+
+**Algorithm:**
+1. Gene calling (Pyrodigal/Prodigal) for genomes given in FASTA format; proteins are taken directly from GenBank files, annotation directories, or input proteomes.
+2. Pfam HMMs are loaded once and proteomes are searched in batches (`-bs`).
+3. Each protein is counted once per Pfam domain, even if it carries multiple copies of that domain.
+4. Per-genome results are written to disk as they complete, so an interrupted run resumes when re-run with the same output directory.
+
+**Key Outputs:**
+- `Pfam_Protein_Count_Matrix.tsv`: Pfam domains (rows) by genomes (columns), with the number of proteins carrying each domain
+- `Pfam_Domain_Info.tsv`: Per-domain name, number of genomes with the domain, and total proteins with the domain
+- `Pfam_Domain_Proteins.tsv`: Listing of each protein carrying each domain in each genome
+
+**Key Parameters:**
+- `-i, --input-genomes` / `-p, --input-proteomes` / `-a, --annotation-dirs`: Inputs (at least one required)
+- `-ml, --min-length` (default: 20): Minimum protein length kept from genomes/annotation directories (not applied to input proteomes)
+- `-bs, --batch-size` (default: 100): Number of proteomes searched against Pfam together; larger is faster but uses more memory
+
+---
+
+# Reproducibility
+
+As of v1.3.0, two runs on the same inputs, with the same Pfam release and the same options, are designed to give identical results:
+
+- FAMSA (the default aligner) is deterministic; MUSCLE super5 (`-al muscle`) is not (see https://github.com/rcedgar/muscle/issues/95)
+- Sequences are sorted before alignment, and protein pairs are sorted before MCL, so tool inputs do not depend on processing order
+- Random rootings (`-rs` > 1) use a fixed seed per coarse ortholog group, so they do not depend on the number of threads or job order
+
+---
 
 ## Key Citations
 
