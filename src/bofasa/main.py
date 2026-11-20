@@ -178,7 +178,7 @@ class RawTextHelpFormatter(argparse.RawDescriptionHelpFormatter):
 def create_main_parser() -> BofasaArgumentParser:
     """Create the main argument parser for the bofasa interface."""
     parser = BofasaArgumentParser(
-        description="bacterial ortholog finding and syntenic analysis (bofasa)",
+        description="bacterial orthology finding and syntenic analysis (bofasa)",
         formatter_class=BofasaHelpFormatter,
     )
 

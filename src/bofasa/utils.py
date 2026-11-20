@@ -217,7 +217,7 @@ def print_bofasa_help() -> None:
         Prints help text to stdout
     """
     help_text: str = f"""
-BOFASA: Bacterial Ortholog Finder and Synteny Analysis
+BOFASA: Bacterial Orthology Finding And Syntenic Analysis
 
 A comprehensive tool for identifying ortholog groups and analyzing 
 syntenic conservation in bacterial genomes representing multiple
