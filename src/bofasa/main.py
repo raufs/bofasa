@@ -204,7 +204,8 @@ def create_main_parser() -> BofasaArgumentParser:
         "  bofasa setup\n"
         "  bofasa setup --threads 8 --force\n"
         "  bofasa setup --skip-genomad\n"
-        "  bofasa setup --skip-genomad --pfam-version 37.4"
+        "  bofasa setup --skip-genomad --pfam-version 37.4\n"
+        "  bofasa setup --download-segments 4"
     )
 
 
@@ -669,6 +670,17 @@ def add_setup_annotation_dbs_arguments(parser: argparse.ArgumentParser) -> None:
         "37.4 to reproduce the expected results of the test case.",
         required=False,
         default="current",
+    )
+    parser.add_argument(
+        "-ds",
+        "--download-segments",
+        type=int,
+        help="Number of parallel connections used to download each large\n"
+        "database file (if the server supports it). Does not apply to the\n"
+        "geNomad database, which is downloaded by 'genomad download-database'\n"
+        f"[Default is {config.DEFAULT_DOWNLOAD_SEGMENTS}; use 1 to disable].",
+        required=False,
+        default=config.DEFAULT_DOWNLOAD_SEGMENTS,
     )
     parser.add_argument(
         "-y",
@@ -2343,7 +2355,7 @@ def run_setup_annotation_dbs(args: argparse.Namespace) -> None:
     try:
         setup_ok = setup_annotation_databases(
             output_dir, args.threads, args.force, args.auto, args.skip_genomad,
-            pfam_version=args.pfam_version,
+            pfam_version=args.pfam_version, download_segments=args.download_segments,
         )
     except Exception as e:
         sys.stdout.write(f"Error during setup annotation databases: {str(e)}\n")

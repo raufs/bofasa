@@ -114,3 +114,8 @@ ISFINDER_URL: str = (
     "https://raw.githubusercontent.com/thanhleviet/ISfinder-sequences/"
     "bedbeb5c16618eca3e16ef74adf865d6b88cafb5/IS.faa"
 )
+# Number of parallel connections ('bofasa setup -ds') used to download each large
+# database file in byte-range segments, if the server supports it (1 disables this)
+DEFAULT_DOWNLOAD_SEGMENTS: int = 8
+# Files at least this large are downloaded in parallel byte-range segments
+DOWNLOAD_SEGMENT_MIN_SIZE: int = 64 * 1024 * 1024

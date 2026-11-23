@@ -477,6 +477,8 @@ Construct a concatenated multi-FASTA alignment of the strict or loose single-cop
 - **ISfinder** protein sequences: pinned to a fixed commit (October 2020) of the [ISfinder-sequences](https://github.com/thanhleviet/ISfinder-sequences) repository.
 - **geNomad** database: only needed for `bofasa prep -rg`; can be skipped with `--skip-genomad`.
 
+Pfam-A and ISfinder are downloaded with curl. Files of 64 MB or more are fetched over several parallel connections in byte-range segments (`-ds, --download-segments`, default: 8; `1` disables this) when the server supports range requests, and the reassembled file is checked against the size the server reports. The geNomad database is downloaded by `genomad download-database` and is not affected by `-ds`.
+
 > [!NOTE]
 > Domain splitting, and therefore all downstream results, depends on the Pfam release. Use the same Pfam release (e.g. via `-pv`) when comparing or reproducing runs.
 

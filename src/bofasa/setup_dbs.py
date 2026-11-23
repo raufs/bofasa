@@ -10,14 +10,157 @@ import sys
 import subprocess
 import gzip
 import shutil
+import email.utils
+import threading
+import concurrent.futures
+import time
+from typing import List, Optional, Tuple
 from . import config
 from Bio import SeqIO
 from .utils import setup_ready_directory
 
 
+_CURL_BASE: List[str] = [
+    "curl", "-f", "-s", "-S", "-L", "--retry", "5", "--retry-delay", "5", "--connect-timeout", "60"
+]
+
+
+def _probe_remote(url: str) -> Tuple[Optional[int], Optional[float], bool]:
+    """
+    Return (size in bytes or None, Last-Modified as epoch seconds or None,
+    whether byte-range requests are honored) for a remote file.
+    """
+    size, mtime = None, None
+    try:
+        res = subprocess.run(
+            ["curl", "-s", "-I", "-L", "--max-time", "60", url], capture_output=True, text=True
+        )
+        # With redirects, curl prints a header block per hop - only the final one is relevant
+        for line in res.stdout.splitlines():
+            if line.upper().startswith("HTTP/"):
+                size, mtime = None, None
+                continue
+            key, _, val = line.partition(":")
+            key, val = key.strip().lower(), val.strip()
+            if key == "content-length" and val.isdigit():
+                size = int(val) if int(val) > 0 else None
+            elif key == "last-modified":
+                try:
+                    mtime = email.utils.parsedate_to_datetime(val).timestamp()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    supports_ranges = False
+    if size is not None and size >= config.DOWNLOAD_SEGMENT_MIN_SIZE:
+        # Servers do not always advertise range support, so test with an actual 1-byte
+        # range request (reading at most 2 bytes so a server ignoring the range does not
+        # start a full download)
+        try:
+            proc = subprocess.Popen(
+                ["curl", "-s", "-L", "--max-time", "60", "-r", "0-0", url], stdout=subprocess.PIPE
+            )
+            data = proc.stdout.read(2)
+            proc.kill()
+            proc.wait()
+            supports_ranges = len(data) == 1
+        except Exception:
+            supports_ranges = False
+    return size, mtime, supports_ranges
+
+
+def _curl_ok(cmd: List[str]) -> bool:
+    try:
+        return subprocess.run(cmd).returncode == 0
+    except Exception as e:
+        sys.stderr.write(f"Error: {e}\n")
+        return False
+
+
+def _download_file(url: str, output_file: str, segments: int = config.DEFAULT_DOWNLOAD_SEGMENTS) -> bool:
+    """
+    Download url to output_file - in parallel byte-range segments when the file is
+    large and the server allows it - printing periodic progress.
+
+    Args:
+        url: URL to download
+        output_file: Path to write the download to
+        segments: Number of parallel connections used for large files (1 disables segmenting)
+
+    Returns:
+        bool: True if the download succeeded (and matches the size reported by the server).
+    """
+    segments = max(1, segments)
+    size, mtime, supports_ranges = _probe_remote(url)
+    if os.path.isfile(output_file):
+        os.remove(output_file)
+
+    use_segments = segments > 1 and supports_ranges and size is not None
+    if use_segments:
+        chunk = -(-size // segments)  # ceiling division
+        bounds = [(start, min(start + chunk, size) - 1) for start in range(0, size, chunk)]
+        parts = [f"{output_file}.part{i}" for i in range(len(bounds))]
+    else:
+        bounds, parts = [], [output_file]
+
+    # Report progress every 20 seconds while downloading
+    done = threading.Event()
+
+    def report() -> None:
+        start = time.time()
+        while not done.wait(20):
+            got = sum(os.path.getsize(f) for f in parts if os.path.isfile(f))
+            total = f" of {size / 1e6:,.0f}" if size else ""
+            sys.stdout.write(
+                f"  ... downloaded {got / 1e6:,.0f}{total} MB ({(time.time() - start) / 60:.1f} min elapsed)\n"
+            )
+            sys.stdout.flush()
+
+    reporter = threading.Thread(target=report, daemon=True)
+    reporter.start()
+
+    try:
+        if use_segments:
+            sys.stdout.write(f"  Downloading in {len(bounds)} parallel segments...\n")
+
+            def fetch(i: int) -> bool:
+                start, end = bounds[i]
+                for _ in range(3):
+                    _curl_ok(_CURL_BASE + ["-r", f"{start}-{end}", "-o", parts[i], url])
+                    if os.path.isfile(parts[i]) and os.path.getsize(parts[i]) == end - start + 1:
+                        return True
+                return False
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(bounds)) as ex:
+                success = all(ex.map(fetch, range(len(bounds))))
+            if success:
+                with open(output_file, "wb") as tgt:
+                    for part in parts:
+                        with open(part, "rb") as src:
+                            shutil.copyfileobj(src, tgt)
+            for part in parts:
+                if os.path.isfile(part):
+                    os.remove(part)
+            success = success and os.path.isfile(output_file) and os.path.getsize(output_file) == size
+        else:
+            success = _curl_ok(_CURL_BASE + ["-o", output_file, url]) and os.path.isfile(output_file)
+            if success and size is not None and os.path.getsize(output_file) != size:
+                sys.stdout.write(
+                    f"Warning: size of {output_file} differs from the size reported by the server for {url}\n"
+                )
+    finally:
+        done.set()
+
+    if success and mtime is not None:
+        os.utime(output_file, (mtime, mtime))  # keep the server's timestamp (like curl -R)
+    return success
+
+
 def setup_annotation_databases(
     output_dir: str, threads: int = config.DEFAULT_THREADS, force: bool = False,
-    auto: bool = False, skip_genomad: bool = False, pfam_version: str = "current"
+    auto: bool = False, skip_genomad: bool = False, pfam_version: str = "current",
+    download_segments: int = config.DEFAULT_DOWNLOAD_SEGMENTS
 ) -> bool:
     """
     Setup annotation databases.
@@ -30,6 +173,8 @@ def setup_annotation_databases(
         skip_genomad: Whether to skip downloading the geNomad database
         pfam_version: Pfam release to download - "current" for the current release,
             or a specific release listed in config.PFAM_RELEASES (e.g. "37.4")
+        download_segments: Number of parallel connections used to download each large
+            file in byte-range segments, if the server supports it (1 disables this)
 
     Returns:
         bool: True if setup completed successfully (or an existing setup was kept),
@@ -207,16 +352,7 @@ def setup_annotation_databases(
             sys.stdout.write(f"Removing existing ISfinder FASTA file: {isfinder_fasta}\n")
             os.remove(isfinder_fasta)
         
-        # Use curl to download the file
-        curl_cmd = ["curl", "-fL", "-o", isfinder_fasta, isfinder_url]
-        result = subprocess.run(curl_cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            sys.stdout.write(
-                f"Error downloading ISfinder database: Command returned exit status {result.returncode}\n"
-            )
-            sys.stdout.write(f"Command: {' '.join(curl_cmd)}\n")
-            sys.stdout.write(f"stdout: {result.stdout}\n")
-            sys.stdout.write(f"stderr: {result.stderr}\n")
+        if not _download_file(isfinder_url, isfinder_fasta, segments=download_segments):
             raise Exception("Failed to download ISfinder database")
 
         # Validate that the download looks like a FASTA file (not e.g. an HTML error page)
@@ -315,16 +451,7 @@ def setup_annotation_databases(
                 sys.stdout.write(f"Removing existing Pfam HMM file: {pfam_hmm}\n")
                 os.remove(pfam_hmm)
 
-        # Use curl to download the file
-        curl_cmd = ["curl", "-fL", "-o", pfam_hmm_gz, pfam_url]
-        result = subprocess.run(curl_cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            sys.stdout.write(
-                f"Error downloading Pfam database: Command returned exit status {result.returncode}\n"
-            )
-            sys.stdout.write(f"Command: {' '.join(curl_cmd)}\n")
-            sys.stdout.write(f"stdout: {result.stdout}\n")
-            sys.stdout.write(f"stderr: {result.stderr}\n")
+        if not _download_file(pfam_url, pfam_hmm_gz, segments=download_segments):
             raise Exception("Failed to download Pfam database")
 
         # Extract gzipped file (streamed to a temporary file, then moved into place)

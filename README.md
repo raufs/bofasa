@@ -104,6 +104,12 @@ By default, the current Pfam release is downloaded. A specific release can be re
 bofasa setup --pfam-version 37.4
 ```
 
+Large database files (e.g. Pfam-A) are downloaded over several parallel connections in byte-range segments when the server supports it. The number of connections per file can be set with `-ds/--download-segments` (default: 8; use `1` to disable). This does not apply to the geNomad database, which is downloaded by `genomad download-database`:
+
+```bash
+bofasa setup --download-segments 4
+```
+
 The ISFinder protein sequences are downloaded from the [ISfinder-sequences](https://github.com/thanhleviet/ISfinder-sequences) repository, pinned to its most recent commit (October 2020).
 
 > [!NOTE]
